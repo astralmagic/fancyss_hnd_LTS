@@ -200,7 +200,9 @@ tx：华硕天选青色皮肤
    - 会额外生成 7 个平台的 `full debug` 包：`fancyss_<platform>_full_debug.tar.gz`
    - 生成完成后会同时更新 `packages/version.json.js`
 
-6. 如果你只想打某个平台、某种包型，或者不想同时生成 debug 包，直接修改 [build.sh](./build.sh) 里的 `make()` 即可
+6. GitHub Actions 的 **Build HND packages** 会执行相同的全量构建，校验版本清单和包内核心二进制，并仅发布 HND/HND v8 的 full/lite 包。
+
+7. 如果你只想打某个平台、某种包型，或者不想同时生成 debug 包，直接修改 [build.sh](./build.sh) 里的 `make()` 即可
 
 ## 相关链接
 
