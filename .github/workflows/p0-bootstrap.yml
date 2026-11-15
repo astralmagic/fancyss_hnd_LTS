@@ -61,3 +61,37 @@ jobs:
             ${{ runner.temp }}/sub-tool/*.strings
             ${{ runner.temp }}/sub-tool/output-*.jsonl
           retention-days: 3
+
+  sub-tool-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Zig 0.15.2
+        run: |
+          mkdir -p "$RUNNER_TEMP/zig"
+          curl -fsSL https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz | tar -xJ -C "$RUNNER_TEMP/zig" --strip-components=1
+
+      - name: Run sub-tool tests
+        working-directory: tool/sub-tool
+        run: "$RUNNER_TEMP/zig/zig" build test
+
+      - name: Verify recovered 0.1.18 behavior
+        working-directory: tool/sub-tool
+        run: |
+          set -euo pipefail
+          ZIG="$RUNNER_TEMP/zig/zig" bash scripts/build-release.sh --no-upx x86_64
+          binary="dist/sub-tool-v0.1.18-linux-x86_64"
+          test "$("$binary" --version)" = "0.1.18"
+          printf '%s\n' 'ss://YWVzLTI1Ni1nY206cGFzczBAZXhhbXBsZS5jb206NDQz#Node' > "$RUNNER_TEMP/sub-tool-input.txt"
+          "$binary" parse-uri-lines \
+            --input "$RUNNER_TEMP/sub-tool-input.txt" \
+            --output "$RUNNER_TEMP/sub-tool-output.jsonl" \
+            --format fancyss \
+            --group Example \
+            --source-tag example \
+            --profile-id alpha \
+            --source-url-hash abcd
+          OUTPUT_PATH="$RUNNER_TEMP/sub-tool-output.jsonl" python3 -c 'import json, os; node=json.load(open(os.environ["OUTPUT_PATH"])); assert node["_source_scope"] == "profile_alpha"; assert node["_identity_primary"] == "2a66c9dd"; assert node["_identity_secondary"] == "ef8422c2"'

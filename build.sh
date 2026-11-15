@@ -111,6 +111,24 @@ sync_binary(){
 	cp -rf ${CURR_PATH}/binaries/chinadns-ng/chinadns-ng+wolfssl@arm-linux-musleabi@generic+v7a@fast+lto$upx ${CURR_PATH}/fancyss/bin-qca/chinadns-ng
 	cp -rf ${CURR_PATH}/binaries/chinadns-ng/chinadns-ng+wolfssl@arm-linux-musleabi@generic+v5te+soft_float@fast+lto$upx ${CURR_PATH}/fancyss/bin-arm/chinadns-ng
 
+	local SMARTDNS_DIR="${CURR_PATH}/binaries/smartdns"
+	if [ -f "${SMARTDNS_DIR}/latest.txt" ];then
+		SMARTDNS_DIR="${SMARTDNS_DIR}/$(cat "${SMARTDNS_DIR}/latest.txt")"
+	fi
+	local SMARTDNS_ARM64="${SMARTDNS_DIR}/smartdns_arm64"
+	local SMARTDNS_ARMV7="${SMARTDNS_DIR}/smartdns_armv7"
+	local SMARTDNS_ARMV5="${SMARTDNS_DIR}/smartdns_armv5"
+	[ -f "${SMARTDNS_ARM64}" ] || SMARTDNS_ARM64="${SMARTDNS_DIR}/smartdns-aarch64"
+	[ -f "${SMARTDNS_ARMV7}" ] || SMARTDNS_ARMV7="${SMARTDNS_DIR}/smartdns-arm"
+	[ -f "${SMARTDNS_ARMV5}" ] || SMARTDNS_ARMV5="${SMARTDNS_DIR}/smartdns-arm"
+	cp -rf ${SMARTDNS_ARM64} ${CURR_PATH}/fancyss/bin-mtk/smartdns
+	cp -rf ${SMARTDNS_ARM64} ${CURR_PATH}/fancyss/bin-hnd_v8/smartdns
+	cp -rf ${SMARTDNS_ARM64} ${CURR_PATH}/fancyss/bin-ipq64/smartdns
+	cp -rf ${SMARTDNS_ARMV7} ${CURR_PATH}/fancyss/bin-ipq32/smartdns
+	cp -rf ${SMARTDNS_ARMV7} ${CURR_PATH}/fancyss/bin-hnd/smartdns
+	cp -rf ${SMARTDNS_ARMV7} ${CURR_PATH}/fancyss/bin-qca/smartdns
+	cp -rf ${SMARTDNS_ARMV5} ${CURR_PATH}/fancyss/bin-arm/smartdns
+
 	local GEOTOOL_VER="v$(zig_tool_version geotool)"
 	cp -rf ${CURR_PATH}/binaries/geotool/geotool-${GEOTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-mtk/geotool
 	cp -rf ${CURR_PATH}/binaries/geotool/geotool-${GEOTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-hnd_v8/geotool
@@ -613,7 +631,6 @@ make(){
 	pack hnd lite release
 	pack hnd_v8 full release
 	pack hnd_v8 lite release
-	pack hnd lite release
 	pack qca full release
 	pack qca lite release
 	pack arm full release

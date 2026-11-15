@@ -1,6 +1,6 @@
-.PHONY: all update_kcptun update_shadowsocks_rust update_v2ray update_xray update_naiveproxy update_ipt2socks update_tuic_client update_geotool update_xapi_tool update_sub_tool update_node_tool update_websocketd update_status_tool update_webtest_tool
+.PHONY: all update_kcptun update_ss_rust update_v2ray update_xray update_vray-plugin update_naive update_ipt2socks update_tuic_client update_anytls_zig update_smartdns update_chinadns_ng update_geotool update_xapi_tool update_sub_tool update_node_tool update_websocketd update_status_tool update_webtest_tool
 
-all: update_kcptun update_ss_rust update_v2ray update_xray update_naive update_ipt2socks update_tuic_client update_geotool update_xapi_tool update_sub_tool update_node_tool update_websocketd update_status_tool update_webtest_tool
+all: update_kcptun update_ss_rust update_v2ray update_xray update_naive update_ipt2socks update_tuic_client update_anytls_zig update_smartdns update_chinadns_ng update_geotool update_xapi_tool update_sub_tool update_node_tool update_websocketd update_status_tool update_webtest_tool
 
 update_kcptun:
 	kcptun/get_latest.sh
@@ -12,10 +12,10 @@ update_v2ray:
 	v2ray/make_latest.sh
 
 update_xray:
-	xray/get_latest.sh
+	xray/make_latest.sh
 
 update_vray-plugin:
-	vray-plugin/make_latest.sh
+	v2ray-plugin/make_latest.sh
 
 update_naive:
 	naive/get_latest.sh
@@ -25,6 +25,15 @@ update_ipt2socks:
 
 update_tuic_client:
 	tuic-client/get_latest.sh
+
+update_anytls_zig:
+	cd ../tool/anytls-zig && bash scripts/build-release.sh x86_64 armv5te armv7a armv7hf aarch64
+
+update_smartdns:
+	smartdns/get_smartdns.sh
+
+update_chinadns_ng:
+	chinadns-ng/get_latest.sh
 
 update_geotool:
 	cd ../tool/geotool && rm -f dist/geotool-v$$(cat VERSION)-linux-armv5te dist/geotool-v$$(cat VERSION)-linux-armv7a dist/geotool-v$$(cat VERSION)-linux-armv7hf dist/geotool-v$$(cat VERSION)-linux-aarch64 dist/SHA256SUMS-v$$(cat VERSION) && bash scripts/build-release.sh armv5te armv7a armv7hf aarch64
