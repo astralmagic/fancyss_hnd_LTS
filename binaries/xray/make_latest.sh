@@ -6,7 +6,7 @@ DIR="$(cd "$(dirname "$BASH_SOURCE[0]")" && pwd)"
 base_dir="${DIR}/.build_xray"
 mkdir -p "${base_dir}"
 
-GO_VERSION="1.26.3"
+GO_VERSION="1.27.3"
 
 BUILD_REF="tag" # tag | main
 BUILD_TAG=""

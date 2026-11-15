@@ -1,0 +1,90 @@
+name: P0 core builds
+
+on:
+  push:
+    branches:
+      - candidate/p0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  xray:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Install build and emulation tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y file qemu-user-static
+          mkdir -p "$RUNNER_TEMP/tools/upx5" "$RUNNER_TEMP/tools/upx4" "$RUNNER_TEMP/tools/bin"
+          curl -fsSL https://github.com/upx/upx/releases/download/v5.0.2/upx-5.0.2-amd64_linux.tar.xz | tar -xJ -C "$RUNNER_TEMP/tools/upx5" --strip-components=1
+          curl -fsSL https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-amd64_linux.tar.xz | tar -xJ -C "$RUNNER_TEMP/tools/upx4" --strip-components=1
+          ln -s "$RUNNER_TEMP/tools/upx5/upx" "$RUNNER_TEMP/tools/bin/upx-5.0.2"
+          ln -s "$RUNNER_TEMP/tools/upx4/upx" "$RUNNER_TEMP/tools/bin/upx-4.2.4"
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+
+      - name: Build Xray v26.11.9
+        run: binaries/xray/make_latest.sh v26.11.9
+
+      - name: Check ARM binaries and configurations
+        run: |
+          set -euo pipefail
+          output="$(cat binaries/xray/latest_2.txt)"
+          test "$output" = "v26.11.9-676eaf6"
+          mkdir -p "$RUNNER_TEMP/xray-configs"
+          python3 - <<'PY'
+          import json
+          import os
+
+          directory = os.environ["RUNNER_TEMP"] + "/xray-configs"
+          configs = {
+              "vless.json": {
+                  "protocol": "vless",
+                  "settings": {"vnext": [{"address": "example.com", "port": 443, "users": [{"id": "11111111-1111-1111-1111-111111111111", "encryption": "none"}]}]},
+                  "streamSettings": {"network": "tcp", "security": "none"},
+              },
+              "trojan.json": {
+                  "protocol": "trojan",
+                  "settings": {"servers": [{"address": "example.com", "port": 443, "password": "secret"}]},
+                  "streamSettings": {
+                      "network": "ws",
+                      "security": "tls",
+                      "tlsSettings": {"serverName": "example.com", "pinnedPeerCertSha256": "", "verifyPeerCertByName": ""},
+                      "wsSettings": {"path": "/ws", "host": "example.com"},
+                  },
+              },
+              "hysteria2.json": {
+                  "protocol": "hysteria",
+                  "settings": {"version": 2, "address": "example.com", "port": 443},
+                  "streamSettings": {
+                      "network": "hysteria",
+                      "hysteriaSettings": {"version": 2, "auth": "secret"},
+                      "security": "tls",
+                      "tlsSettings": {"serverName": "example.com", "pinnedPeerCertSha256": "", "verifyPeerCertByName": "", "alpn": ["h3"]},
+                      "finalmask": {"quicParams": {"congestion": "bbr"}},
+                  },
+              },
+          }
+          for name, outbound in configs.items():
+              with open(os.path.join(directory, name), "w") as file:
+                  json.dump({"log": {"loglevel": "none"}, "outbounds": [outbound]}, file)
+          PY
+          for config in "$RUNNER_TEMP"/xray-configs/*.json; do
+            qemu-aarch64-static "binaries/xray/${output}/xray_arm64" run -test -c "$config"
+          done
+          qemu-aarch64-static "binaries/xray/${output}/xray_arm64" version
+          qemu-arm-static "binaries/xray/${output}/xray_armv7" version
+          qemu-arm-static "binaries/xray/${output}/xray_armv5" version
+
+      - name: Upload Xray artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: xray-v26.11.9
+          path: binaries/xray/v26.11.9-676eaf6/
+          retention-days: 7
