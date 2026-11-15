@@ -21,7 +21,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y file qemu-user-static
+          sudo apt-get install -y file qemu-user
           mkdir -p "$RUNNER_TEMP/tools/upx5" "$RUNNER_TEMP/tools/upx4" "$RUNNER_TEMP/tools/bin"
           curl -fsSL https://github.com/upx/upx/releases/download/v5.0.2/upx-5.0.2-amd64_linux.tar.xz | tar -xJ -C "$RUNNER_TEMP/tools/upx5" --strip-components=1
           curl -fsSL https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-amd64_linux.tar.xz | tar -xJ -C "$RUNNER_TEMP/tools/upx4" --strip-components=1
@@ -76,11 +76,11 @@ jobs:
                   json.dump({"log": {"loglevel": "none"}, "outbounds": [outbound]}, file)
           PY
           for config in "$RUNNER_TEMP"/xray-configs/*.json; do
-            qemu-aarch64-static "binaries/xray/${output}/xray_arm64" run -test -c "$config"
+            qemu-aarch64 "binaries/xray/${output}/xray_arm64" run -test -c "$config"
           done
-          qemu-aarch64-static "binaries/xray/${output}/xray_arm64" version
-          qemu-arm-static "binaries/xray/${output}/xray_armv7" version
-          qemu-arm-static "binaries/xray/${output}/xray_armv5" version
+          qemu-aarch64 "binaries/xray/${output}/xray_arm64" version
+          qemu-arm "binaries/xray/${output}/xray_armv7" version
+          qemu-arm "binaries/xray/${output}/xray_armv5" version
 
       - name: Upload Xray artifacts
         uses: actions/upload-artifact@v4
@@ -100,7 +100,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y file qemu-user-static
+          sudo apt-get install -y file qemu-user
           mkdir -p "$RUNNER_TEMP/tools/upx5" "$RUNNER_TEMP/tools/upx4" "$RUNNER_TEMP/tools/bin"
           curl -fsSL https://github.com/upx/upx/releases/download/v5.0.2/upx-5.0.2-amd64_linux.tar.xz | tar -xJ -C "$RUNNER_TEMP/tools/upx5" --strip-components=1
           curl -fsSL https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-amd64_linux.tar.xz | tar -xJ -C "$RUNNER_TEMP/tools/upx4" --strip-components=1
@@ -116,9 +116,9 @@ jobs:
           set -euo pipefail
           output="$(cat binaries/naive/latest.txt)"
           test "$output" = "v154.0.8037.49-5"
-          qemu-aarch64-static "binaries/naive/${output}/naive_arm64" --version
-          qemu-arm-static "binaries/naive/${output}/naive_armv7" --version
-          qemu-arm-static "binaries/naive/${output}/naive_armv5" --version
+          qemu-aarch64 "binaries/naive/${output}/naive_arm64" --version
+          qemu-arm "binaries/naive/${output}/naive_armv7" --version
+          qemu-arm "binaries/naive/${output}/naive_armv5" --version
 
       - name: Upload NaïveProxy artifacts
         uses: actions/upload-artifact@v4
