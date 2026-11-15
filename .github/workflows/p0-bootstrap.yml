@@ -1,0 +1,46 @@
+name: P0 bootstrap diagnostics
+
+on:
+  push:
+    branches:
+      - candidate/p0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sub-tool-compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Unpack and compare published sub-tool binaries
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/upx" "$RUNNER_TEMP/sub-tool"
+          curl -fsSL https://github.com/upx/upx/releases/download/v5.0.2/upx-5.0.2-amd64_linux.tar.xz | tar -xJ -C "$RUNNER_TEMP/upx" --strip-components=1
+          for version in 0.1.17 0.1.18; do
+            binary="binaries/sub-tool/sub-tool-v${version}-linux-x86_64"
+            target="$RUNNER_TEMP/sub-tool/sub-tool-${version}"
+            cp "$binary" "$target"
+            "$RUNNER_TEMP/upx/upx" -d "$target"
+            chmod +x "$target"
+            file "$target"
+            "$target" --version || true
+            "$target" --help || true
+            strings "$target" > "$RUNNER_TEMP/sub-tool/sub-tool-${version}.strings"
+          done
+          diff -u "$RUNNER_TEMP/sub-tool/sub-tool-0.1.17.strings" "$RUNNER_TEMP/sub-tool/sub-tool-0.1.18.strings" || true
+
+      - name: Upload unpacked binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: sub-tool-comparison
+          path: |
+            ${{ runner.temp }}/sub-tool/sub-tool-0.1.17
+            ${{ runner.temp }}/sub-tool/sub-tool-0.1.18
+            ${{ runner.temp }}/sub-tool/*.strings
+          retention-days: 3
