@@ -1,0 +1,63 @@
+name: Sync P0 packages
+
+on:
+  push:
+    branches:
+      - candidate/p0
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[sync-p0-packages]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: candidate/p0
+          submodules: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: fancyss-hnd-packages
+          path: packages
+          run-id: 43685660968
+          github-token: ${{ github.token }}
+
+      - name: Merge HND package metadata and verify files
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import subprocess
+          from pathlib import Path
+
+          root = Path('packages')
+          manifest = json.loads(subprocess.check_output(['git', 'show', 'HEAD:packages/version.json.js'], text=True))
+          release = json.loads((root / 'version.json.js').read_text())
+          manifest['version'] = release['version']
+          assert manifest['version'] == '3.5.31'
+          for platform in ('hnd', 'hnd_v8'):
+              for package_type in ('full', 'lite'):
+                  key = f'md5_{platform}_{package_type}'
+                  manifest[key] = release[key]
+                  package = root / f'fancyss_{platform}_{package_type}.tar.gz'
+                  actual = hashlib.md5(package.read_bytes()).hexdigest()
+                  assert actual == manifest[key], (str(package), actual)
+          (root / 'version.json.js').write_text(json.dumps(manifest, indent=2) + '\n')
+          PY
+
+      - name: Commit HND packages
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/fancyss_hnd_full.tar.gz packages/fancyss_hnd_lite.tar.gz packages/fancyss_hnd_v8_full.tar.gz packages/fancyss_hnd_v8_lite.tar.gz packages/version.json.js
+          if git diff --cached --quiet; then
+            echo 'All packages already synchronized.'
+            exit 0
+          fi
+          git commit -m 'Publish HND LTS 3.5.31 packages (#16)'
+          git push origin HEAD:candidate/p0
