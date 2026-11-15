@@ -5,7 +5,7 @@
 source /koolshare/scripts/ss_base.sh
 mkdir -p /tmp/upload
 alias echo_date='echo 【$(TZ=UTC-8 date -R +%Y%m%d\ %X)】:'
-main_url="https://raw.githubusercontent.com/hq450/fancyss/3.0/packages"
+main_url="https://raw.githubusercontent.com/astralmagic/fancyss_hnd_LTS/lts/packages"
 
 # --------------------------------------
 # 6.x.4708			2.6.36.4		arm
@@ -79,8 +79,8 @@ update_ss(){
 	fancyss_version_online=$(cat /tmp/version.json.js | run jq -r '.version')
 	echo_date "检测到主服务器在线版本号：${fancyss_version_online}"
 	dbus set ss_basic_version_web="${fancyss_version_online}"
-	if [ "${ss_basic_version_local}" != "${fancyss_version_online}" ];then
-		echo_date "主服务器在线版本号：${fancyss_version_online} 和本地版本号：${ss_basic_version_local} 不同！"
+	if [ "$(versioncmp ${ss_basic_version_local} ${fancyss_version_online})" == "1" ];then
+		echo_date "主服务器在线版本号：${fancyss_version_online} 高于本地版本号：${ss_basic_version_local}，开始更新！"
 		cd /tmp
 		rm -rf /tmp/${PACKAGE}.tar.gz
 		fancyss_md5_online=$(cat /tmp/version.json.js | run jq -r .$MD5NAME)
@@ -117,7 +117,7 @@ update_ss(){
 			install_fancyss
 		fi
 	else
-		echo_date "主服务器在线版本号：${fancyss_version_online} 和本地版本号：${ss_basic_version_local} 相同！"
+		echo_date "主服务器在线版本号：${fancyss_version_online} 不高于本地版本号：${ss_basic_version_local}，无需更新！"
 		echo_date "退出插件更新!"
 	fi
 }

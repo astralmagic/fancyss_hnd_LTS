@@ -1,13 +1,11 @@
-# [fancyss - 科学上网](https://hq450.github.io/fancyss/)
+# fancyss HND LTS
 
-- Fancyss is a project providing tools to across the GFW on asuswrt/merlin based router with software center. 
-- 此项目提供用于asuswrt、asuswrt-merlin为基础的，带软件中心固件（≥384）路由器的科学上网功能。
+基于 [hq450/fancyss](https://github.com/hq450/fancyss) `3.0` 分支的个人维护版本，面向 Asuswrt/Merlin 及带软件中心（≥384）的兼容固件。
 
----
-- 📺 广告1：[ChatGPT Plus、Netflix、Disney+、Spotify、YouTube等会员账号合租，95折优惠码: fancyss](https://nf.video/9QQkT)
-- 🚀 广告2：[fancyss合作top机场：<b>Nexitally/奶昔</b> | 全中转机场 / 优质线路资源 / 支持udp / 解锁流媒体，ChatGPT](https://nxboom.com/?PartnerCode=af8f126dd490446e80737444dd0064f6)
-- ✈️ 广告3：[fancyss高速机场推荐：<b>ssLinks</b> | 性价比全中转机场 / 80+线路 / 流媒体解锁，9折优惠码: fancyss](https://98a6251b6cd7471da86cca993b6dbe6f.36d.biz/#/register?code=yf6ozeEO)
----
+- 保留上游全平台源码与构建能力。
+- 预编译发布和实机维护范围为 `hnd`、`hnd_v8`，优先验证 `hnd_v8 full/lite`。
+- 运行时在线更新、Xray 更新和规则更新均使用本仓库受控源，不自动跟随上游降级。
+- 其他平台可继续从源码构建，但不作为本分支的稳定发布承诺。
 
 ## 插件特色
 
@@ -109,22 +107,14 @@ fancyss 3.0 当前同时区分“平台包”和“包型”两个维度，选�
 
 ## 插件下载
 
-插件下载有两种方式：
+本分支为 `hnd` 和 `hnd_v8` 提供预编译 full/lite 包。可在 `packages` 目录或 GitHub Releases 下载；历史版本仍保留在上游历史包仓库。
 
-1. 在`packages`目录下，点击tar.gz后缀文件，下载当前最新版本的离线安装包
-2. 在[fancyss_history_package](https://github.com/hq450/fancyss_history_package)项目中，包含**历史版本**和**最新版本**的离线安装包
+| 平台 | full | lite | 上游历史包 |
+| --- | --- | --- | --- |
+| hnd | [fancyss_hnd_full](https://raw.githubusercontent.com/astralmagic/fancyss_hnd_LTS/lts/packages/fancyss_hnd_full.tar.gz) | [fancyss_hnd_lite](https://raw.githubusercontent.com/astralmagic/fancyss_hnd_LTS/lts/packages/fancyss_hnd_lite.tar.gz) | [fancyss_hnd](https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd) |
+| hnd_v8 | [fancyss_hnd_v8_full](https://raw.githubusercontent.com/astralmagic/fancyss_hnd_LTS/lts/packages/fancyss_hnd_v8_full.tar.gz) | [fancyss_hnd_v8_lite](https://raw.githubusercontent.com/astralmagic/fancyss_hnd_LTS/lts/packages/fancyss_hnd_v8_lite.tar.gz) | [fancyss_hnd_v8](https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd_v8) |
 
-插件离线包下载导航：
-
-| 平台   | 最新full版本下载                                             | 最新lite版本下载                                             | 历史版本下载（包含最新版）                                   |
-| ------ | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| hnd    | [fancyss_hnd_full](https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/fancyss_hnd_full.tar.gz) | [fancyss_hnd_lite](https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/fancyss_hnd_lite.tar.gz) | [fancyss_hnd](https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd) |
-| hnd_v8 | [fancyss_hnd_v8_full](https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/fancyss_hnd_v8_full.tar.gz)  | [fancyss_hnd_v8_lite](https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/fancyss_hnd_v8_lite.tar.gz)  | [fancyss_hnd_v8](https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd_v8) |
-| qca    | [fancyss_qca_full](https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/fancyss_qca_full.tar.gz) | [fancyss_qca_lite](https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/fancyss_qca_lite.tar.gz) | [fancyss_qca](https://github.com/hq450/fancyss_history_package/tree/master/fancyss_qca) |
-| arm    | [fancyss_arm_full](https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/fancyss_arm_full.tar.gz) | [fancyss_arm_lite](https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/fancyss_arm_lite.tar.gz) | [fancyss_arm](https://github.com/hq450/fancyss_history_package/tree/master/fancyss_arm) |
-| mtk    | [fancyss_mtk_full](https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/fancyss_mtk_full.tar.gz) | [fancyss_mtk_lite](https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/fancyss_mtk_lite.tar.gz) | [fancyss_mtk](https://github.com/hq450/fancyss_history_package/tree/master/fancyss_mtk) |
-| ipq32    | [fancyss_ipq32_full](https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/fancyss_ipq32_full.tar.gz) | [fancyss_ipq32_lite](https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/fancyss_ipq32_lite.tar.gz) | [fancyss_ipq32](https://github.com/hq450/fancyss_history_package/tree/master/fancyss_ipq32) |
-| ipq64    | [fancyss_ipq64_full](https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/fancyss_ipq64_full.tar.gz) | [fancyss_ipq64_lite](https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/fancyss_ipq64_lite.tar.gz) | [fancyss_ipq64](https://github.com/hq450/fancyss_history_package/tree/master/fancyss_ipq64) |
+其他平台保留源码构建能力，但本分支不提供预编译发布或实机稳定性承诺。
 
 
 
@@ -183,18 +173,14 @@ tx：华硕天选青色皮肤
 >
 > 打包前会自动同步传统规则、重建 `rules_ng2` 的 `geosite/geoip` 资产，并从 `binaries/` 中拷贝当前指定版本的核心二进制。
 
-1. 使用 Linux 环境准备仓库，建议带上 submodule 一起拉取
+1. 使用 Linux 环境准备仓库，并带上 submodule 一起拉取
 
    ```bash
-   git clone --recurse-submodules https://github.com/hq450/fancyss.git
+   git clone --recurse-submodules https://github.com/astralmagic/fancyss_hnd_LTS.git
+   cd fancyss_hnd_LTS
    ```
 
-2. 切换到 `3.0` 分支
-
-   ```bash
-   cd fancyss
-   git checkout 3.0
-   ```
+2. 日常维护使用默认 `lts` 分支；候选修复先在独立 issue 分支验证，再合入 `lts`。
 
 3. 根据需要修改以下内容
    - 插件运行逻辑：`fancyss/`
@@ -218,16 +204,13 @@ tx：华硕天选青色皮肤
 
 ## 相关链接
 
-- **fancyss 3.0 更新日志**：https://github.com/hq450/fancyss/blob/3.0/Changelog.txt
-- **fancyss 历史离线包**：https://github.com/hq450/fancyss_history_package
+- **本分支更新日志**：https://github.com/astralmagic/fancyss_hnd_LTS/blob/lts/Changelog.txt
+- **上游项目**：https://github.com/hq450/fancyss
+- **上游历史离线包**：https://github.com/hq450/fancyss_history_package
 - **geotool**：https://github.com/hq450/geotool
 - **xapi-tool**：https://github.com/hq450/xapi-tool
-- **官改/梅改固件下载【网方网站】**：https://www.koolcenter.com
+- **官改/梅改固件下载【官方网站】**：https://www.koolcenter.com
 - **官改/梅改固件下载【固件镜像】**：https://fw.koolcenter.com
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=hq450/fancyss&type=Date)](https://star-history.com/#hq450/fancyss&Date)
 
 [^1]: RT-AC86U从384_81918_koolshare固件版本开始，使用的是asuswrt风格ui，而不是rog风格。
 [^2]: RT-AX89X采用的SoC为ipq8074/ipq8074A，支持64位系统，但是其固件是32位系统。

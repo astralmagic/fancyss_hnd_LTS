@@ -12,7 +12,7 @@ run_bg(){
 	env -i PATH=${PATH} "$@" >/dev/null 2>&1 &
 }
 XRAY_CONFIG_FILE="/koolshare/ss/xray.json"
-url_main="https://raw.githubusercontent.com/hq450/fancyss/3.0/binaries/xray"
+url_main="https://raw.githubusercontent.com/astralmagic/fancyss_hnd_LTS/lts/binaries/xray"
 
 # arm hnd hnd_v8 qca mtk
 pkg_arch=$(dbus get ss_basic_pkg_arch)
@@ -30,8 +30,11 @@ hnd_v8)
 qca)
 	ARCH=armv7
 	;;
-mtk)
+mtk|ipq64)
 	ARCH=arm64
+	;;
+ipq32)
+	ARCH=armv7
 	;;
 esac
 
@@ -72,8 +75,9 @@ get_latest_version(){
 			[ "${CUR_VER}" != "0" ] && echo_date "Xray已安装版本号低于更新版本，开始更新程序..."
 			update_now v${XVERSION}
 		elif [ "${COMP}" == "-1" ];then
-			[ "${CUR_VER}" != "0" ] && echo_date "Xray已安装版本号高于更新版本，开始降级程序..."
-			update_now v${XVERSION}
+			echo_date "Xray已安装版本号高于受控源版本，不执行自动降级！"
+			XRAY_LOCAL_VER=$(${_TARGET_FILE} version 2>/dev/null | head -n 1 | cut -d " " -f2)
+			[ -n "${XRAY_LOCAL_VER}" ] && dbus set ss_basic_xray_version="${XRAY_LOCAL_VER}"
 		else
 			XRAY_LOCAL_VER=$(${_TARGET_FILE} version 2>/dev/null | head -n 1 | cut -d " " -f2)
 			[ -n "${XRAY_LOCAL_VER}" ] && dbus set ss_basic_xray_version="${XRAY_LOCAL_VER}"

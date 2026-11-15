@@ -1126,7 +1126,7 @@ exit_install(){
 				rm -rf /tmp/fancyss_deferred_websocketd >/dev/null 2>&1 || true
 			fi
 			rm -f /tmp/fancyss_websocketd_changed >/dev/null 2>&1 || true
-			echo_date "fancyss项目地址：https://github.com/hq450/fancyss"
+			echo_date "fancyss HND LTS 项目地址：https://github.com/astralmagic/fancyss_hnd_LTS"
 			echo_date "退出安装！"
 			exit 1
 			;;
