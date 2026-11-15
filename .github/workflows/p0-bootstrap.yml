@@ -35,6 +35,22 @@ jobs:
           done
           diff -u "$RUNNER_TEMP/sub-tool/sub-tool-0.1.17.strings" "$RUNNER_TEMP/sub-tool/sub-tool-0.1.18.strings" || true
 
+      - name: Compare profile scope behavior
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'ss://YWVzLTI1Ni1nY206cGFzczBAZXhhbXBsZS5jb206NDQz#Node' > "$RUNNER_TEMP/sub-tool/input.txt"
+          for version in 0.1.17 0.1.18; do
+            "$RUNNER_TEMP/sub-tool/sub-tool-${version}" parse-uri-lines \
+              --input "$RUNNER_TEMP/sub-tool/input.txt" \
+              --output "$RUNNER_TEMP/sub-tool/output-${version}.jsonl" \
+              --format fancyss \
+              --group Example \
+              --source-tag example \
+              --profile-id alpha \
+              --source-url-hash abcd
+          done
+          diff -u "$RUNNER_TEMP/sub-tool/output-0.1.17.jsonl" "$RUNNER_TEMP/sub-tool/output-0.1.18.jsonl" || true
+
       - name: Upload unpacked binaries
         uses: actions/upload-artifact@v4
         with:
@@ -43,4 +59,5 @@ jobs:
             ${{ runner.temp }}/sub-tool/sub-tool-0.1.17
             ${{ runner.temp }}/sub-tool/sub-tool-0.1.18
             ${{ runner.temp }}/sub-tool/*.strings
+            ${{ runner.temp }}/sub-tool/output-*.jsonl
           retention-days: 3
