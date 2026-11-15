@@ -84,7 +84,7 @@ jobs:
           set -euo pipefail
           ZIG="$RUNNER_TEMP/zig/zig" bash scripts/build-release.sh --no-upx x86_64
           binary="dist/sub-tool-v0.1.18-linux-x86_64"
-          test "$("$binary" --version)" = "0.1.18"
+          test "$("$binary" version)" = "0.1.18"
           printf '%s\n' 'ss://YWVzLTI1Ni1nY206cGFzczBAZXhhbXBsZS5jb206NDQz#Node' > "$RUNNER_TEMP/sub-tool-input.txt"
           "$binary" parse-uri-lines \
             --input "$RUNNER_TEMP/sub-tool-input.txt" \
