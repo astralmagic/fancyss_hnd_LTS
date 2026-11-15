@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   xray:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-cores]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -90,6 +91,7 @@ jobs:
           retention-days: 7
 
   naive:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-cores]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -125,4 +127,53 @@ jobs:
         with:
           name: naive-v154.0.8037.49-5
           path: binaries/naive/v154.0.8037.49-5/
+          retention-days: 7
+
+  zig-tools:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-cores]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build and emulation tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y file qemu-user
+          mkdir -p "$RUNNER_TEMP/tools/upx5" "$RUNNER_TEMP/tools/upx4" "$RUNNER_TEMP/tools/bin" "$RUNNER_TEMP/zig"
+          curl -fsSL https://github.com/upx/upx/releases/download/v5.0.2/upx-5.0.2-amd64_linux.tar.xz | tar -xJ -C "$RUNNER_TEMP/tools/upx5" --strip-components=1
+          curl -fsSL https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-amd64_linux.tar.xz | tar -xJ -C "$RUNNER_TEMP/tools/upx4" --strip-components=1
+          curl -fsSL https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz | tar -xJ -C "$RUNNER_TEMP/zig" --strip-components=1
+          ln -s "$RUNNER_TEMP/tools/upx5/upx" "$RUNNER_TEMP/tools/bin/upx-5.0.2"
+          ln -s "$RUNNER_TEMP/tools/upx4/upx" "$RUNNER_TEMP/tools/bin/upx-4.2.4"
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+
+      - name: Test and build sub-tool and node-tool
+        run: |
+          set -euo pipefail
+          for tool in sub-tool node-tool; do
+            "$RUNNER_TEMP/zig/zig" build test --build-file "tool/${tool}/build.zig"
+            (
+              cd "tool/${tool}"
+              ZIG="$RUNNER_TEMP/zig/zig" bash scripts/build-release.sh x86_64 armv5te armv7a armv7hf aarch64
+            )
+          done
+
+      - name: Check rebuilt tool binaries
+        run: |
+          set -euo pipefail
+          qemu-aarch64 binaries/sub-tool/sub-tool-v0.1.18-linux-aarch64 version
+          qemu-aarch64 binaries/node-tool/node-tool-v0.1.16-linux-aarch64 version
+
+      - name: Upload Zig tool artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zig-tools-p0
+          path: |
+            binaries/sub-tool/sub-tool-v0.1.18-linux-*
+            binaries/sub-tool/SHA256SUMS-v0.1.18
+            binaries/node-tool/node-tool-v0.1.16-linux-*
+            binaries/node-tool/SHA256SUMS-v0.1.16
           retention-days: 7
