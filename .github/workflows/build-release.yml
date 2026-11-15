@@ -3,10 +3,12 @@ name: Build HND packages
 on:
   push:
     branches:
-      - candidate/p0
       - lts
     tags:
       - 'v*'
+  pull_request:
+    branches:
+      - lts
   workflow_dispatch:
 
 permissions:
@@ -29,13 +31,16 @@ jobs:
         run: |
           set -euo pipefail
           sh -n build.sh
+          sh -n scripts/update_geodata_assets.sh
           sh -n fancyss/scripts/ss_base.sh
           sh -n fancyss/scripts/ss_update.sh
           sh -n fancyss/scripts/ss_xray.sh
           sh -n fancyss/scripts/ss_rule_update.sh
           sh -n fancyss/ss/ssconfig.sh
           sh -n fancyss/install.sh
-          make -n -C binaries update_xray update_vray-plugin update_anytls_zig update_smartdns update_chinadns_ng >/dev/null
+          bash -n binaries/zig-linux-compat.sh
+          bash -n binaries/smartdns/get_smartdns.sh
+          make -n -C binaries update_xray update_v2ray_plugin update_vray-plugin update_anytls_zig update_smartdns update_chinadns_ng update_sub_tool update_node_tool >/dev/null
 
       - name: Check lazy node environment derivation
         run: |
@@ -110,7 +115,71 @@ jobs:
           assert "开始降级程序" not in xray
           PY
 
-      - name: Build all packages
+      - name: Verify Xray version comparison with git suffix
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/ss-xray-test"
+          mkdir -p "$work"
+          awk '/^get_latest_version\(\)/{p=1} p{print} p&&/^}/{p=0}' fancyss/scripts/ss_xray.sh > "$work/xray_fn.sh"
+          cat > "$work/xray_mock" <<'EOF'
+          #!/bin/sh
+          printf 'Xray %s (Mock, Penetrates Everything.) Custom\n' "${MOCK_XRAY_VER}"
+          EOF
+          chmod +x "$work/xray_mock"
+          cat > "$work/test.sh" <<'EOF'
+          set -eu
+          url_main="https://example.invalid"
+          _TARGET_FILE="$WORK/xray_mock"
+          echo_date() { printf '%s\n' "$*"; }
+          run() { "$@"; }
+          curl() { printf 'v26.11.9-676eaf6\n'; }
+          failed_warning_xray() { echo "unexpected failed_warning_xray" >&2; exit 1; }
+          dbus() {
+            if [ "$1" = "set" ]; then
+              DBUS_SET="$2"
+            fi
+          }
+          update_now() { UPDATE_ARG="$1"; }
+          versioncmp() {
+            python3 - "$1" "$2" <<'PY'
+          import sys
+          a = [int(x) for x in sys.argv[1].split(".") if x.isdigit()]
+          b = [int(x) for x in sys.argv[2].split(".") if x.isdigit()]
+          n = max(len(a), len(b))
+          a += [0] * (n - len(a))
+          b += [0] * (n - len(b))
+          print("1" if a < b else ("-1" if a > b else "0"))
+          PY
+          }
+          . "$WORK/xray_fn.sh"
+          assert_eq() { test "$1" = "$2" || { echo "expected [$2], got [$1]" >&2; exit 1; }; }
+
+          MOCK_XRAY_VER="v26.11.9"
+          export MOCK_XRAY_VER
+          UPDATE_ARG=""
+          DBUS_SET=""
+          get_latest_version latest_2
+          assert_eq "$UPDATE_ARG" ""
+          assert_eq "$DBUS_SET" "ss_basic_xray_version=v26.11.9"
+
+          MOCK_XRAY_VER="v26.6.1"
+          export MOCK_XRAY_VER
+          UPDATE_ARG=""
+          DBUS_SET=""
+          get_latest_version latest_2
+          assert_eq "$UPDATE_ARG" "v26.11.9-676eaf6"
+
+          MOCK_XRAY_VER="v26.12.0"
+          export MOCK_XRAY_VER
+          UPDATE_ARG=""
+          DBUS_SET=""
+          get_latest_version latest_2
+          assert_eq "$UPDATE_ARG" ""
+          assert_eq "$DBUS_SET" "ss_basic_xray_version=v26.12.0"
+          EOF
+          WORK="$work" bash "$work/test.sh"
+
+      - name: Build HND packages
         run: bash build.sh
 
       - name: Verify package manifest
@@ -134,14 +203,42 @@ jobs:
               expected_version = file.read().strip()
           assert manifest["version"] == expected_version, (manifest["version"], expected_version)
           assert expected_version
-          for platform in ("hnd", "hnd_v8", "qca", "arm", "mtk", "ipq32", "ipq64"):
+          expected_keys = {
+              "name",
+              "version",
+              "md5_hnd_full",
+              "md5_hnd_lite",
+              "md5_hnd_v8_full",
+              "md5_hnd_v8_lite",
+          }
+          assert set(manifest.keys()) == expected_keys, (set(manifest.keys()), expected_keys)
+          expected_tarballs = set()
+          for platform in ("hnd", "hnd_v8"):
               for package_type in ("full", "lite"):
                   name = f"fancyss_{platform}_{package_type}"
-                  path = f"packages/{name}.tar.gz"
+                  filename = f"{name}.tar.gz"
+                  expected_tarballs.add(filename)
+                  path = f"packages/{filename}"
                   with open(path, "rb") as file:
                       actual = hashlib.md5(file.read()).hexdigest()
                   assert actual == manifest[f"md5_{platform}_{package_type}"], (name, actual)
+          actual_tarballs = {
+              f
+              for f in os.listdir("packages")
+              if f.endswith(".tar.gz") and not f.endswith("_debug.tar.gz")
+          }
+          assert actual_tarballs == expected_tarballs, (actual_tarballs, expected_tarballs)
           PY
+
+      - name: Verify source tree clean after build
+        run: |
+          set -euo pipefail
+          dirty="$(git status --porcelain -- fancyss binaries rules_ng rules_ng2 scripts tool)"
+          if [ -n "$dirty" ]; then
+            echo "Build unexpectedly dirtied tracked source directories:" >&2
+            printf '%s\n' "$dirty" >&2
+            exit 1
+          fi
 
       - name: Verify packaged binaries
         run: |

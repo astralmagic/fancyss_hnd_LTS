@@ -177,11 +177,12 @@ build_count_summary() {
 
 	jq -n \
 		--arg source "${source}" \
+		--arg gen_epoch "${SOURCE_DATE_EPOCH:-}" \
 		--argjson site "${site_json}" \
 		--argjson ip "${ip_json}" \
 		--slurpfile presets "${PRESETS_JSON}" '
 		{
-			generated_at: (now | floor),
+			generated_at: (if ($gen_epoch | length) > 0 then ($gen_epoch | tonumber) else (now | floor) end),
 			source: $source,
 			site: $site,
 			ip: $ip,
@@ -198,6 +199,13 @@ build_count_summary() {
 			)
 		}
 	' > "${summary_tmp}"
+	if [ "${DO_FETCH}" = "0" ] && [ -f "${COUNTS_JSON}" ]; then
+		existing_norm=$(jq -cS 'del(.generated_at)' "${COUNTS_JSON}" 2>/dev/null || true)
+		new_norm=$(jq -cS 'del(.generated_at)' "${summary_tmp}" 2>/dev/null || true)
+		if [ -n "${existing_norm}" ] && [ "${existing_norm}" = "${new_norm}" ]; then
+			cp -f "${COUNTS_JSON}" "${summary_tmp}"
+		fi
+	fi
 	mv -f "${summary_tmp}" "${COUNTS_JSON}"
 }
 

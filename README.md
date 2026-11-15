@@ -191,16 +191,14 @@ tx：华硕天选青色皮肤
 4. 运行打包脚本
 
    ```bash
-   sh build.sh
+   bash build.sh
    ```
 
 5. 当前 `build.sh` 的实际行为
-   - 会先清空并重建 `packages/`
-   - 会生成 7 个平台各 2 个 `release` 包，共 14 个：`fancyss_<platform>_<full|lite>.tar.gz`
-   - 会额外生成 7 个平台的 `full debug` 包：`fancyss_<platform>_full_debug.tar.gz`
-   - 生成完成后会同时更新 `packages/version.json.js`
+   - 默认面向 `hnd` 与 `hnd_v8`：先清空并重建 `packages/`，生成 `fancyss_hnd_{full,lite}.tar.gz`、`fancyss_hnd_v8_{full,lite}.tar.gz`（共 4 个 `release` 包，以及 2 个本地 `full debug` 包）和仅含 HND 校验字段的 `packages/version.json.js`
+   - 若需从源码构建上游全部 7 个平台，可执行 `bash build.sh --all-platforms`
 
-6. GitHub Actions 的 **Build HND packages** 会执行相同的全量构建，校验版本清单和包内核心二进制，并仅发布 HND/HND v8 的 full/lite 包。
+6. GitHub Actions 的 **Build HND packages** 会执行 `bash build.sh`，校验 HND 版本清单、包内核心二进制与工作区干净度，并在 Tag 发布时上传 HND/HND v8 的 full/lite 包及 `version.json.js`。
 
 7. 如果你只想打某个平台、某种包型，或者不想同时生成 debug 包，直接修改 [build.sh](./build.sh) 里的 `make()` 即可
 

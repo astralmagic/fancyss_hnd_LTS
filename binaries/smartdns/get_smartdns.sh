@@ -41,6 +41,7 @@ fi
 
 OUT_DIR="v${VER}"
 if [ -d "${OUT_DIR}" ]; then
+	echo -n "${OUT_DIR}" > latest.txt
 	echo "already exists: ${SCRIPT_DIR}/${OUT_DIR}"
 	exit 0
 fi

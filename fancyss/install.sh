@@ -678,12 +678,12 @@ platform_test(){
 				if [ "${ROT_ARCH}" == "armv7l" ]; then
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该内核版本！"
 					echo_date "建议使用fancyss_hnd_full或者fancyss_hnd_lite！"
-					echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd"
+					echo_date "下载地址：https://github.com/astralmagic/fancyss_hnd_LTS/releases"
 					exit_install 1
 				elif [ "${ROT_ARCH}" == "aarch64" ]; then
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该内核版本！"
 					echo_date "建议使用fancyss_hnd_v8_full或者fancyss_hnd_v8_lite！"
-					echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd"
+					echo_date "下载地址：https://github.com/astralmagic/fancyss_hnd_LTS/releases"
 					exit_install 1
 				else
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该架构！退出！"
@@ -739,7 +739,7 @@ platform_test(){
 					echo_date "----------------------------------------------------------------------"
 					echo_date "你的机型是${ROT_ARCH}架构，当前使用的是32位版本的fancyss！"
 					echo_date "建议使用64位的fancyss，如fancyss_hnd_v8_full或者fancyss_hnd_v8_lite！"
-					echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd_v8"
+					echo_date "下载地址：https://github.com/astralmagic/fancyss_hnd_LTS/releases"
 					echo_date "----------------------------------------------------------------------"
 					echo_date
 					echo_date "继续安装32位的fancyss_${PKG_ARCH}_${PKG_TYPE}！"
@@ -799,7 +799,7 @@ platform_test(){
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该架构！"
 					echo_date "原因：无法在32位的路由器上使用64位程序的fancyss_${PKG_ARCH}_${PKG_TYPE}！"
 					echo_date "建议使用fancyss_hnd_full或者fancyss_hnd_lite！"
-					echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd"
+					echo_date "下载地址：https://github.com/astralmagic/fancyss_hnd_LTS/releases"
 					echo_date "退出安装！"
 					exit_install 1
 				elif [ "${ROT_ARCH}" = "aarch64" ]; then
@@ -868,12 +868,12 @@ platform_test(){
 				if [ "${ROT_ARCH}" = "armv7l" ]; then
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该内核版本！"
 					echo_date "建议使用fancyss_hnd_full或者fancyss_hnd_lite！"
-					echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd"
+					echo_date "下载地址：https://github.com/astralmagic/fancyss_hnd_LTS/releases"
 					exit_install 1
 				elif [ "${ROT_ARCH}" = "aarch64" ]; then
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该内核版本！"
 					echo_date "建议使用fancyss_hnd_v8_full或者fancyss_hnd_v8_lite！"
-					echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd"
+					echo_date "下载地址：https://github.com/astralmagic/fancyss_hnd_LTS/releases"
 					exit_install 1
 				else
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该架构！退出！"
@@ -945,12 +945,12 @@ platform_test(){
 				if [ "${ROT_ARCH}" == "armv7l" ]; then
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该内核版本！"
 					echo_date "建议使用fancyss_hnd_full或者fancyss_hnd_lite！"
-					echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd"
+					echo_date "下载地址：https://github.com/astralmagic/fancyss_hnd_LTS/releases"
 					exit_install 1
 				elif [ "${ROT_ARCH}" == "aarch64" ]; then
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该内核版本！"
 					echo_date "建议使用fancyss_hnd_v8_full或者fancyss_hnd_v8_lite！"
-					echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd"
+					echo_date "下载地址：https://github.com/astralmagic/fancyss_hnd_LTS/releases"
 					exit_install 1
 				else
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该架构！退出！"
@@ -1004,12 +1004,12 @@ platform_test(){
 				if [ "${ROT_ARCH}" = "armv7l" ]; then
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该内核版本！"
 					echo_date "建议使用fancyss_hnd_full或者fancyss_hnd_lite！"
-					echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd"
+					echo_date "下载地址：https://github.com/astralmagic/fancyss_hnd_LTS/releases"
 					exit_install 1
 				elif [ "${ROT_ARCH}" = "aarch64" ]; then
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该内核版本！"
 					echo_date "建议使用fancyss_hnd_v8_full或者fancyss_hnd_v8_lite！"
-					echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd"
+					echo_date "下载地址：https://github.com/astralmagic/fancyss_hnd_LTS/releases"
 					exit_install 1
 				else
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该架构！退出！"
@@ -1063,12 +1063,12 @@ platform_test(){
 				if [ "${ROT_ARCH}" = "armv7l" ]; then
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该内核版本！"
 					echo_date "建议使用fancyss_hnd_full或者fancyss_hnd_lite！"
-					echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd"
+					echo_date "下载地址：https://github.com/astralmagic/fancyss_hnd_LTS/releases"
 					exit_install 1
 				elif [ "${ROT_ARCH}" = "aarch64" ]; then
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该内核版本！"
 					echo_date "建议使用fancyss_hnd_v8_full或者fancyss_hnd_v8_lite！"
-					echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_hnd"
+					echo_date "下载地址：https://github.com/astralmagic/fancyss_hnd_LTS/releases"
 					exit_install 1
 				else
 					echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，fancyss_${PKG_ARCH}_${PKG_TYPE}不适用于该架构！退出！"

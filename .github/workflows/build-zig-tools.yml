@@ -1,0 +1,270 @@
+name: Build Zig tools
+
+on:
+  pull_request:
+    branches:
+      - lts
+    paths:
+      - 'tool/sub-tool/**'
+      - 'tool/node-tool/**'
+      - 'binaries/zig-linux-compat.sh'
+      - 'binaries/Makefile'
+      - '.github/workflows/build-zig-tools.yml'
+  push:
+    branches:
+      - lts
+    paths:
+      - 'tool/sub-tool/**'
+      - 'tool/node-tool/**'
+      - 'binaries/zig-linux-compat.sh'
+      - 'binaries/Makefile'
+      - '.github/workflows/build-zig-tools.yml'
+  workflow_dispatch:
+    inputs:
+      tools:
+        description: 'Makefile targets to build (default: update_sub_tool update_node_tool)'
+        required: false
+        default: 'update_sub_tool update_node_tool'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build and verification dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq xz-utils file binutils qemu-user
+
+      - name: Install Zig 0.15.2 outside PATH
+        run: |
+          set -euo pipefail
+          zig_meta="$(curl -fsSL https://ziglang.org/download/index.json | jq -r '.["0.15.2"]["x86_64-linux"] | "\(.tarball)\t\(.shasum)"')"
+          zig_url="${zig_meta%%$'\t'*}"
+          zig_sha="${zig_meta#*$'\t'}"
+          test -n "$zig_url"
+          test -n "$zig_sha"
+          curl -fsSL "$zig_url" -o "$RUNNER_TEMP/zig.tar.xz"
+          echo "${zig_sha}  $RUNNER_TEMP/zig.tar.xz" | sha256sum -c -
+          sudo rm -rf /opt/zig-0.15.2
+          sudo mkdir -p /opt/zig-0.15.2
+          sudo tar -xJf "$RUNNER_TEMP/zig.tar.xz" --strip-components=1 -C /opt/zig-0.15.2
+          rm -f "$RUNNER_TEMP/zig.tar.xz"
+          test "$(/opt/zig-0.15.2/zig version)" = "0.15.2"
+          if command -v zig >/dev/null 2>&1; then
+            echo "zig must not be on PATH during wrapped builds" >&2
+            exit 1
+          fi
+
+      - name: Install UPX 4.2.4 and 5.0.2
+        run: |
+          set -euo pipefail
+          for ver in 4.2.4 5.0.2; do
+            arc="upx-${ver}-amd64_linux.tar.xz"
+            curl -fsSL "https://github.com/upx/upx/releases/download/v${ver}/${arc}" -o "$RUNNER_TEMP/${arc}"
+            tar -xJf "$RUNNER_TEMP/${arc}" -C "$RUNNER_TEMP"
+            sudo install -m 0755 "$RUNNER_TEMP/upx-${ver}-amd64_linux/upx" "/usr/local/bin/upx-${ver}"
+            rm -rf "$RUNNER_TEMP/${arc}" "$RUNNER_TEMP/upx-${ver}-amd64_linux"
+          done
+          test "$(upx-4.2.4 --version | sed -n '1s/^upx //p')" = "4.2.4"
+          test "$(upx-5.0.2 --version | sed -n '1s/^upx //p')" = "5.0.2"
+
+      - name: Run Zig unit tests
+        run: |
+          set -euo pipefail
+          (cd tool/sub-tool && /opt/zig-0.15.2/zig build test)
+          (cd tool/node-tool && /opt/zig-0.15.2/zig build test)
+
+      - name: Self-test zig-linux-compat wrapper
+        run: |
+          set -euo pipefail
+          bash -n binaries/zig-linux-compat.sh
+          case "$(REAL_ZIG=/bin/echo binaries/zig-linux-compat.sh build-exe -target x86_64-linux-musl)" in
+            *"-target x86_64-linux.4.1.0...4.1.0-musl"*) ;;
+            *) echo "x86_64 rewrite failed" >&2; exit 1 ;;
+          esac
+          case "$(REAL_ZIG=/bin/echo binaries/zig-linux-compat.sh build-exe -target arm-linux-musleabi -mcpu=arm926ej_s)" in
+            *"-target arm-linux.2.6.36...2.6.36-musleabi"*) ;;
+            *) echo "armv5te rewrite failed" >&2; exit 1 ;;
+          esac
+          case "$(REAL_ZIG=/bin/echo binaries/zig-linux-compat.sh build-exe -target arm-linux-musleabi -mcpu=mpcorenovfp)" in
+            *"-target arm-linux.4.1.0...4.1.0-musleabi"*) ;;
+            *) echo "armv7a rewrite failed" >&2; exit 1 ;;
+          esac
+          case "$(REAL_ZIG=/bin/echo binaries/zig-linux-compat.sh build-exe -target arm-linux-musleabihf -mcpu=cortex_a9)" in
+            *"-target arm-linux.4.1.0...4.1.0-musleabihf"*) ;;
+            *) echo "armv7hf rewrite failed" >&2; exit 1 ;;
+          esac
+          case "$(REAL_ZIG=/bin/echo binaries/zig-linux-compat.sh build-exe -Dtarget=aarch64-linux-musl)" in
+            *"-Dtarget=aarch64-linux.4.1.0...4.1.0-musl"*) ;;
+            *) echo "aarch64 -Dtarget= rewrite failed" >&2; exit 1 ;;
+          esac
+
+      - name: Build Zig release binaries via Makefile
+        run: |
+          set -euo pipefail
+          targets="${{ inputs.tools || 'update_sub_tool update_node_tool' }}"
+          REAL_ZIG=/opt/zig-0.15.2/zig make -C binaries ${targets} | tee "$RUNNER_TEMP/zig-build.log"
+          grep -Eq 'Using Zig:' "$RUNNER_TEMP/zig-build.log"
+          if grep -E 'Using Zig:' "$RUNNER_TEMP/zig-build.log" | grep -Evq 'binaries/zig-linux-compat\.sh \(0\.15\.2\)'; then
+            echo "Build bypassed binaries/zig-linux-compat.sh or used wrong Zig version" >&2
+            exit 1
+          fi
+          SUB_TOOL_VERSION="$(tr -d '\r\n' < tool/sub-tool/VERSION)"
+          NODE_TOOL_VERSION="$(tr -d '\r\n' < tool/node-tool/VERSION)"
+          echo "SUB_TOOL_VERSION=${SUB_TOOL_VERSION}" >> "$GITHUB_ENV"
+          echo "NODE_TOOL_VERSION=${NODE_TOOL_VERSION}" >> "$GITHUB_ENV"
+          echo "BUILT_TARGETS=${targets}" >> "$GITHUB_ENV"
+
+      - name: Verify SHA256SUMS and Linux 4.1 syscall compatibility
+        run: |
+          set -euo pipefail
+          tools_to_check=()
+          case " ${BUILT_TARGETS} " in
+            *" update_sub_tool "*) tools_to_check+=("sub-tool:${SUB_TOOL_VERSION}") ;;
+          esac
+          case " ${BUILT_TARGETS} " in
+            *" update_node_tool "*) tools_to_check+=("node-tool:${NODE_TOOL_VERSION}") ;;
+          esac
+
+          mkdir -p "$RUNNER_TEMP/verify"
+          for item in "${tools_to_check[@]}"; do
+            tool="${item%%:*}"
+            ver="${item#*:}"
+            echo "=== Verifying ${tool} v${ver} ==="
+            (cd "binaries/${tool}" && sha256sum -c "SHA256SUMS-v${ver}")
+
+            for arch in x86_64 aarch64 armv7hf armv5te; do
+              src="binaries/${tool}/${tool}-v${ver}-linux-${arch}"
+              dst="$RUNNER_TEMP/verify/${tool}-linux-${arch}"
+              cp -f "$src" "$dst"
+              chmod 0755 "$dst"
+              if upx-5.0.2 -t "$dst" >/dev/null 2>&1; then
+                upx-5.0.2 -d "$dst" >/dev/null
+              elif upx-4.2.4 -t "$dst" >/dev/null 2>&1; then
+                upx-4.2.4 -d "$dst" >/dev/null
+              fi
+            done
+
+            x64_bin="$RUNNER_TEMP/verify/${tool}-linux-x86_64"
+            objdump -d "$x64_bin" > "$RUNNER_TEMP/verify/${tool}-x86_64.asm"
+            python3 - "$RUNNER_TEMP/verify/${tool}-x86_64.asm" <<'PY'
+          import re
+          import sys
+          asm_path = sys.argv[1]
+          pat = re.compile(r"\$0x(?:14c|1b7)\b")
+          hits = []
+          with open(asm_path, "r", errors="replace") as f:
+              for lineno, line in enumerate(f, 1):
+                  if pat.search(line):
+                      hits.append(f"{lineno}: {line.rstrip()}")
+          if hits:
+              print("\n".join(hits), file=sys.stderr)
+              raise SystemExit(f"Found forbidden statx/faccessat2 immediate in {asm_path}: {len(hits)} hit(s)")
+          print(f"{asm_path}: 0 hits for $0x14c/$0x1b7")
+          PY
+
+            arm64_bin="$RUNNER_TEMP/verify/${tool}-linux-aarch64"
+            python3 - "$arm64_bin" <<'PY'
+          import struct
+          import sys
+          path = sys.argv[1]
+          data = open(path, "rb").read()
+          assert data[:4] == b"\x7fELF" and data[4] == 2 and data[5] == 1, path
+          e_phoff = struct.unpack_from("<Q", data, 32)[0]
+          e_phentsize = struct.unpack_from("<H", data, 54)[0]
+          e_phnum = struct.unpack_from("<H", data, 56)[0]
+          forbidden = {
+              0x52802468: "mov w8, #291 (statx)",
+              0xd2802468: "mov x8, #291 (statx)",
+              0x528036e8: "mov w8, #439 (faccessat2)",
+              0xd28036e8: "mov x8, #439 (faccessat2)",
+          }
+          svc_count = 0
+          hits = []
+          for idx in range(e_phnum):
+              off = e_phoff + idx * e_phentsize
+              p_type, p_flags = struct.unpack_from("<II", data, off)
+              p_offset = struct.unpack_from("<Q", data, off + 8)[0]
+              p_filesz = struct.unpack_from("<Q", data, off + 32)[0]
+              if p_type != 1 or (p_flags & 1) == 0:
+                  continue
+              seg = data[p_offset : p_offset + p_filesz]
+              insns = [struct.unpack_from("<I", seg, pos)[0] for pos in range(0, len(seg) - 3, 4)]
+              for i, insn in enumerate(insns):
+                  if insn == 0xd4000001:
+                      svc_count += 1
+                      window = insns[max(0, i - 16) : i]
+                      for prev in window:
+                          if prev in forbidden:
+                              hits.append((p_offset + i * 4, forbidden[prev]))
+          assert svc_count > 0, f"no svc #0 instructions found in {path}"
+          if hits:
+              raise SystemExit(f"Forbidden aarch64 syscalls near svc #0 in {path}: {hits}")
+          print(f"{path}: scanned {svc_count} svc #0 site(s), 0 statx/faccessat2 hits")
+          PY
+
+            for qarch in aarch64 armv7hf armv5te; do
+              qbin="$RUNNER_TEMP/verify/${tool}-linux-${qarch}"
+              if [ "$qarch" = "aarch64" ]; then
+                qemu_cmd="qemu-aarch64"
+              else
+                qemu_cmd="qemu-arm"
+              fi
+              work="$RUNNER_TEMP/verify/work-${tool}-${qarch}"
+              strace_log="$RUNNER_TEMP/verify/strace-${tool}-${qarch}.log"
+              rm -rf "$work" "$strace_log"
+              mkdir -p "$work"
+
+              if [ "$tool" = "sub-tool" ]; then
+                printf 'ss://YWVzLTI1Ni1nY206cGFzcw==@example.com:8388#TestNode\n' > "$work/uris.txt"
+                : > "$work/prev.jsonl"
+                "$qemu_cmd" -strace "$qbin" parse-uri-lines \
+                  --input "$work/uris.txt" \
+                  --output "$work/out.jsonl" \
+                  --compare-with "$work/prev.jsonl" \
+                  --diff-output "$work/diff.txt" \
+                  --summary-output "$work/summary.json" \
+                  2>"$strace_log"
+                test -s "$work/out.jsonl"
+                test -s "$work/summary.json"
+              else
+                printf '{"id":"n1"}\n' > "$work/keep.jsonl"
+                printf '{"id":"n2"}\n' > "$work/stale.jsonl"
+                printf 'keep_tag\n' > "$work/active.txt"
+                printf '%s\t1\tkeep_tag\tKeep\n%s\t1\tstale_tag\tStale\n' "$work/keep.jsonl" "$work/stale.jsonl" > "$work/meta.tsv"
+                "$qemu_cmd" -strace "$qbin" prune-export-sources \
+                  --meta "$work/meta.tsv" \
+                  --active-source-tags "$work/active.txt" \
+                  --format json \
+                  >/dev/null 2>"$strace_log"
+                test -f "$work/keep.jsonl"
+                test ! -e "$work/stale.jsonl"
+              fi
+
+              grep -Eq 'openat\(' "$strace_log"
+              if grep -Eq '(^|[[:space:]])(statx|faccessat2)\(' "$strace_log"; then
+                grep -E '(^|[[:space:]])(statx|faccessat2)\(' "$strace_log" >&2
+                echo "Forbidden syscall detected in ${tool} (${qarch}) strace!" >&2
+                exit 1
+              fi
+              echo "${tool} (${qarch}): qemu strace clean (0 statx/faccessat2)"
+            done
+          done
+
+      - name: Upload Zig tool binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: zig-tool-binaries
+          path: |
+            binaries/sub-tool/sub-tool-v${{ env.SUB_TOOL_VERSION }}-linux-*
+            binaries/sub-tool/SHA256SUMS-v${{ env.SUB_TOOL_VERSION }}
+            binaries/node-tool/node-tool-v${{ env.NODE_TOOL_VERSION }}-linux-*
+            binaries/node-tool/SHA256SUMS-v${{ env.NODE_TOOL_VERSION }}
+          retention-days: 7
