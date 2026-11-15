@@ -76,7 +76,7 @@ jobs:
 
       - name: Run sub-tool tests
         working-directory: tool/sub-tool
-        run: "$RUNNER_TEMP/zig/zig" build test
+        run: $RUNNER_TEMP/zig/zig build test
 
       - name: Verify recovered 0.1.18 behavior
         working-directory: tool/sub-tool
