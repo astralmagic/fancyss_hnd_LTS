@@ -118,6 +118,28 @@ for arg in "$@"; do
     esac
 done
 
+if [[ "${ZIG_COMPAT_VERBOSE:-0}" == "1" ]]; then
+    expect_log_next=0
+    for arg in "${out_args[@]}"; do
+        if [[ "$expect_log_next" == "1" ]]; then
+            printf '[zig-linux-compat] effective target: %s\n' "$arg" >&2
+            expect_log_next=0
+            continue
+        fi
+        case "$arg" in
+            -target)
+                expect_log_next=1
+                ;;
+            -target=*)
+                printf '[zig-linux-compat] effective target: %s\n' "${arg#-target=}" >&2
+                ;;
+            -Dtarget=*)
+                printf '[zig-linux-compat] effective target: %s\n' "${arg#-Dtarget=}" >&2
+                ;;
+        esac
+    done
+fi
+
 if [[ ${#out_args[@]} -eq 0 ]]; then
     exec "$real_zig"
 else

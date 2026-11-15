@@ -110,12 +110,30 @@ jobs:
         run: |
           set -euo pipefail
           targets="${{ inputs.tools || 'update_sub_tool update_node_tool' }}"
-          REAL_ZIG=/opt/zig-0.15.2/zig make -C binaries ${targets} | tee "$RUNNER_TEMP/zig-build.log"
+          ZIG_COMPAT_VERBOSE=1 REAL_ZIG=/opt/zig-0.15.2/zig make -C binaries ${targets} 2>&1 | tee "$RUNNER_TEMP/zig-build.log"
           grep -Eq 'Using Zig:' "$RUNNER_TEMP/zig-build.log"
           if grep -E 'Using Zig:' "$RUNNER_TEMP/zig-build.log" | grep -Evq 'binaries/zig-linux-compat\.sh \(0\.15\.2\)'; then
             echo "Build bypassed binaries/zig-linux-compat.sh or used wrong Zig version" >&2
             exit 1
           fi
+          min_hits=0
+          case " ${targets} " in
+            *" update_sub_tool "*) min_hits=$((min_hits + 1)) ;;
+          esac
+          case " ${targets} " in
+            *" update_node_tool "*) min_hits=$((min_hits + 1)) ;;
+          esac
+          for triple in \
+            aarch64-linux.4.1.0...4.1.0-musl \
+            arm-linux.2.6.36...2.6.36-musleabi \
+            arm-linux.4.1.0...4.1.0-musleabi \
+            arm-linux.4.1.0...4.1.0-musleabihf \
+            x86_64-linux.4.1.0...4.1.0-musl
+          do
+            hits="$(grep -Fxc "[zig-linux-compat] effective target: ${triple}" "$RUNNER_TEMP/zig-build.log" || true)"
+            echo "Effective target ${triple}: ${hits} invocation(s)"
+            test "$hits" -ge "$min_hits"
+          done
           SUB_TOOL_VERSION="$(tr -d '\r\n' < tool/sub-tool/VERSION)"
           NODE_TOOL_VERSION="$(tr -d '\r\n' < tool/node-tool/VERSION)"
           echo "SUB_TOOL_VERSION=${SUB_TOOL_VERSION}" >> "$GITHUB_ENV"
@@ -134,6 +152,42 @@ jobs:
           esac
 
           mkdir -p "$RUNNER_TEMP/verify"
+          cat > "$RUNNER_TEMP/verify/run_linux41_seccomp.py" <<'PY'
+          import ctypes, os, struct, sys
+
+          PR_SET_NO_NEW_PRIVS = 38
+          PR_SET_SECCOMP = 22
+          SECCOMP_MODE_FILTER = 2
+          AUDIT_ARCH_X86_64 = 0xC000003E
+          SECCOMP_RET_ALLOW = 0x7FFF0000
+          SECCOMP_RET_ERRNO_ENOSYS = 0x00050026
+
+          blocked = [326, 327, 328, 332, 334, 435, 436, 437, 439]
+          n = len(blocked)
+          insns = [
+              struct.pack("<HBBI", 0x20, 0, 0, 4),
+              struct.pack("<HBBI", 0x15, 0, n + 1, AUDIT_ARCH_X86_64),
+              struct.pack("<HBBI", 0x20, 0, 0, 0),
+          ]
+          for idx, nr in enumerate(blocked):
+              insns.append(struct.pack("<HBBI", 0x15, n - idx, 0, nr))
+          insns.append(struct.pack("<HBBI", 0x06, 0, 0, SECCOMP_RET_ALLOW))
+          insns.append(struct.pack("<HBBI", 0x06, 0, 0, SECCOMP_RET_ERRNO_ENOSYS))
+
+          buf = ctypes.create_string_buffer(b"".join(insns))
+
+          class SockFprog(ctypes.Structure):
+              _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.c_void_p)]
+
+          prog = SockFprog(len(insns), ctypes.cast(buf, ctypes.c_void_p).value)
+          libc = ctypes.CDLL("libc.so.6", use_errno=True)
+          if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
+              raise OSError(ctypes.get_errno(), "PR_SET_NO_NEW_PRIVS")
+          if libc.prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.byref(prog), 0, 0) != 0:
+              raise OSError(ctypes.get_errno(), "PR_SET_SECCOMP")
+          os.execvp(sys.argv[1], sys.argv[1:])
+          PY
+
           for item in "${tools_to_check[@]}"; do
             tool="${item%%:*}"
             ver="${item#*:}"
@@ -158,7 +212,7 @@ jobs:
           import re
           import sys
           asm_path = sys.argv[1]
-          pat = re.compile(r"\$0x(?:14c|1b7)\b")
+          pat = re.compile(r"\$0x146\b")
           hits = []
           with open(asm_path, "r", errors="replace") as f:
               for lineno, line in enumerate(f, 1):
@@ -166,49 +220,38 @@ jobs:
                       hits.append(f"{lineno}: {line.rstrip()}")
           if hits:
               print("\n".join(hits), file=sys.stderr)
-              raise SystemExit(f"Found forbidden statx/faccessat2 immediate in {asm_path}: {len(hits)} hit(s)")
-          print(f"{asm_path}: 0 hits for $0x14c/$0x1b7")
+              raise SystemExit(f"Found forbidden copy_file_range ($0x146) in {asm_path}: {len(hits)} hit(s)")
+          print(f"{asm_path}: 0 hits for $0x146 (copy_file_range)")
           PY
 
-            arm64_bin="$RUNNER_TEMP/verify/${tool}-linux-aarch64"
-            python3 - "$arm64_bin" <<'PY'
-          import struct
-          import sys
-          path = sys.argv[1]
-          data = open(path, "rb").read()
-          assert data[:4] == b"\x7fELF" and data[4] == 2 and data[5] == 1, path
-          e_phoff = struct.unpack_from("<Q", data, 32)[0]
-          e_phentsize = struct.unpack_from("<H", data, 54)[0]
-          e_phnum = struct.unpack_from("<H", data, 56)[0]
-          forbidden = {
-              0x52802468: "mov w8, #291 (statx)",
-              0xd2802468: "mov x8, #291 (statx)",
-              0x528036e8: "mov w8, #439 (faccessat2)",
-              0xd28036e8: "mov x8, #439 (faccessat2)",
-          }
-          svc_count = 0
-          hits = []
-          for idx in range(e_phnum):
-              off = e_phoff + idx * e_phentsize
-              p_type, p_flags = struct.unpack_from("<II", data, off)
-              p_offset = struct.unpack_from("<Q", data, off + 8)[0]
-              p_filesz = struct.unpack_from("<Q", data, off + 32)[0]
-              if p_type != 1 or (p_flags & 1) == 0:
-                  continue
-              seg = data[p_offset : p_offset + p_filesz]
-              insns = [struct.unpack_from("<I", seg, pos)[0] for pos in range(0, len(seg) - 3, 4)]
-              for i, insn in enumerate(insns):
-                  if insn == 0xd4000001:
-                      svc_count += 1
-                      window = insns[max(0, i - 16) : i]
-                      for prev in window:
-                          if prev in forbidden:
-                              hits.append((p_offset + i * 4, forbidden[prev]))
-          assert svc_count > 0, f"no svc #0 instructions found in {path}"
-          if hits:
-              raise SystemExit(f"Forbidden aarch64 syscalls near svc #0 in {path}: {hits}")
-          print(f"{path}: scanned {svc_count} svc #0 site(s), 0 statx/faccessat2 hits")
-          PY
+            work_x64="$RUNNER_TEMP/verify/work-${tool}-x86_64"
+            rm -rf "$work_x64"
+            mkdir -p "$work_x64"
+            if [ "$tool" = "sub-tool" ]; then
+              printf 'ss://YWVzLTI1Ni1nY206cGFzcw==@example.com:8388#TestNode\n' > "$work_x64/uris.txt"
+              : > "$work_x64/prev.jsonl"
+              python3 "$RUNNER_TEMP/verify/run_linux41_seccomp.py" "$x64_bin" parse-uri-lines \
+                --input "$work_x64/uris.txt" \
+                --output "$work_x64/out.jsonl" \
+                --compare-with "$work_x64/prev.jsonl" \
+                --diff-output "$work_x64/diff.txt" \
+                --summary-output "$work_x64/summary.json"
+              test -s "$work_x64/out.jsonl"
+              test -s "$work_x64/summary.json"
+            else
+              printf '{"id":"n1"}\n' > "$work_x64/keep.jsonl"
+              printf '{"id":"n2"}\n' > "$work_x64/stale.jsonl"
+              printf 'keep_tag\n' > "$work_x64/active.txt"
+              printf '%s\t1\tkeep_tag\tKeep\n%s\t1\tstale_tag\tStale\n' "$work_x64/keep.jsonl" "$work_x64/stale.jsonl" > "$work_x64/meta.tsv"
+              python3 "$RUNNER_TEMP/verify/run_linux41_seccomp.py" "$x64_bin" prune-export-sources \
+                --meta "$work_x64/meta.tsv" \
+                --active-source-tags "$work_x64/active.txt" \
+                --format json \
+                >/dev/null
+              test -f "$work_x64/keep.jsonl"
+              test ! -e "$work_x64/stale.jsonl"
+            fi
+            echo "${tool} (x86_64): seccomp ENOSYS runtime check passed"
 
             for qarch in aarch64 armv7hf armv5te; do
               qbin="$RUNNER_TEMP/verify/${tool}-linux-${qarch}"
@@ -225,7 +268,7 @@ jobs:
               if [ "$tool" = "sub-tool" ]; then
                 printf 'ss://YWVzLTI1Ni1nY206cGFzcw==@example.com:8388#TestNode\n' > "$work/uris.txt"
                 : > "$work/prev.jsonl"
-                "$qemu_cmd" -strace "$qbin" parse-uri-lines \
+                python3 "$RUNNER_TEMP/verify/run_linux41_seccomp.py" "$qemu_cmd" -strace "$qbin" parse-uri-lines \
                   --input "$work/uris.txt" \
                   --output "$work/out.jsonl" \
                   --compare-with "$work/prev.jsonl" \
@@ -239,7 +282,7 @@ jobs:
                 printf '{"id":"n2"}\n' > "$work/stale.jsonl"
                 printf 'keep_tag\n' > "$work/active.txt"
                 printf '%s\t1\tkeep_tag\tKeep\n%s\t1\tstale_tag\tStale\n' "$work/keep.jsonl" "$work/stale.jsonl" > "$work/meta.tsv"
-                "$qemu_cmd" -strace "$qbin" prune-export-sources \
+                python3 "$RUNNER_TEMP/verify/run_linux41_seccomp.py" "$qemu_cmd" -strace "$qbin" prune-export-sources \
                   --meta "$work/meta.tsv" \
                   --active-source-tags "$work/active.txt" \
                   --format json \
@@ -249,12 +292,12 @@ jobs:
               fi
 
               grep -Eq 'openat\(' "$strace_log"
-              if grep -Eq '(^|[[:space:]])(statx|faccessat2)\(' "$strace_log"; then
-                grep -E '(^|[[:space:]])(statx|faccessat2)\(' "$strace_log" >&2
-                echo "Forbidden syscall detected in ${tool} (${qarch}) strace!" >&2
+              if grep -Eq '(^|[[:space:]])(statx|faccessat2|copy_file_range|preadv2|pwritev2|openat2|close_range)\(' "$strace_log"; then
+                grep -E '(^|[[:space:]])(statx|faccessat2|copy_file_range|preadv2|pwritev2|openat2|close_range)\(' "$strace_log" >&2
+                echo "Forbidden post-4.1 syscall detected in ${tool} (${qarch}) strace!" >&2
                 exit 1
               fi
-              echo "${tool} (${qarch}): qemu strace clean (0 statx/faccessat2)"
+              echo "${tool} (${qarch}): qemu + seccomp ENOSYS strace clean (0 post-4.1 syscalls)"
             done
           done
 
