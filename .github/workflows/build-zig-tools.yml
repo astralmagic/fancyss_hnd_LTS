@@ -1,0 +1,334 @@
+name: Build Zig tools
+
+on:
+  pull_request:
+    branches:
+      - lts
+    paths:
+      - 'tool/sub-tool/**'
+      - 'tool/node-tool/**'
+      - 'binaries/zig-linux-compat.sh'
+      - 'binaries/Makefile'
+      - '.github/workflows/build-zig-tools.yml'
+  push:
+    branches:
+      - lts
+    paths:
+      - 'tool/sub-tool/**'
+      - 'tool/node-tool/**'
+      - 'binaries/zig-linux-compat.sh'
+      - 'binaries/Makefile'
+      - '.github/workflows/build-zig-tools.yml'
+  workflow_dispatch:
+    inputs:
+      tools:
+        description: 'Makefile targets to build (default: update_sub_tool update_node_tool)'
+        required: false
+        default: 'update_sub_tool update_node_tool'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build and verification dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq xz-utils file binutils qemu-user
+
+      - name: Install Zig 0.15.2 outside PATH
+        run: |
+          set -euo pipefail
+          zig_meta="$(curl -fsSL https://ziglang.org/download/index.json | jq -r '.["0.15.2"]["x86_64-linux"] | "\(.tarball)\t\(.shasum)"')"
+          zig_url="${zig_meta%%$'\t'*}"
+          zig_sha="${zig_meta#*$'\t'}"
+          test -n "$zig_url"
+          test -n "$zig_sha"
+          curl -fsSL "$zig_url" -o "$RUNNER_TEMP/zig.tar.xz"
+          echo "${zig_sha}  $RUNNER_TEMP/zig.tar.xz" | sha256sum -c -
+          sudo rm -rf /opt/zig-0.15.2
+          sudo mkdir -p /opt/zig-0.15.2
+          sudo tar -xJf "$RUNNER_TEMP/zig.tar.xz" --strip-components=1 -C /opt/zig-0.15.2
+          rm -f "$RUNNER_TEMP/zig.tar.xz"
+          test "$(/opt/zig-0.15.2/zig version)" = "0.15.2"
+          if command -v zig >/dev/null 2>&1; then
+            echo "zig must not be on PATH during wrapped builds" >&2
+            exit 1
+          fi
+
+      - name: Install UPX 4.2.4 and 5.0.2
+        run: |
+          set -euo pipefail
+          for ver in 4.2.4 5.0.2; do
+            arc="upx-${ver}-amd64_linux.tar.xz"
+            curl -fsSL "https://github.com/upx/upx/releases/download/v${ver}/${arc}" -o "$RUNNER_TEMP/${arc}"
+            tar -xJf "$RUNNER_TEMP/${arc}" -C "$RUNNER_TEMP"
+            sudo install -m 0755 "$RUNNER_TEMP/upx-${ver}-amd64_linux/upx" "/usr/local/bin/upx-${ver}"
+            rm -rf "$RUNNER_TEMP/${arc}" "$RUNNER_TEMP/upx-${ver}-amd64_linux"
+          done
+          test "$(upx-4.2.4 --version | sed -n '1s/^upx //p')" = "4.2.4"
+          test "$(upx-5.0.2 --version | sed -n '1s/^upx //p')" = "5.0.2"
+
+      - name: Run Zig unit tests
+        run: |
+          set -euo pipefail
+          (cd tool/sub-tool && /opt/zig-0.15.2/zig build test)
+          (cd tool/node-tool && /opt/zig-0.15.2/zig build test)
+
+      - name: Self-test zig-linux-compat wrapper
+        run: |
+          set -euo pipefail
+          bash -n binaries/zig-linux-compat.sh
+          case "$(REAL_ZIG=/bin/echo binaries/zig-linux-compat.sh build-exe -target x86_64-linux-musl)" in
+            *"-target x86_64-linux.4.1.0...4.1.0-musl"*) ;;
+            *) echo "x86_64 rewrite failed" >&2; exit 1 ;;
+          esac
+          case "$(REAL_ZIG=/bin/echo binaries/zig-linux-compat.sh build-exe -target arm-linux-musleabi -mcpu=arm926ej_s)" in
+            *"-target arm-linux.2.6.36...2.6.36-musleabi"*) ;;
+            *) echo "armv5te rewrite failed" >&2; exit 1 ;;
+          esac
+          case "$(REAL_ZIG=/bin/echo binaries/zig-linux-compat.sh build-exe -target arm-linux-musleabi -mcpu=mpcorenovfp)" in
+            *"-target arm-linux.4.1.0...4.1.0-musleabi"*) ;;
+            *) echo "armv7a rewrite failed" >&2; exit 1 ;;
+          esac
+          case "$(REAL_ZIG=/bin/echo binaries/zig-linux-compat.sh build-exe -target arm-linux-musleabihf -mcpu=cortex_a9)" in
+            *"-target arm-linux.4.1.0...4.1.0-musleabihf"*) ;;
+            *) echo "armv7hf rewrite failed" >&2; exit 1 ;;
+          esac
+          case "$(REAL_ZIG=/bin/echo binaries/zig-linux-compat.sh build-exe -Dtarget=aarch64-linux-musl)" in
+            *"-Dtarget=aarch64-linux.4.1.0...4.1.0-musl"*) ;;
+            *) echo "aarch64 -Dtarget= rewrite failed" >&2; exit 1 ;;
+          esac
+
+      - name: Build Zig release binaries via Makefile
+        run: |
+          set -euo pipefail
+          targets="${{ inputs.tools || 'update_sub_tool update_node_tool' }}"
+          ZIG_COMPAT_VERBOSE=1 REAL_ZIG=/opt/zig-0.15.2/zig make -C binaries ${targets} 2>&1 | tee "$RUNNER_TEMP/zig-build.log"
+          grep -Eq 'Using Zig:' "$RUNNER_TEMP/zig-build.log"
+          if grep -E 'Using Zig:' "$RUNNER_TEMP/zig-build.log" | grep -Evq 'binaries/zig-linux-compat\.sh \(0\.15\.2\)'; then
+            echo "Build bypassed binaries/zig-linux-compat.sh or used wrong Zig version" >&2
+            exit 1
+          fi
+          min_hits=0
+          case " ${targets} " in
+            *" update_sub_tool "*) min_hits=$((min_hits + 1)) ;;
+          esac
+          case " ${targets} " in
+            *" update_node_tool "*) min_hits=$((min_hits + 1)) ;;
+          esac
+          for triple in \
+            aarch64-linux.4.1.0...4.1.0-musl \
+            arm-linux.2.6.36...2.6.36-musleabi \
+            arm-linux.4.1.0...4.1.0-musleabi \
+            arm-linux.4.1.0...4.1.0-musleabihf \
+            x86_64-linux.4.1.0...4.1.0-musl
+          do
+            hits="$(grep -Fxc "[zig-linux-compat] effective target: ${triple}" "$RUNNER_TEMP/zig-build.log" || true)"
+            echo "Effective target ${triple}: ${hits} invocation(s)"
+            test "$hits" -ge "$min_hits"
+          done
+          SUB_TOOL_VERSION="$(tr -d '\r\n' < tool/sub-tool/VERSION)"
+          NODE_TOOL_VERSION="$(tr -d '\r\n' < tool/node-tool/VERSION)"
+          echo "SUB_TOOL_VERSION=${SUB_TOOL_VERSION}" >> "$GITHUB_ENV"
+          echo "NODE_TOOL_VERSION=${NODE_TOOL_VERSION}" >> "$GITHUB_ENV"
+          echo "BUILT_TARGETS=${targets}" >> "$GITHUB_ENV"
+
+      - name: Verify SHA256SUMS and Linux 4.1 syscall compatibility
+        run: |
+          set -euo pipefail
+          tools_to_check=()
+          case " ${BUILT_TARGETS} " in
+            *" update_sub_tool "*) tools_to_check+=("sub-tool:${SUB_TOOL_VERSION}") ;;
+          esac
+          case " ${BUILT_TARGETS} " in
+            *" update_node_tool "*) tools_to_check+=("node-tool:${NODE_TOOL_VERSION}") ;;
+          esac
+
+          mkdir -p "$RUNNER_TEMP/verify"
+          cat > "$RUNNER_TEMP/verify/run_linux41_seccomp.py" <<'PY'
+          import ctypes, os, struct, sys
+
+          PR_SET_NO_NEW_PRIVS = 38
+          PR_SET_SECCOMP = 22
+          SECCOMP_MODE_FILTER = 2
+          AUDIT_ARCH_X86_64 = 0xC000003E
+          SECCOMP_RET_ALLOW = 0x7FFF0000
+          SECCOMP_RET_ERRNO_ENOSYS = 0x00050026
+
+          blocked = [326, 327, 328, 332, 334, 435, 436, 437, 439]
+          n = len(blocked)
+          insns = [
+              struct.pack("<HBBI", 0x20, 0, 0, 4),
+              struct.pack("<HBBI", 0x15, 0, n + 1, AUDIT_ARCH_X86_64),
+              struct.pack("<HBBI", 0x20, 0, 0, 0),
+          ]
+          for idx, nr in enumerate(blocked):
+              insns.append(struct.pack("<HBBI", 0x15, n - idx, 0, nr))
+          insns.append(struct.pack("<HBBI", 0x06, 0, 0, SECCOMP_RET_ALLOW))
+          insns.append(struct.pack("<HBBI", 0x06, 0, 0, SECCOMP_RET_ERRNO_ENOSYS))
+
+          buf = ctypes.create_string_buffer(b"".join(insns))
+
+          class SockFprog(ctypes.Structure):
+              _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.c_void_p)]
+
+          prog = SockFprog(len(insns), ctypes.cast(buf, ctypes.c_void_p).value)
+          libc = ctypes.CDLL("libc.so.6", use_errno=True)
+          if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
+              raise OSError(ctypes.get_errno(), "PR_SET_NO_NEW_PRIVS")
+          if libc.prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.byref(prog), 0, 0) != 0:
+              raise OSError(ctypes.get_errno(), "PR_SET_SECCOMP")
+          os.execvp(sys.argv[1], sys.argv[1:])
+          PY
+
+          for item in "${tools_to_check[@]}"; do
+            tool="${item%%:*}"
+            ver="${item#*:}"
+            echo "=== Verifying ${tool} v${ver} ==="
+            (cd "binaries/${tool}" && sha256sum -c "SHA256SUMS-v${ver}")
+
+            for arch in x86_64 aarch64 armv7hf armv5te; do
+              src="binaries/${tool}/${tool}-v${ver}-linux-${arch}"
+              dst="$RUNNER_TEMP/verify/${tool}-linux-${arch}"
+              cp -f "$src" "$dst"
+              chmod 0755 "$dst"
+              if upx-5.0.2 -t "$dst" >/dev/null 2>&1; then
+                upx-5.0.2 -d "$dst" >/dev/null
+              elif upx-4.2.4 -t "$dst" >/dev/null 2>&1; then
+                upx-4.2.4 -d "$dst" >/dev/null
+              fi
+            done
+
+            x64_bin="$RUNNER_TEMP/verify/${tool}-linux-x86_64"
+            objdump -d "$x64_bin" > "$RUNNER_TEMP/verify/${tool}-x86_64.asm"
+            python3 - "$tool" "$RUNNER_TEMP/verify/${tool}-x86_64.asm" <<'PY'
+          import re
+          import sys
+
+          tool, asm_path = sys.argv[1], sys.argv[2]
+          pat = re.compile(r"\$0x146\b")
+          with open(asm_path, "r", errors="replace") as f:
+              lines = f.readlines()
+          hit_indices = [i for i, line in enumerate(lines) if pat.search(line)]
+          if tool == "sub-tool":
+              if hit_indices:
+                  for i in hit_indices:
+                      print(f"{i + 1}: {lines[i].rstrip()}", file=sys.stderr)
+                  raise SystemExit(f"Found forbidden copy_file_range ($0x146) in {asm_path}: {len(hit_indices)} hit(s)")
+              print(f"{asm_path}: 0 hits for $0x146 (copy_file_range)")
+          else:
+              if len(hit_indices) > 1:
+                  for i in hit_indices:
+                      print(f"{i + 1}: {lines[i].rstrip()}", file=sys.stderr)
+                  raise SystemExit(f"Expected <= 1 musl copy_file_range stub in {asm_path}, got {len(hit_indices)}")
+              if len(hit_indices) == 1:
+                  idx = hit_indices[0]
+                  prev_ctx = "".join(lines[max(0, idx - 4) : idx])
+                  next_ctx = "".join(lines[idx + 1 : min(len(lines), idx + 5)])
+                  if not (("movslq" in prev_ctx or "movsxd" in prev_ctx) and "syscall" in next_ctx and "jmp" in next_ctx):
+                      for j in range(max(0, idx - 4), min(len(lines), idx + 5)):
+                          print(f"{j + 1}: {lines[j].rstrip()}", file=sys.stderr)
+                      raise SystemExit(f"Non-musl copy_file_range ($0x146) call site in {asm_path}")
+                  print(f"{asm_path}: 1 unreferenced musl copy_file_range C stub (verified via runtime seccomp/strace)")
+              else:
+                  print(f"{asm_path}: 0 hits for $0x146 (copy_file_range)")
+          PY
+
+            work_x64="$RUNNER_TEMP/verify/work-${tool}-x86_64"
+            rm -rf "$work_x64"
+            mkdir -p "$work_x64"
+            if [ "$tool" = "sub-tool" ]; then
+              printf 'ss://YWVzLTI1Ni1nY206cGFzcw==@example.com:8388#TestNode\n' > "$work_x64/uris.txt"
+              : > "$work_x64/prev.jsonl"
+              python3 "$RUNNER_TEMP/verify/run_linux41_seccomp.py" "$x64_bin" parse-uri-lines \
+                --input "$work_x64/uris.txt" \
+                --output "$work_x64/out.jsonl" \
+                --format fancyss \
+                --compare-with "$work_x64/prev.jsonl" \
+                --diff-output "$work_x64/diff.txt" \
+                --summary-output "$work_x64/summary.json"
+              test -s "$work_x64/out.jsonl"
+              test -s "$work_x64/summary.json"
+              test -f "$work_x64/diff.txt"
+            else
+              printf '{"id":"n1"}\n' > "$work_x64/keep.jsonl"
+              printf '{"id":"n2"}\n' > "$work_x64/stale.jsonl"
+              printf 'keep_tag\n' > "$work_x64/active.txt"
+              printf '%s\t1\tkeep_tag\tKeep\n%s\t1\tstale_tag\tStale\n' "$work_x64/keep.jsonl" "$work_x64/stale.jsonl" > "$work_x64/meta.tsv"
+              python3 "$RUNNER_TEMP/verify/run_linux41_seccomp.py" "$x64_bin" prune-export-sources \
+                --meta "$work_x64/meta.tsv" \
+                --active-source-tags "$work_x64/active.txt" \
+                --format json \
+                >/dev/null
+              test -f "$work_x64/keep.jsonl"
+              test ! -e "$work_x64/stale.jsonl"
+            fi
+            echo "${tool} (x86_64): seccomp ENOSYS runtime check passed"
+
+            for qarch in aarch64 armv7hf armv5te; do
+              qbin="$RUNNER_TEMP/verify/${tool}-linux-${qarch}"
+              if [ "$qarch" = "aarch64" ]; then
+                qemu_cmd="qemu-aarch64"
+              else
+                qemu_cmd="qemu-arm"
+              fi
+              work="$RUNNER_TEMP/verify/work-${tool}-${qarch}"
+              strace_log="$RUNNER_TEMP/verify/strace-${tool}-${qarch}.log"
+              rm -rf "$work" "$strace_log"
+              mkdir -p "$work"
+
+              if [ "$tool" = "sub-tool" ]; then
+                printf 'ss://YWVzLTI1Ni1nY206cGFzcw==@example.com:8388#TestNode\n' > "$work/uris.txt"
+                : > "$work/prev.jsonl"
+                python3 "$RUNNER_TEMP/verify/run_linux41_seccomp.py" "$qemu_cmd" -strace "$qbin" parse-uri-lines \
+                  --input "$work/uris.txt" \
+                  --output "$work/out.jsonl" \
+                  --format fancyss \
+                  --compare-with "$work/prev.jsonl" \
+                  --diff-output "$work/diff.txt" \
+                  --summary-output "$work/summary.json" \
+                  2>"$strace_log"
+                test -s "$work/out.jsonl"
+                test -s "$work/summary.json"
+                test -f "$work/diff.txt"
+              else
+                printf '{"id":"n1"}\n' > "$work/keep.jsonl"
+                printf '{"id":"n2"}\n' > "$work/stale.jsonl"
+                printf 'keep_tag\n' > "$work/active.txt"
+                printf '%s\t1\tkeep_tag\tKeep\n%s\t1\tstale_tag\tStale\n' "$work/keep.jsonl" "$work/stale.jsonl" > "$work/meta.tsv"
+                python3 "$RUNNER_TEMP/verify/run_linux41_seccomp.py" "$qemu_cmd" -strace "$qbin" prune-export-sources \
+                  --meta "$work/meta.tsv" \
+                  --active-source-tags "$work/active.txt" \
+                  --format json \
+                  >/dev/null 2>"$strace_log"
+                test -f "$work/keep.jsonl"
+                test ! -e "$work/stale.jsonl"
+              fi
+
+              grep -Eq 'openat\(' "$strace_log"
+              if grep -Eq '(^|[[:space:]])(statx|faccessat2|copy_file_range|preadv2|pwritev2|openat2|close_range)\(' "$strace_log"; then
+                grep -E '(^|[[:space:]])(statx|faccessat2|copy_file_range|preadv2|pwritev2|openat2|close_range)\(' "$strace_log" >&2
+                echo "Forbidden post-4.1 syscall detected in ${tool} (${qarch}) strace!" >&2
+                exit 1
+              fi
+              echo "${tool} (${qarch}): qemu + seccomp ENOSYS strace clean (0 post-4.1 syscalls)"
+            done
+          done
+
+      - name: Upload Zig tool binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: zig-tool-binaries
+          path: |
+            binaries/sub-tool/sub-tool-v${{ env.SUB_TOOL_VERSION }}-linux-*
+            binaries/sub-tool/SHA256SUMS-v${{ env.SUB_TOOL_VERSION }}
+            binaries/node-tool/node-tool-v${{ env.NODE_TOOL_VERSION }}-linux-*
+            binaries/node-tool/SHA256SUMS-v${{ env.NODE_TOOL_VERSION }}
+          retention-days: 7

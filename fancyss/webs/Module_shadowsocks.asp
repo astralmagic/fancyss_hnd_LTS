@@ -13789,11 +13789,12 @@ function version_show() {
 	if(!db_ss["ss_basic_version_local"]) db_ss["ss_basic_version_local"] = "0.0.0"
 	$("#ss_version_show").html("<a class='hintstyle' href='javascript:void(0);'><i>当前版本：" + db_ss['ss_basic_version_local'] + "</i></a>");
 	$.ajax({
-		url: 'https://raw.githubusercontent.com/hq450/fancyss/3.0/packages/version.json.js',
+		url: 'https://raw.githubusercontent.com/astralmagic/fancyss_hnd_LTS/lts/packages/version.json.js',
 		type: 'GET',
 		dataType: 'json',
 		success: function(res) {
-			if (typeof(res["version"]) != "undefined" && res["version"].length > 0) {
+			var md5_key = "md5_" + PKG_ARCH + "_" + PKG_TYPE;
+			if (typeof(res["version"]) != "undefined" && res["version"].length > 0 && res[md5_key]) {
 				if (versionCompare(res["version"], db_ss["ss_basic_version_local"])) {
 					$("#updateBtn").html("<i>升级到：" + res.version + "</i>");
 				}
@@ -13802,85 +13803,8 @@ function version_show() {
 	});
 }
 function message_show() {
-	if (db_ss["ss_close_mesg"] == "0") return
-	$.ajax({
-		url: 'https://gist.githubusercontent.com/hq450/001dd0617a64e11a9492dcf9205a0e03/raw/fancyss_msg.json?_=' + new Date().getTime(),
-		type: 'GET',
-		dataType: 'json',
-		cache: false,
-		success: function(res) {
-			// 处理内置推荐
-			if (res["ads_url_1"] && res["ads_des_1"]){
-				ads_url_1 = res["ads_url_1"];
-				ads_des_1 = res["ads_des_1"];
-				if (node_nu == 0 && poped == 0) pop_node_add_ads();
-				if(!E("ss_online_links").value){
-					sub_ads_html = '<a target="_blank" href="' + ads_url_1 + '"><em>' + ads_des_1 + '</em></a>';
-					$('#ss_sub_ads').html(sub_ads_html)
-				}
-			}else{
-				if (node_nu == 0 && poped == 0) pop_node_add();
-			}
-			
-			var rand_1 = parseInt(Math.random() * 100)
-			// 通知1，一般通知下更新日志，如果已经升级到最新版本，则不再显示更新日志
-			if (res["msg_1"] && res["switch_1"]){
-				if (rand_1 < res["switch_1"]){
-					if (versionCompare(res["version"], db_ss["ss_basic_version_local"])) {
-						$("#fixed_msg").append('<li id="msg_1" style="list-style: none;height:23px">' + res["msg_1"] + '</li>');
-					}
-				}
-			}
-			// 通知2，其它重要通知的时候使用
-			if (res["msg_2"] && res["switch_2"]){
-				if (rand_1 < res["switch_2"]){
-					$("#fixed_msg").append('<li id="msg_2" style="list-style: none;height:23px">' + res["msg_2"] + '</li>');
-				}
-			}
-			// 广告位，广告不能放太多，要优质，稍多的话限制显示数量，以滚动形式显示，免得太碍人眼
-			var ads_count = 0;
-			var rand_2 = parseInt(Math.random() * 100)
-			for(var i = 3; i < 10; i++){
-				if (res["msg_" + i] && res["switch_" + i]){
-					if (rand_2 < res["switch_" + i]){
-						$("#scroll_msg").append('<li id="msg_' + i + '" style="list-style: none;height:23px">' + res["msg_" + i] + '</li>');
-						ads_count++;
-					}
-				}
-			}
-			// 如果只有两个广告，就全部显示，且不进行滚动
-			//console.log(ads_count + "个广告！")
-			if (ads_count == 0) return;
-			if (ads_count <= 2){
-				$("#scroll_msg").css("height", (ads_count * 23) + "px");
-				return;
-			}
-			//超过两个广告，则广告显示高度为推送的高度
-			if (res["scroll_line"]){
-				$("#scroll_msg").css("height", (res["scroll_line"] * 23) + "px");
-			}else{
-				$("#scroll_msg").css("height", "23px");
-			}
-			//鼠标放上广告停止滚动
-			$("#scroll_msg").on("mouseover", function() {
-				stop_scroll = 1;
-			});
-			//鼠标移开恢复滚动
-			$("#scroll_msg").on("mouseleave", function() {
-				stop_scroll = 0;
-			});
-			//开始滚动，每个广告停留5s
-			if (res["ads_time"]){
-				setInterval(scroll_msg, res["ads_time"]);
-			}else{
-				setInterval(scroll_msg, 5000);
-			}
-		},
-		error: function(XmlHttpRequest, textStatus, errorThrown){
-			console.log(XmlHttpRequest.responseText);
-			if (node_nu == 0 && poped == 0) pop_node_add();
-		}
-	});
+	if (db_ss["ss_close_mesg"] == "0") return;
+	if (node_nu == 0 && poped == 0) pop_node_add();
 }
 function scroll_msg() {
 	if(stop_scroll == 0) {
@@ -14686,7 +14610,7 @@ function dns_test(s) {
 		$("#log_dig").show();
 		$("#log_resv").hide();
 		dns_log["ss_basic_logname"] = "dns_gfwlist";
-		var note1 = '1. gfwlist的域名清单来自：<a href="https://github.com/hq450/fancyss/blob/3.0/rules_ng/gfwlist.gz" target="_blank"><em><u>https://github.com/hq450/fancyss/blob/3.0/rules_ng/gfwlist.gz</u></em></a>，收录了常见的被gfw屏蔽的域名。';
+		var note1 = '1. gfwlist的域名清单来自：<a href="https://github.com/astralmagic/fancyss_hnd_LTS/blob/lts/rules_ng/gfwlist.gz" target="_blank"><em><u>https://github.com/astralmagic/fancyss_hnd_LTS/blob/lts/rules_ng/gfwlist.gz</u></em></a>，收录了常见的被gfw屏蔽的域名。';
 		var note2 = '2. 由于gfwlist清单较长，将每次随机选取100个域名进行测试！理想情况下，解析结果应该全部是海外IP地址，没有大陆IP地址！';
 		var note3 = '3. 解析结果和速度可能受节点、DNS方案、上游DNS缓存等因素影响，本测试也无法判断解析结果正确性！所以测试结果仅供参考！';
 	}
@@ -16305,7 +16229,7 @@ function save_online_nodes(action) {
 function xray_binary_update(){
 	var dbus_post = {};
 	db_ss["ss_basic_action"] = "15";
-	note = "<li style='line-height:32px'>xray二进制来自于fancyss项目编译压缩：<a style='color:#22ab39;' href='https://github.com/hq450/fancyss/tree/3.0/binaries/xray' target='_blank'>https://github.com/hq450/fancyss/tree/3.0/binaries/xray</a></li>";
+	note = "<li style='line-height:32px'>xray二进制来自于fancyss项目编译压缩：<a style='color:#22ab39;' href='https://github.com/astralmagic/fancyss_hnd_LTS/tree/lts/binaries/xray' target='_blank'>https://github.com/astralmagic/fancyss_hnd_LTS/tree/lts/binaries/xray</a></li>";
 	note += "<li style='line-height:32px'>你也可以自行下载Xray-core官方<a style='color:#22ab39;' href='https://github.com/XTLS/Xray-core/releases' target='_blank'>release</a>的二进制文件，替换路由器内/koolshare/bin/xray文件</li>";
 	note += "<li style='line-height:32px'>因二进制更新/升级导致代理无法工作的，请检查你的配置是否兼容新版本程序！</li>";
 	layer.open({
@@ -16604,7 +16528,7 @@ function toggleKeyMask(o, show){
 																<a><i>当前版本：</i></a>
 															</div>
 															<div style="display:table-cell;float: left;margin-left:270px;position: absolute;padding: 5.5px 0px;">
-																<a type="button" class="ss_btn" target="_blank" href="https://github.com/hq450/fancyss/blob/3.0/Changelog.txt">更新日志</a>
+																<a type="button" class="ss_btn" target="_blank" href="https://github.com/astralmagic/fancyss_hnd_LTS/blob/lts/Changelog.txt">更新日志</a>
 															</div>
 															<div style="display:table-cell;float: left;margin-left:350px;position: absolute;padding: 5.5px 0px;">
 																<a type="button" class="ss_btn" href="javascript:void(0);" onclick="pop_help()">插件帮助</a>
@@ -17428,17 +17352,17 @@ function toggleKeyMask(o, show){
 														$('#table_rules').forms([
 															{ title: 'gfwlist 域名数量（被墙域名）', multi: [
 																{ suffix: '<em>'+ gfwl +'</em>&nbsp;条，版本：' },
-																{ suffix: '<a href="https://github.com/hq450/fancyss/blob/3.0/rules_ng/gfwlist.gz" target="_blank">' },
+																{ suffix: '<a href="https://github.com/astralmagic/fancyss_hnd_LTS/blob/lts/rules_ng/gfwlist.gz" target="_blank">' },
 																{ suffix: '<i><% nvram_get("update_gfwlist"); %></i></a>' },
 															]},
 															{ title: 'chnlist 域名数量（大陆域名）', multi: [
 																{ suffix: '<em>'+ cdnn +'</em>&nbsp;条，版本：' },
-																{ suffix: '<a href="https://github.com/hq450/fancyss/blob/3.0/rules_ng/chnlist.gz" target="_blank">' },
+																{ suffix: '<a href="https://github.com/astralmagic/fancyss_hnd_LTS/blob/lts/rules_ng/chnlist.gz" target="_blank">' },
 																{ suffix: '<i><% nvram_get("update_chnlist"); %></i></a>' },
 															]},
 															{ title: 'chnroute 大陆白名单IP段数量', multi: [
 																{ suffix: '<em>'+ chnl +'</em>&nbsp;行，包含 <em>' + chnn + '</em>&nbsp;个ip地址，版本：' },
-																{ suffix: '<a href="https://github.com/hq450/fancyss/blob/3.0/rules_ng/chnroute.txt" target="_blank">' },
+																{ suffix: '<a href="https://github.com/astralmagic/fancyss_hnd_LTS/blob/lts/rules_ng/chnroute.txt" target="_blank">' },
 																{ suffix: '<i><% nvram_get("update_chnroute"); %></i></a>' },
 															]},
 															{ title: '规则定时更新任务', hint:'44', multi: [

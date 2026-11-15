@@ -1,5 +1,17 @@
 fancyss Changelog
 
+3.5.31（20261115）
+   - update	建立 HND/HND v8 个人 LTS 发布策略，运行时插件、Xray 与规则更新统一切换到 astralmagic/fancyss_hnd_LTS 受控源。
+   - update	Xray-core 升级到自编译 `v26.11.9-676eaf6`，使用 Go `1.27.3` 构建，包含根证书清理与默认关闭 MPTCP 的安全修复。
+   - note	新版 Xray 会拒绝公网地址的 VLESS 无 TLS 配置；此类节点需要改用 TLS/REALITY 等安全传输方式，不能通过回退证书校验规避。
+   - update	NaïveProxy 升级到 `v154.0.8037.49-5`，包含崩溃修复及被攻破中间证书的阻断。
+   - update	恢复 `sub-tool 0.1.18` 可复现源码，保留 `profile_<profile_id>` 节点身份行为；`node-tool` 源码指针对齐到 `0.1.16`。
+   - update	子模块改用公开 HTTPS 地址，补齐 ChinaDNS-ng、AnyTLS、SmartDNS 更新目标与 SmartDNS `v47.1` 版本元数据同步。
+   - fix	为 Zig 工具链（含 `sub-tool`、`node-tool`）固定 Linux `4.1` / `2.6.36` 内核构建基线，消除老内核路由器的 `statx` 兼容崩溃风险。
+   - fix	修复懒加载场景下 NaïveProxy/AnyTLS 通用密码未派生、可能以空密码启动的问题，并恢复不支持 UDP 协议的 ACL 限制。
+   - fix	修复 `ss_xray.sh` 版本比较未剥离 `-commit` 后缀导致已安装最新版仍重复重下的问题；插件与 Xray 仅在受控源版本更高时更新，不再因上游版本较旧而自动降级；移除上游个人公告拉取。
+   - fix	默认收敛为确定性 HND/HND v8 打包并生成仅含 HND 校验的 `version.json.js`（清理陈旧非 HND 预编译包与冗余 `bin-ipq64` 二进制），修正 Xray 与 `v2ray-plugin` 构建入口，增加版本清单及包内二进制一致性校验。
+
 3.5.30（20260601）
    - update	Xray-core 升级到自编译 `v26.6.1-94ffd50`。
    - update	node-tool 升级到 0.1.16，全平台产物进入 binaries/node-tool。

@@ -41,6 +41,7 @@ fi
 
 OUT_DIR="v${VER}"
 if [ -d "${OUT_DIR}" ]; then
+	echo -n "${OUT_DIR}" > latest.txt
 	echo "already exists: ${SCRIPT_DIR}/${OUT_DIR}"
 	exit 0
 fi
@@ -93,5 +94,6 @@ echo "compressing with ${UPX4}: smartdns_armv5"
 "${UPX4}" --lzma --ultra-brute "${OUT_DIR}/smartdns_armv5"
 
 (cd "${OUT_DIR}" && md5sum smartdns_arm64 smartdns_armv7 smartdns_armv5 > md5sum.txt)
+echo -n "${OUT_DIR}" > latest.txt
 
 echo "done: ${SCRIPT_DIR}/${OUT_DIR}"

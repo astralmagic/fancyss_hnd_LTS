@@ -1,0 +1,312 @@
+name: Build HND packages
+
+on:
+  push:
+    branches:
+      - lts
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - lts
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl file jq
+
+      - name: Check shell entry points
+        run: |
+          set -euo pipefail
+          sh -n build.sh
+          sh -n scripts/update_geodata_assets.sh
+          sh -n fancyss/scripts/ss_base.sh
+          sh -n fancyss/scripts/ss_update.sh
+          sh -n fancyss/scripts/ss_xray.sh
+          sh -n fancyss/scripts/ss_rule_update.sh
+          sh -n fancyss/ss/ssconfig.sh
+          sh -n fancyss/install.sh
+          bash -n binaries/zig-linux-compat.sh
+          bash -n binaries/smartdns/get_smartdns.sh
+          make -n -C binaries update_xray update_v2ray_plugin update_vray-plugin update_anytls_zig update_smartdns update_chinadns_ng update_sub_tool update_node_tool >/dev/null
+
+      - name: Check lazy node environment derivation
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/ss-base-test"
+          mkdir -p "$work"
+          awk '/^fss_base_apply_node_no_udp\(\)/{p=1} p{print} p&&/^}/{p=0}' fancyss/scripts/ss_base.sh > "$work/functions.sh"
+          awk '/^fss_base_apply_node_derived_env\(\)/{p=1} p{print} p&&/^}/{p=0}' fancyss/scripts/ss_base.sh >> "$work/functions.sh"
+          awk '/^fss_base_load_current_node_env\(\)/{p=1} p{print} p&&/^}/{p=0}' fancyss/scripts/ss_base.sh >> "$work/functions.sh"
+          cat > "$work/test.sh" <<'EOF'
+          set -eu
+          fss_get_current_node_id() { printf '1\n'; }
+          fss_get_failover_node_id() { printf '1\n'; }
+          fss_detect_storage_schema() { printf '%s\n' "$SCHEMA"; }
+          base64_decode() { base64 -d; }
+          fss_export_current_node_env() {
+            ss_basic_type="$TYPE"
+            ss_basic_password=''
+            ss_basic_server=''
+            ss_basic_naive_pass="$NAIVE_PASS"
+            ss_basic_naive_server='naive.example.com'
+            ss_basic_anytls_pass='anytls-secret'
+            ss_basic_anytls_server='anytls.example.com'
+            ss_basic_hy2_server=''
+          }
+          . "$WORK/functions.sh"
+          assert_eq() { test "$1" = "$2" || { echo "expected $2, got $1" >&2; exit 1; }; }
+          ss_basic_mode=1
+          FSS_GLOBAL_BASIC_MODE=1
+          SCHEMA=2
+          TYPE=6
+          NAIVE_PASS='raw-secret'
+          mangle=1
+          fss_base_load_current_node_env
+          assert_eq "$ss_basic_password" 'raw-secret'
+          assert_eq "$mangle" '0'
+          NAIVE_PASS='changed'
+          fss_base_load_current_node_env
+          assert_eq "$ss_basic_password" 'raw-secret'
+          unset FSS_CURRENT_NODE_ENV_LOADED
+          SCHEMA=1
+          NAIVE_PASS='c2VjcmV0'
+          fss_base_load_current_node_env
+          assert_eq "$ss_basic_password" 'secret'
+          unset FSS_CURRENT_NODE_ENV_LOADED
+          SCHEMA=2
+          TYPE=9
+          fss_base_load_current_node_env
+          assert_eq "$ss_basic_password" 'anytls-secret'
+          assert_eq "$ss_basic_server" 'anytls.example.com'
+          assert_eq "$mangle" '0'
+          EOF
+          WORK="$work" bash "$work/test.sh"
+
+      - name: Verify update source policy
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          for path in Path("fancyss").rglob("*"):
+              if not path.is_file() or path.suffix not in {".sh", ".asp", ".js"}:
+                  continue
+              text = path.read_text(errors="ignore")
+              assert "raw.githubusercontent.com/hq450/fancyss/3.0" not in text, path
+              assert "gist.githubusercontent.com/hq450" not in text, path
+          update = Path("fancyss/scripts/ss_update.sh").read_text()
+          assert '"$(versioncmp ${ss_basic_version_local} ${fancyss_version_online})" == "1"' in update
+          assert 'astralmagic/fancyss_hnd_LTS/lts/packages' in update
+          xray = Path("fancyss/scripts/ss_xray.sh").read_text()
+          newer_branch = xray.split('elif [ "${COMP}" == "-1" ]', 1)[1].split("else", 1)[0]
+          assert "update_now" not in newer_branch
+          assert "开始降级程序" not in xray
+          PY
+
+      - name: Verify Xray version comparison with git suffix
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/ss-xray-test"
+          mkdir -p "$work"
+          awk '/^get_latest_version\(\)/{p=1} p{print} p&&/^}/{p=0}' fancyss/scripts/ss_xray.sh > "$work/xray_fn.sh"
+          cat > "$work/xray_mock" <<'EOF'
+          #!/bin/sh
+          printf 'Xray %s (Mock, Penetrates Everything.) Custom\n' "${MOCK_XRAY_VER}"
+          EOF
+          chmod +x "$work/xray_mock"
+          cat > "$work/test.sh" <<'EOF'
+          set -eu
+          url_main="https://example.invalid"
+          _TARGET_FILE="$WORK/xray_mock"
+          echo_date() { printf '%s\n' "$*"; }
+          run() { "$@"; }
+          curl() { printf 'v26.11.9-676eaf6\n'; }
+          failed_warning_xray() { echo "unexpected failed_warning_xray" >&2; exit 1; }
+          dbus() {
+            if [ "$1" = "set" ]; then
+              DBUS_SET="$2"
+            fi
+          }
+          update_now() { UPDATE_ARG="$1"; }
+          versioncmp() {
+            python3 - "$1" "$2" <<'PY'
+          import sys
+          a = [int(x) for x in sys.argv[1].split(".") if x.isdigit()]
+          b = [int(x) for x in sys.argv[2].split(".") if x.isdigit()]
+          n = max(len(a), len(b))
+          a += [0] * (n - len(a))
+          b += [0] * (n - len(b))
+          print("1" if a < b else ("-1" if a > b else "0"))
+          PY
+          }
+          . "$WORK/xray_fn.sh"
+          assert_eq() { test "$1" = "$2" || { echo "expected [$2], got [$1]" >&2; exit 1; }; }
+
+          MOCK_XRAY_VER="v26.11.9"
+          export MOCK_XRAY_VER
+          UPDATE_ARG=""
+          DBUS_SET=""
+          get_latest_version latest_2
+          assert_eq "$UPDATE_ARG" ""
+          assert_eq "$DBUS_SET" "ss_basic_xray_version=v26.11.9"
+
+          MOCK_XRAY_VER="v26.6.1"
+          export MOCK_XRAY_VER
+          UPDATE_ARG=""
+          DBUS_SET=""
+          get_latest_version latest_2
+          assert_eq "$UPDATE_ARG" "v26.11.9-676eaf6"
+
+          MOCK_XRAY_VER="v26.12.0"
+          export MOCK_XRAY_VER
+          UPDATE_ARG=""
+          DBUS_SET=""
+          get_latest_version latest_2
+          assert_eq "$UPDATE_ARG" ""
+          assert_eq "$DBUS_SET" "ss_basic_xray_version=v26.12.0"
+          EOF
+          WORK="$work" bash "$work/test.sh"
+
+      - name: Build HND packages
+        run: bash build.sh
+
+      - name: Verify package manifest
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+
+          def unique_object(pairs):
+              result = {}
+              for key, value in pairs:
+                  if key in result:
+                      raise ValueError(f"duplicate JSON key: {key}")
+                  result[key] = value
+              return result
+
+          with open("packages/version.json.js") as file:
+              manifest = json.load(file, object_pairs_hook=unique_object)
+          with open("fancyss/ss/version") as file:
+              expected_version = file.read().strip()
+          assert manifest["version"] == expected_version, (manifest["version"], expected_version)
+          assert expected_version
+          expected_keys = {
+              "name",
+              "version",
+              "md5_hnd_full",
+              "md5_hnd_lite",
+              "md5_hnd_v8_full",
+              "md5_hnd_v8_lite",
+          }
+          assert set(manifest.keys()) == expected_keys, (set(manifest.keys()), expected_keys)
+          expected_tarballs = set()
+          for platform in ("hnd", "hnd_v8"):
+              for package_type in ("full", "lite"):
+                  name = f"fancyss_{platform}_{package_type}"
+                  filename = f"{name}.tar.gz"
+                  expected_tarballs.add(filename)
+                  path = f"packages/{filename}"
+                  with open(path, "rb") as file:
+                      actual = hashlib.md5(file.read()).hexdigest()
+                  assert actual == manifest[f"md5_{platform}_{package_type}"], (name, actual)
+          actual_tarballs = {
+              f
+              for f in os.listdir("packages")
+              if f.endswith(".tar.gz") and not f.endswith("_debug.tar.gz")
+          }
+          assert actual_tarballs == expected_tarballs, (actual_tarballs, expected_tarballs)
+          PY
+
+      - name: Verify source tree clean after build
+        run: |
+          set -euo pipefail
+          dirty="$(git status --porcelain -- fancyss binaries rules_ng rules_ng2 scripts tool)"
+          if [ -n "$dirty" ]; then
+            echo "Build unexpectedly dirtied tracked source directories:" >&2
+            printf '%s\n' "$dirty" >&2
+            exit 1
+          fi
+
+      - name: Verify packaged binaries
+        run: |
+          set -euo pipefail
+          xray_version="$(cat binaries/xray/latest_2.txt)"
+          naive_version="$(cat binaries/naive/latest.txt)"
+          sub_tool_version="$(cat tool/sub-tool/VERSION)"
+          node_tool_version="$(cat tool/node-tool/VERSION)"
+          test -n "$xray_version"
+          test -n "$naive_version"
+          for platform in hnd hnd_v8; do
+            if [ "$platform" = "hnd" ]; then
+              core_arch=armv7
+              zig_arch=armv7hf
+            else
+              core_arch=arm64
+              zig_arch=aarch64
+            fi
+            for package_type in full lite; do
+              package="packages/fancyss_${platform}_${package_type}.tar.gz"
+              tar -xOf "$package" shadowsocks/bin/xray | cmp - "binaries/xray/${xray_version}/xray_${core_arch}"
+              tar -xOf "$package" shadowsocks/bin/sub-tool | cmp - "binaries/sub-tool/sub-tool-v${sub_tool_version}-linux-${zig_arch}"
+              tar -xOf "$package" shadowsocks/bin/node-tool | cmp - "binaries/node-tool/node-tool-v${node_tool_version}-linux-${zig_arch}"
+            done
+            tar -xOf "packages/fancyss_${platform}_full.tar.gz" shadowsocks/bin/naive | cmp - "binaries/naive/${naive_version}/naive_${core_arch}"
+            if tar -tzf "packages/fancyss_${platform}_lite.tar.gz" | grep -q 'shadowsocks/bin/naive$'; then
+              echo "unexpected NaïveProxy in ${platform} lite package" >&2
+              exit 1
+            fi
+          done
+
+      - name: Upload HND packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: fancyss-hnd-packages
+          path: |
+            packages/fancyss_hnd_full.tar.gz
+            packages/fancyss_hnd_lite.tar.gz
+            packages/fancyss_hnd_v8_full.tar.gz
+            packages/fancyss_hnd_v8_lite.tar.gz
+            packages/version.json.js
+          retention-days: 7
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: fancyss-hnd-packages
+          path: packages
+
+      - name: Publish HND packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --title "fancyss HND LTS $tag" --generate-notes
+          fi
+          gh release upload "$tag" \
+            packages/fancyss_hnd_full.tar.gz \
+            packages/fancyss_hnd_lite.tar.gz \
+            packages/fancyss_hnd_v8_full.tar.gz \
+            packages/fancyss_hnd_v8_lite.tar.gz \
+            packages/version.json.js \
+            --clobber

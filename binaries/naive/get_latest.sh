@@ -33,7 +33,11 @@ EOF
 }
 
 make(){
-  set_latest_release_version
+  if [ "$#" -gt 0 ];then
+    LATEST_VERSION="$1"
+  else
+    set_latest_release_version
+  fi
   update openwrt-aarch64_cortex-a53-static arm64
   # use --lzma --ultra-brute to compress armv5 armnv7
   update_armv5_upx424 openwrt-arm_cortex-a9-static armv5
@@ -42,4 +46,4 @@ make(){
   echo -n "v$LATEST_VERSION" > latest.txt
 }
 
-make
+make "$@"

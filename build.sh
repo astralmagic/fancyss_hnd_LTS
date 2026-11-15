@@ -7,6 +7,27 @@ DESCRIPTION="科学上网"
 HOME_URL=Module_shadowsocks.asp
 CURR_PATH="$( cd "$( dirname "$BASH_SOURCE[0]" )" && pwd )"
 
+BUILD_ALL_PLATFORMS=0
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--all-platforms)
+			BUILD_ALL_PLATFORMS=1
+			;;
+		-h|--help)
+			cat <<-'EOF'
+			Usage: build.sh [--all-platforms]
+			  --all-platforms   Build all 7 platforms (default: hnd and hnd_v8 only)
+			EOF
+			exit 0
+			;;
+		*)
+			echo "unknown option: $1" >&2
+			exit 1
+			;;
+	esac
+	shift
+done
+
 cp_rules(){
 	local target=${CURR_PATH}/fancyss/ss/rules/
 	cp -rf ${CURR_PATH}/rules_ng/gfwlist.gz ${target}
@@ -111,10 +132,31 @@ sync_binary(){
 	cp -rf ${CURR_PATH}/binaries/chinadns-ng/chinadns-ng+wolfssl@arm-linux-musleabi@generic+v7a@fast+lto$upx ${CURR_PATH}/fancyss/bin-qca/chinadns-ng
 	cp -rf ${CURR_PATH}/binaries/chinadns-ng/chinadns-ng+wolfssl@arm-linux-musleabi@generic+v5te+soft_float@fast+lto$upx ${CURR_PATH}/fancyss/bin-arm/chinadns-ng
 
+	local SMARTDNS_DIR="${CURR_PATH}/binaries/smartdns"
+	if [ ! -f "${SMARTDNS_DIR}/latest.txt" ];then
+		echo "!!! missing binaries/smartdns/latest.txt" >&2
+		exit 1
+	fi
+	SMARTDNS_DIR="${SMARTDNS_DIR}/$(tr -d '\r\n' < "${SMARTDNS_DIR}/latest.txt")"
+	local SMARTDNS_ARM64="${SMARTDNS_DIR}/smartdns_arm64"
+	local SMARTDNS_ARMV7="${SMARTDNS_DIR}/smartdns_armv7"
+	local SMARTDNS_ARMV5="${SMARTDNS_DIR}/smartdns_armv5"
+	for smartdns_bin in "${SMARTDNS_ARM64}" "${SMARTDNS_ARMV7}" "${SMARTDNS_ARMV5}"; do
+		if [ ! -f "${smartdns_bin}" ];then
+			echo "!!! missing smartdns binary: ${smartdns_bin}" >&2
+			exit 1
+		fi
+	done
+	cp -rf ${SMARTDNS_ARM64} ${CURR_PATH}/fancyss/bin-mtk/smartdns
+	cp -rf ${SMARTDNS_ARM64} ${CURR_PATH}/fancyss/bin-hnd_v8/smartdns
+	cp -rf ${SMARTDNS_ARMV7} ${CURR_PATH}/fancyss/bin-ipq32/smartdns
+	cp -rf ${SMARTDNS_ARMV7} ${CURR_PATH}/fancyss/bin-hnd/smartdns
+	cp -rf ${SMARTDNS_ARMV7} ${CURR_PATH}/fancyss/bin-qca/smartdns
+	cp -rf ${SMARTDNS_ARMV5} ${CURR_PATH}/fancyss/bin-arm/smartdns
+
 	local GEOTOOL_VER="v$(zig_tool_version geotool)"
 	cp -rf ${CURR_PATH}/binaries/geotool/geotool-${GEOTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-mtk/geotool
 	cp -rf ${CURR_PATH}/binaries/geotool/geotool-${GEOTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-hnd_v8/geotool
-	cp -rf ${CURR_PATH}/binaries/geotool/geotool-${GEOTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-ipq64/geotool
 	cp -rf ${CURR_PATH}/binaries/geotool/geotool-${GEOTOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-ipq32/geotool
 	cp -rf ${CURR_PATH}/binaries/geotool/geotool-${GEOTOOL_VER}-linux-armv7hf ${CURR_PATH}/fancyss/bin-hnd/geotool
 	cp -rf ${CURR_PATH}/binaries/geotool/geotool-${GEOTOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-qca/geotool
@@ -123,7 +165,6 @@ sync_binary(){
 	local XAPITOOL_VER="v$(zig_tool_version xapi-tool)"
 	cp -rf ${CURR_PATH}/binaries/xapi-tool/xapi-tool-${XAPITOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-mtk/xapi-tool
 	cp -rf ${CURR_PATH}/binaries/xapi-tool/xapi-tool-${XAPITOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-hnd_v8/xapi-tool
-	cp -rf ${CURR_PATH}/binaries/xapi-tool/xapi-tool-${XAPITOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-ipq64/xapi-tool
 	cp -rf ${CURR_PATH}/binaries/xapi-tool/xapi-tool-${XAPITOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-ipq32/xapi-tool
 	cp -rf ${CURR_PATH}/binaries/xapi-tool/xapi-tool-${XAPITOOL_VER}-linux-armv7hf ${CURR_PATH}/fancyss/bin-hnd/xapi-tool
 	cp -rf ${CURR_PATH}/binaries/xapi-tool/xapi-tool-${XAPITOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-qca/xapi-tool
@@ -131,7 +172,6 @@ sync_binary(){
 	local SUBTOOL_VER="v$(zig_tool_version sub-tool)"
 	cp -rf ${CURR_PATH}/binaries/sub-tool/sub-tool-${SUBTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-mtk/sub-tool
 	cp -rf ${CURR_PATH}/binaries/sub-tool/sub-tool-${SUBTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-hnd_v8/sub-tool
-	cp -rf ${CURR_PATH}/binaries/sub-tool/sub-tool-${SUBTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-ipq64/sub-tool
 	cp -rf ${CURR_PATH}/binaries/sub-tool/sub-tool-${SUBTOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-ipq32/sub-tool
 	cp -rf ${CURR_PATH}/binaries/sub-tool/sub-tool-${SUBTOOL_VER}-linux-armv7hf ${CURR_PATH}/fancyss/bin-hnd/sub-tool
 	cp -rf ${CURR_PATH}/binaries/sub-tool/sub-tool-${SUBTOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-qca/sub-tool
@@ -140,7 +180,6 @@ sync_binary(){
 	local NODETOOL_VER="v$(zig_tool_version node-tool)"
 	cp -rf ${CURR_PATH}/binaries/node-tool/node-tool-${NODETOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-mtk/node-tool
 	cp -rf ${CURR_PATH}/binaries/node-tool/node-tool-${NODETOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-hnd_v8/node-tool
-	cp -rf ${CURR_PATH}/binaries/node-tool/node-tool-${NODETOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-ipq64/node-tool
 	cp -rf ${CURR_PATH}/binaries/node-tool/node-tool-${NODETOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-ipq32/node-tool
 	cp -rf ${CURR_PATH}/binaries/node-tool/node-tool-${NODETOOL_VER}-linux-armv7hf ${CURR_PATH}/fancyss/bin-hnd/node-tool
 	cp -rf ${CURR_PATH}/binaries/node-tool/node-tool-${NODETOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-qca/node-tool
@@ -149,7 +188,6 @@ sync_binary(){
 	local ANYTLS_ZIG_VER="v$(zig_tool_version anytls-zig)"
 	cp -rf ${CURR_PATH}/binaries/anytls-zig/anytls-zig-${ANYTLS_ZIG_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-mtk/anytls-zig
 	cp -rf ${CURR_PATH}/binaries/anytls-zig/anytls-zig-${ANYTLS_ZIG_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-hnd_v8/anytls-zig
-	cp -rf ${CURR_PATH}/binaries/anytls-zig/anytls-zig-${ANYTLS_ZIG_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-ipq64/anytls-zig
 	cp -rf ${CURR_PATH}/binaries/anytls-zig/anytls-zig-${ANYTLS_ZIG_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-ipq32/anytls-zig
 	cp -rf ${CURR_PATH}/binaries/anytls-zig/anytls-zig-${ANYTLS_ZIG_VER}-linux-armv7hf ${CURR_PATH}/fancyss/bin-hnd/anytls-zig
 	cp -rf ${CURR_PATH}/binaries/anytls-zig/anytls-zig-${ANYTLS_ZIG_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-qca/anytls-zig
@@ -158,7 +196,6 @@ sync_binary(){
 	local WEBSOCKETD_VER="v$(zig_tool_version ws-tool)"
 	cp -rf ${CURR_PATH}/binaries/websocketd/websocketd-${WEBSOCKETD_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-mtk/websocketd
 	cp -rf ${CURR_PATH}/binaries/websocketd/websocketd-${WEBSOCKETD_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-hnd_v8/websocketd
-	cp -rf ${CURR_PATH}/binaries/websocketd/websocketd-${WEBSOCKETD_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-ipq64/websocketd
 	cp -rf ${CURR_PATH}/binaries/websocketd/websocketd-${WEBSOCKETD_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-ipq32/websocketd
 	cp -rf ${CURR_PATH}/binaries/websocketd/websocketd-${WEBSOCKETD_VER}-linux-armv7hf ${CURR_PATH}/fancyss/bin-hnd/websocketd
 	cp -rf ${CURR_PATH}/binaries/websocketd/websocketd-${WEBSOCKETD_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-qca/websocketd
@@ -167,14 +204,12 @@ sync_binary(){
 	local STATUSTOOL_VER="v$(zig_tool_version status-tool)"
 	cp -rf ${CURR_PATH}/binaries/status-tool/status-tool-${STATUSTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-mtk/status-tool
 	cp -rf ${CURR_PATH}/binaries/status-tool/status-tool-${STATUSTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-hnd_v8/status-tool
-	cp -rf ${CURR_PATH}/binaries/status-tool/status-tool-${STATUSTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-ipq64/status-tool
 	cp -rf ${CURR_PATH}/binaries/status-tool/status-tool-${STATUSTOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-ipq32/status-tool
 	cp -rf ${CURR_PATH}/binaries/status-tool/status-tool-${STATUSTOOL_VER}-linux-armv7hf ${CURR_PATH}/fancyss/bin-hnd/status-tool
 	cp -rf ${CURR_PATH}/binaries/status-tool/status-tool-${STATUSTOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-qca/status-tool
 	cp -rf ${CURR_PATH}/binaries/status-tool/status-tool-${STATUSTOOL_VER}-linux-armv5te ${CURR_PATH}/fancyss/bin-arm/status-tool
 	cp -rf ${CURR_PATH}/binaries/status-tool/statusctl-${STATUSTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-mtk/statusctl
 	cp -rf ${CURR_PATH}/binaries/status-tool/statusctl-${STATUSTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-hnd_v8/statusctl
-	cp -rf ${CURR_PATH}/binaries/status-tool/statusctl-${STATUSTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-ipq64/statusctl
 	cp -rf ${CURR_PATH}/binaries/status-tool/statusctl-${STATUSTOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-ipq32/statusctl
 	cp -rf ${CURR_PATH}/binaries/status-tool/statusctl-${STATUSTOOL_VER}-linux-armv7hf ${CURR_PATH}/fancyss/bin-hnd/statusctl
 	cp -rf ${CURR_PATH}/binaries/status-tool/statusctl-${STATUSTOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-qca/statusctl
@@ -183,14 +218,12 @@ sync_binary(){
 	local WEBTESTTOOL_VER="v$(zig_tool_version webtest-tool)"
 	cp -rf ${CURR_PATH}/binaries/webtest-tool/webtest-tool-${WEBTESTTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-mtk/webtest-tool
 	cp -rf ${CURR_PATH}/binaries/webtest-tool/webtest-tool-${WEBTESTTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-hnd_v8/webtest-tool
-	cp -rf ${CURR_PATH}/binaries/webtest-tool/webtest-tool-${WEBTESTTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-ipq64/webtest-tool
 	cp -rf ${CURR_PATH}/binaries/webtest-tool/webtest-tool-${WEBTESTTOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-ipq32/webtest-tool
 	cp -rf ${CURR_PATH}/binaries/webtest-tool/webtest-tool-${WEBTESTTOOL_VER}-linux-armv7hf ${CURR_PATH}/fancyss/bin-hnd/webtest-tool
 	cp -rf ${CURR_PATH}/binaries/webtest-tool/webtest-tool-${WEBTESTTOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-qca/webtest-tool
 	cp -rf ${CURR_PATH}/binaries/webtest-tool/webtest-tool-${WEBTESTTOOL_VER}-linux-armv5te ${CURR_PATH}/fancyss/bin-arm/webtest-tool
 	cp -rf ${CURR_PATH}/binaries/webtest-tool/webtestctl-${WEBTESTTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-mtk/webtestctl
 	cp -rf ${CURR_PATH}/binaries/webtest-tool/webtestctl-${WEBTESTTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-hnd_v8/webtestctl
-	cp -rf ${CURR_PATH}/binaries/webtest-tool/webtestctl-${WEBTESTTOOL_VER}-linux-aarch64 ${CURR_PATH}/fancyss/bin-ipq64/webtestctl
 	cp -rf ${CURR_PATH}/binaries/webtest-tool/webtestctl-${WEBTESTTOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-ipq32/webtestctl
 	cp -rf ${CURR_PATH}/binaries/webtest-tool/webtestctl-${WEBTESTTOOL_VER}-linux-armv7hf ${CURR_PATH}/fancyss/bin-hnd/webtestctl
 	cp -rf ${CURR_PATH}/binaries/webtest-tool/webtestctl-${WEBTESTTOOL_VER}-linux-armv7a ${CURR_PATH}/fancyss/bin-qca/webtestctl
@@ -223,7 +256,6 @@ verify_zig_tool_binaries(){
 	local GEOTOOL_VER="v$(zig_tool_version geotool)"
 	verify_zig_copy "${CURR_PATH}/binaries/geotool/geotool-${GEOTOOL_VER}-linux-aarch64" mtk geotool
 	verify_zig_copy "${CURR_PATH}/binaries/geotool/geotool-${GEOTOOL_VER}-linux-aarch64" hnd_v8 geotool
-	verify_zig_copy "${CURR_PATH}/binaries/geotool/geotool-${GEOTOOL_VER}-linux-aarch64" ipq64 geotool
 	verify_zig_copy "${CURR_PATH}/binaries/geotool/geotool-${GEOTOOL_VER}-linux-armv7a" ipq32 geotool
 	verify_zig_copy "${CURR_PATH}/binaries/geotool/geotool-${GEOTOOL_VER}-linux-armv7hf" hnd geotool
 	verify_zig_copy "${CURR_PATH}/binaries/geotool/geotool-${GEOTOOL_VER}-linux-armv7a" qca geotool
@@ -232,7 +264,6 @@ verify_zig_tool_binaries(){
 	local XAPITOOL_VER="v$(zig_tool_version xapi-tool)"
 	verify_zig_copy "${CURR_PATH}/binaries/xapi-tool/xapi-tool-${XAPITOOL_VER}-linux-aarch64" mtk xapi-tool
 	verify_zig_copy "${CURR_PATH}/binaries/xapi-tool/xapi-tool-${XAPITOOL_VER}-linux-aarch64" hnd_v8 xapi-tool
-	verify_zig_copy "${CURR_PATH}/binaries/xapi-tool/xapi-tool-${XAPITOOL_VER}-linux-aarch64" ipq64 xapi-tool
 	verify_zig_copy "${CURR_PATH}/binaries/xapi-tool/xapi-tool-${XAPITOOL_VER}-linux-armv7a" ipq32 xapi-tool
 	verify_zig_copy "${CURR_PATH}/binaries/xapi-tool/xapi-tool-${XAPITOOL_VER}-linux-armv7hf" hnd xapi-tool
 	verify_zig_copy "${CURR_PATH}/binaries/xapi-tool/xapi-tool-${XAPITOOL_VER}-linux-armv7a" qca xapi-tool
@@ -240,7 +271,6 @@ verify_zig_tool_binaries(){
 	local SUBTOOL_VER="v$(zig_tool_version sub-tool)"
 	verify_zig_copy "${CURR_PATH}/binaries/sub-tool/sub-tool-${SUBTOOL_VER}-linux-aarch64" mtk sub-tool
 	verify_zig_copy "${CURR_PATH}/binaries/sub-tool/sub-tool-${SUBTOOL_VER}-linux-aarch64" hnd_v8 sub-tool
-	verify_zig_copy "${CURR_PATH}/binaries/sub-tool/sub-tool-${SUBTOOL_VER}-linux-aarch64" ipq64 sub-tool
 	verify_zig_copy "${CURR_PATH}/binaries/sub-tool/sub-tool-${SUBTOOL_VER}-linux-armv7a" ipq32 sub-tool
 	verify_zig_copy "${CURR_PATH}/binaries/sub-tool/sub-tool-${SUBTOOL_VER}-linux-armv7hf" hnd sub-tool
 	verify_zig_copy "${CURR_PATH}/binaries/sub-tool/sub-tool-${SUBTOOL_VER}-linux-armv7a" qca sub-tool
@@ -249,7 +279,6 @@ verify_zig_tool_binaries(){
 	local NODETOOL_VER="v$(zig_tool_version node-tool)"
 	verify_zig_copy "${CURR_PATH}/binaries/node-tool/node-tool-${NODETOOL_VER}-linux-aarch64" mtk node-tool
 	verify_zig_copy "${CURR_PATH}/binaries/node-tool/node-tool-${NODETOOL_VER}-linux-aarch64" hnd_v8 node-tool
-	verify_zig_copy "${CURR_PATH}/binaries/node-tool/node-tool-${NODETOOL_VER}-linux-aarch64" ipq64 node-tool
 	verify_zig_copy "${CURR_PATH}/binaries/node-tool/node-tool-${NODETOOL_VER}-linux-armv7a" ipq32 node-tool
 	verify_zig_copy "${CURR_PATH}/binaries/node-tool/node-tool-${NODETOOL_VER}-linux-armv7hf" hnd node-tool
 	verify_zig_copy "${CURR_PATH}/binaries/node-tool/node-tool-${NODETOOL_VER}-linux-armv7a" qca node-tool
@@ -258,7 +287,6 @@ verify_zig_tool_binaries(){
 	local ANYTLS_ZIG_VER="v$(zig_tool_version anytls-zig)"
 	verify_zig_copy "${CURR_PATH}/binaries/anytls-zig/anytls-zig-${ANYTLS_ZIG_VER}-linux-aarch64" mtk anytls-zig
 	verify_zig_copy "${CURR_PATH}/binaries/anytls-zig/anytls-zig-${ANYTLS_ZIG_VER}-linux-aarch64" hnd_v8 anytls-zig
-	verify_zig_copy "${CURR_PATH}/binaries/anytls-zig/anytls-zig-${ANYTLS_ZIG_VER}-linux-aarch64" ipq64 anytls-zig
 	verify_zig_copy "${CURR_PATH}/binaries/anytls-zig/anytls-zig-${ANYTLS_ZIG_VER}-linux-armv7a" ipq32 anytls-zig
 	verify_zig_copy "${CURR_PATH}/binaries/anytls-zig/anytls-zig-${ANYTLS_ZIG_VER}-linux-armv7hf" hnd anytls-zig
 	verify_zig_copy "${CURR_PATH}/binaries/anytls-zig/anytls-zig-${ANYTLS_ZIG_VER}-linux-armv7a" qca anytls-zig
@@ -267,7 +295,6 @@ verify_zig_tool_binaries(){
 	local WEBSOCKETD_VER="v$(zig_tool_version ws-tool)"
 	verify_zig_copy "${CURR_PATH}/binaries/websocketd/websocketd-${WEBSOCKETD_VER}-linux-aarch64" mtk websocketd
 	verify_zig_copy "${CURR_PATH}/binaries/websocketd/websocketd-${WEBSOCKETD_VER}-linux-aarch64" hnd_v8 websocketd
-	verify_zig_copy "${CURR_PATH}/binaries/websocketd/websocketd-${WEBSOCKETD_VER}-linux-aarch64" ipq64 websocketd
 	verify_zig_copy "${CURR_PATH}/binaries/websocketd/websocketd-${WEBSOCKETD_VER}-linux-armv7a" ipq32 websocketd
 	verify_zig_copy "${CURR_PATH}/binaries/websocketd/websocketd-${WEBSOCKETD_VER}-linux-armv7hf" hnd websocketd
 	verify_zig_copy "${CURR_PATH}/binaries/websocketd/websocketd-${WEBSOCKETD_VER}-linux-armv7a" qca websocketd
@@ -276,14 +303,12 @@ verify_zig_tool_binaries(){
 	local STATUSTOOL_VER="v$(zig_tool_version status-tool)"
 	verify_zig_copy "${CURR_PATH}/binaries/status-tool/status-tool-${STATUSTOOL_VER}-linux-aarch64" mtk status-tool
 	verify_zig_copy "${CURR_PATH}/binaries/status-tool/status-tool-${STATUSTOOL_VER}-linux-aarch64" hnd_v8 status-tool
-	verify_zig_copy "${CURR_PATH}/binaries/status-tool/status-tool-${STATUSTOOL_VER}-linux-aarch64" ipq64 status-tool
 	verify_zig_copy "${CURR_PATH}/binaries/status-tool/status-tool-${STATUSTOOL_VER}-linux-armv7a" ipq32 status-tool
 	verify_zig_copy "${CURR_PATH}/binaries/status-tool/status-tool-${STATUSTOOL_VER}-linux-armv7hf" hnd status-tool
 	verify_zig_copy "${CURR_PATH}/binaries/status-tool/status-tool-${STATUSTOOL_VER}-linux-armv7a" qca status-tool
 	verify_zig_copy "${CURR_PATH}/binaries/status-tool/status-tool-${STATUSTOOL_VER}-linux-armv5te" arm status-tool
 	verify_zig_copy "${CURR_PATH}/binaries/status-tool/statusctl-${STATUSTOOL_VER}-linux-aarch64" mtk statusctl
 	verify_zig_copy "${CURR_PATH}/binaries/status-tool/statusctl-${STATUSTOOL_VER}-linux-aarch64" hnd_v8 statusctl
-	verify_zig_copy "${CURR_PATH}/binaries/status-tool/statusctl-${STATUSTOOL_VER}-linux-aarch64" ipq64 statusctl
 	verify_zig_copy "${CURR_PATH}/binaries/status-tool/statusctl-${STATUSTOOL_VER}-linux-armv7a" ipq32 statusctl
 	verify_zig_copy "${CURR_PATH}/binaries/status-tool/statusctl-${STATUSTOOL_VER}-linux-armv7hf" hnd statusctl
 	verify_zig_copy "${CURR_PATH}/binaries/status-tool/statusctl-${STATUSTOOL_VER}-linux-armv7a" qca statusctl
@@ -292,14 +317,12 @@ verify_zig_tool_binaries(){
 	local WEBTESTTOOL_VER="v$(zig_tool_version webtest-tool)"
 	verify_zig_copy "${CURR_PATH}/binaries/webtest-tool/webtest-tool-${WEBTESTTOOL_VER}-linux-aarch64" mtk webtest-tool
 	verify_zig_copy "${CURR_PATH}/binaries/webtest-tool/webtest-tool-${WEBTESTTOOL_VER}-linux-aarch64" hnd_v8 webtest-tool
-	verify_zig_copy "${CURR_PATH}/binaries/webtest-tool/webtest-tool-${WEBTESTTOOL_VER}-linux-aarch64" ipq64 webtest-tool
 	verify_zig_copy "${CURR_PATH}/binaries/webtest-tool/webtest-tool-${WEBTESTTOOL_VER}-linux-armv7a" ipq32 webtest-tool
 	verify_zig_copy "${CURR_PATH}/binaries/webtest-tool/webtest-tool-${WEBTESTTOOL_VER}-linux-armv7hf" hnd webtest-tool
 	verify_zig_copy "${CURR_PATH}/binaries/webtest-tool/webtest-tool-${WEBTESTTOOL_VER}-linux-armv7a" qca webtest-tool
 	verify_zig_copy "${CURR_PATH}/binaries/webtest-tool/webtest-tool-${WEBTESTTOOL_VER}-linux-armv5te" arm webtest-tool
 	verify_zig_copy "${CURR_PATH}/binaries/webtest-tool/webtestctl-${WEBTESTTOOL_VER}-linux-aarch64" mtk webtestctl
 	verify_zig_copy "${CURR_PATH}/binaries/webtest-tool/webtestctl-${WEBTESTTOOL_VER}-linux-aarch64" hnd_v8 webtestctl
-	verify_zig_copy "${CURR_PATH}/binaries/webtest-tool/webtestctl-${WEBTESTTOOL_VER}-linux-aarch64" ipq64 webtestctl
 	verify_zig_copy "${CURR_PATH}/binaries/webtest-tool/webtestctl-${WEBTESTTOOL_VER}-linux-armv7a" ipq32 webtestctl
 	verify_zig_copy "${CURR_PATH}/binaries/webtest-tool/webtestctl-${WEBTESTTOOL_VER}-linux-armv7hf" hnd webtestctl
 	verify_zig_copy "${CURR_PATH}/binaries/webtest-tool/webtestctl-${WEBTESTTOOL_VER}-linux-armv7a" qca webtestctl
@@ -534,6 +557,46 @@ gen_folder(){
 	# sed -i '/fancyss_todo/d' ./shadowsocks/webs/Module_shadowsocks.asp
 }
 
+resolve_source_epoch(){
+	if [ -n "${SOURCE_DATE_EPOCH:-}" ];then
+		printf '%s\n' "${SOURCE_DATE_EPOCH}"
+		return 0
+	fi
+	local release_iso=""
+	if [ -f "${CURR_PATH}/Changelog.txt" ];then
+		release_iso=$(awk -v ver="${VERSION}" '
+			index($0, ver "（") == 1 || index($0, ver "(") == 1 {
+				if (match($0, /[0-9]{8}/)) {
+					d = substr($0, RSTART, RLENGTH)
+					printf "%s-%s-%sT00:00:00Z\n", substr(d, 1, 4), substr(d, 5, 2), substr(d, 7, 2)
+					exit
+				}
+			}
+		' "${CURR_PATH}/Changelog.txt")
+	fi
+	if [ -n "${release_iso}" ];then
+		if date -u -d "${release_iso}" +%s >/dev/null 2>&1;then
+			date -u -d "${release_iso}" +%s
+			return 0
+		elif command -v python3 >/dev/null 2>&1;then
+			python3 -c "import datetime,sys; dt=datetime.datetime.strptime(sys.argv[1], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc); print(int(dt.timestamp()))" "${release_iso}"
+			return 0
+		fi
+	fi
+	printf '1700000000\n'
+}
+
+pack_tarball(){
+	local out_file="$1"
+	local source_epoch="${BUILD_SOURCE_EPOCH:-1700000000}"
+	chmod -R go-w shadowsocks
+	if tar --version 2>/dev/null | grep -q "GNU tar";then
+		tar --sort=name --mtime="@${source_epoch}" --owner=0 --group=0 --numeric-owner -cf - shadowsocks | gzip -n -9 > "${out_file}"
+	else
+		tar -cf - shadowsocks | gzip -n -9 > "${out_file}"
+	fi
+}
+
 build_pkg() {
 	local platform=$1
 	local pkgtype=$2
@@ -541,19 +604,19 @@ build_pkg() {
 	# different platform
 	if [ ${release_type} == "release" ];then
 		echo "打包：fancyss_${platform}_${pkgtype}.tar.gz"
-		tar -zcf ${CURR_PATH}/packages/fancyss_${platform}_${pkgtype}.tar.gz shadowsocks >/dev/null
+		pack_tarball "${CURR_PATH}/packages/fancyss_${platform}_${pkgtype}.tar.gz"
 		md5value=$(md5sum ${CURR_PATH}/packages/fancyss_${platform}_${pkgtype}.tar.gz|tr " " "\n"|sed -n 1p)
 		cat >>${CURR_PATH}/packages/version_tmp.json.js <<-EOF
 			,"md5_${platform}_${pkgtype}":"${md5value}"
 		EOF
 	elif [ ${release_type} == "debug" ];then
 		echo "打包：fancyss_${platform}_${pkgtype}_${release_type}.tar.gz"
-		tar -zcf ${CURR_PATH}/packages/fancyss_${platform}_${pkgtype}_${release_type}.tar.gz shadowsocks >/dev/null
+		pack_tarball "${CURR_PATH}/packages/fancyss_${platform}_${pkgtype}_${release_type}.tar.gz"
 	fi
 }
 
 do_backup(){
-	if [ "${CURR_PATH}/../fancyss_history_package" ];then
+	if [ -d "${CURR_PATH}/../fancyss_history_package" ];then
 		local platform=$1
 		local pkgtype=$2
 		local release_type=$3
@@ -578,6 +641,8 @@ do_backup(){
 
 papare(){
 	rm -f ${CURR_PATH}/packages/*
+	BUILD_SOURCE_EPOCH=$(resolve_source_epoch)
+	export SOURCE_DATE_EPOCH="${BUILD_SOURCE_EPOCH}"
 	cp_rules
 	prepare_geodata_assets
 	cp_rules_ng2
@@ -613,25 +678,28 @@ make(){
 	pack hnd lite release
 	pack hnd_v8 full release
 	pack hnd_v8 lite release
-	pack hnd lite release
-	pack qca full release
-	pack qca lite release
-	pack arm full release
-	pack arm lite release
-	pack mtk full release
-	pack mtk lite release
-	pack ipq32 full release
-	pack ipq32 lite release
-	pack ipq64 full release
-	pack ipq64 lite release
+	if [ "${BUILD_ALL_PLATFORMS}" = "1" ];then
+		pack qca full release
+		pack qca lite release
+		pack arm full release
+		pack arm lite release
+		pack mtk full release
+		pack mtk lite release
+		pack ipq32 full release
+		pack ipq32 lite release
+		pack ipq64 full release
+		pack ipq64 lite release
+	fi
 	# --- for debug ---
 	pack hnd full debug
 	pack hnd_v8 full debug
-	pack qca full debug
-	pack arm full debug
-	pack mtk full debug
-	pack ipq32 full debug
-	pack ipq64 full debug
+	if [ "${BUILD_ALL_PLATFORMS}" = "1" ];then
+		pack qca full debug
+		pack arm full debug
+		pack mtk full debug
+		pack ipq32 full debug
+		pack ipq64 full debug
+	fi
 	finish
 }
 
