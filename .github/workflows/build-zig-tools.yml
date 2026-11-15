@@ -233,11 +233,13 @@ jobs:
               python3 "$RUNNER_TEMP/verify/run_linux41_seccomp.py" "$x64_bin" parse-uri-lines \
                 --input "$work_x64/uris.txt" \
                 --output "$work_x64/out.jsonl" \
+                --format fancyss \
                 --compare-with "$work_x64/prev.jsonl" \
                 --diff-output "$work_x64/diff.txt" \
                 --summary-output "$work_x64/summary.json"
               test -s "$work_x64/out.jsonl"
               test -s "$work_x64/summary.json"
+              test -f "$work_x64/diff.txt"
             else
               printf '{"id":"n1"}\n' > "$work_x64/keep.jsonl"
               printf '{"id":"n2"}\n' > "$work_x64/stale.jsonl"
@@ -271,12 +273,14 @@ jobs:
                 python3 "$RUNNER_TEMP/verify/run_linux41_seccomp.py" "$qemu_cmd" -strace "$qbin" parse-uri-lines \
                   --input "$work/uris.txt" \
                   --output "$work/out.jsonl" \
+                  --format fancyss \
                   --compare-with "$work/prev.jsonl" \
                   --diff-output "$work/diff.txt" \
                   --summary-output "$work/summary.json" \
                   2>"$strace_log"
                 test -s "$work/out.jsonl"
                 test -s "$work/summary.json"
+                test -f "$work/diff.txt"
               else
                 printf '{"id":"n1"}\n' > "$work/keep.jsonl"
                 printf '{"id":"n2"}\n' > "$work/stale.jsonl"
