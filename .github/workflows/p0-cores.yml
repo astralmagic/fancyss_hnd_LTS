@@ -48,7 +48,7 @@ jobs:
               "vless.json": {
                   "protocol": "vless",
                   "settings": {"vnext": [{"address": "example.com", "port": 443, "users": [{"id": "11111111-1111-1111-1111-111111111111", "encryption": "none"}]}]},
-                  "streamSettings": {"network": "tcp", "security": "none"},
+                  "streamSettings": {"network": "tcp", "security": "tls", "tlsSettings": {"serverName": "example.com", "pinnedPeerCertSha256": "", "verifyPeerCertByName": ""}},
               },
               "trojan.json": {
                   "protocol": "trojan",
