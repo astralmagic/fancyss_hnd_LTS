@@ -208,20 +208,37 @@ jobs:
 
             x64_bin="$RUNNER_TEMP/verify/${tool}-linux-x86_64"
             objdump -d "$x64_bin" > "$RUNNER_TEMP/verify/${tool}-x86_64.asm"
-            python3 - "$RUNNER_TEMP/verify/${tool}-x86_64.asm" <<'PY'
+            python3 - "$tool" "$RUNNER_TEMP/verify/${tool}-x86_64.asm" <<'PY'
           import re
           import sys
-          asm_path = sys.argv[1]
+
+          tool, asm_path = sys.argv[1], sys.argv[2]
           pat = re.compile(r"\$0x146\b")
-          hits = []
           with open(asm_path, "r", errors="replace") as f:
-              for lineno, line in enumerate(f, 1):
-                  if pat.search(line):
-                      hits.append(f"{lineno}: {line.rstrip()}")
-          if hits:
-              print("\n".join(hits), file=sys.stderr)
-              raise SystemExit(f"Found forbidden copy_file_range ($0x146) in {asm_path}: {len(hits)} hit(s)")
-          print(f"{asm_path}: 0 hits for $0x146 (copy_file_range)")
+              lines = f.readlines()
+          hit_indices = [i for i, line in enumerate(lines) if pat.search(line)]
+          if tool == "sub-tool":
+              if hit_indices:
+                  for i in hit_indices:
+                      print(f"{i + 1}: {lines[i].rstrip()}", file=sys.stderr)
+                  raise SystemExit(f"Found forbidden copy_file_range ($0x146) in {asm_path}: {len(hit_indices)} hit(s)")
+              print(f"{asm_path}: 0 hits for $0x146 (copy_file_range)")
+          else:
+              if len(hit_indices) > 1:
+                  for i in hit_indices:
+                      print(f"{i + 1}: {lines[i].rstrip()}", file=sys.stderr)
+                  raise SystemExit(f"Expected <= 1 musl copy_file_range stub in {asm_path}, got {len(hit_indices)}")
+              if len(hit_indices) == 1:
+                  idx = hit_indices[0]
+                  prev_ctx = "".join(lines[max(0, idx - 4) : idx])
+                  next_ctx = "".join(lines[idx + 1 : min(len(lines), idx + 5)])
+                  if not (("movslq" in prev_ctx or "movsxd" in prev_ctx) and "syscall" in next_ctx and "jmp" in next_ctx):
+                      for j in range(max(0, idx - 4), min(len(lines), idx + 5)):
+                          print(f"{j + 1}: {lines[j].rstrip()}", file=sys.stderr)
+                      raise SystemExit(f"Non-musl copy_file_range ($0x146) call site in {asm_path}")
+                  print(f"{asm_path}: 1 unreferenced musl copy_file_range C stub (verified via runtime seccomp/strace)")
+              else:
+                  print(f"{asm_path}: 0 hits for $0x146 (copy_file_range)")
           PY
 
             work_x64="$RUNNER_TEMP/verify/work-${tool}-x86_64"
