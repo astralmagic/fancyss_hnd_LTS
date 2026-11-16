@@ -3,6 +3,9 @@ domain:bytegecko-i18n.com
 domain:byteintlapi.com
 domain:byteoversea.com
 domain:capcut.com
+domain:capcutapi.com
+domain:capcutapi.us
+domain:capcutstatic.com
 domain:ibytedtos.com
 domain:ibyteimg.com
 domain:ipstatp.com
@@ -29,11 +32,14 @@ domain:tiktokglobalshopv.com
 domain:tiktokminis.us
 domain:tiktokmusic.app
 domain:tiktokrow-cdn.com
+domain:tiktokshop.com
+domain:tiktokstaticb.com
 domain:tiktokv.com
 domain:tiktokv.com.edgekey.net
 domain:tiktokv.com.edgesuite.net
 domain:tiktokv.eu
 domain:tiktokv.us
+domain:tiktokvapp.com
 domain:tiktokw.eu
 domain:tiktokw.us
 domain:trae.ai

@@ -1,99 +1,99 @@
 {
-  "generated_at": 1780328843,
+  "generated_at": 1794700800,
   "source": "geotool",
   "site": {
     "ai": {
-      "total": 145
+      "total": 226
     },
     "apple": {
       "total": 1584
     },
     "apple-cn": {
-      "total": 164
+      "total": 162
     },
     "appletv": {
       "total": 8
     },
     "bilibili": {
-      "total": 116
+      "total": 120
     },
     "bybit": {
       "total": 16
     },
     "cloudflare": {
-      "total": 74
+      "total": 76
     },
     "cn": {
-      "total": 118209
+      "total": 109767
     },
     "connectivity-check": {
-      "total": 14
+      "total": 28
     },
     "cryptocurrency": {
-      "total": 184
+      "total": 240
     },
     "discord": {
       "total": 12
     },
     "disney": {
-      "total": 172
+      "total": 234
     },
     "games": {
-      "total": 826
+      "total": 924
     },
     "gfw": {
-      "total": 6351
+      "total": 6598
     },
     "github": {
-      "total": 31
+      "total": 60
     },
     "google": {
-      "total": 853
+      "total": 847
     },
     "google-cn": {
-      "total": 143
+      "total": 112
     },
     "max": {
-      "total": 87
+      "total": 89
     },
     "media": {
       "total": 1307
     },
     "microsoft": {
-      "total": 620
+      "total": 640
     },
     "netflix": {
       "total": 36
     },
     "networktest": {
-      "total": 83
+      "total": 1939
     },
     "openai": {
-      "total": 18
+      "total": 24
     },
     "primevideo": {
       "total": 31
     },
     "private": {
-      "total": 129
+      "total": 132
     },
     "proxy": {
-      "total": 27829
+      "total": 26634
     },
     "social-media": {
-      "total": 592
+      "total": 607
     },
     "spotify": {
-      "total": 28
+      "total": 30
     },
     "telegram": {
-      "total": 20
+      "total": 21
     },
     "tiktok": {
-      "total": 54
+      "total": 60
     },
     "trackerslist": {
-      "total": 443
+      "total": 431
     },
     "twitter": {
       "total": 24
@@ -104,14 +104,14 @@
   },
   "ip": {
     "cloudflare": {
-      "total": 901,
-      "ipv4": 666,
-      "ipv6": 235
+      "total": 911,
+      "ipv4": 832,
+      "ipv6": 79
     },
     "cn": {
-      "total": 10300,
-      "ipv4": 8286,
-      "ipv6": 2014
+      "total": 8926,
+      "ipv4": 6906,
+      "ipv6": 2020
     },
     "discord": {
       "total": 11,
@@ -119,14 +119,14 @@
       "ipv6": 0
     },
     "netflix": {
-      "total": 80,
-      "ipv4": 23,
-      "ipv6": 57
+      "total": 122,
+      "ipv4": 36,
+      "ipv6": 86
     },
     "private": {
-      "total": 18,
-      "ipv4": 14,
-      "ipv6": 4
+      "total": 28,
+      "ipv4": 16,
+      "ipv6": 12
     },
     "telegram": {
       "total": 12,
@@ -134,8 +134,8 @@
       "ipv6": 4
     },
     "twitter": {
-      "total": 21,
-      "ipv4": 18,
+      "total": 20,
+      "ipv4": 17,
       "ipv6": 3
     }
   },
@@ -145,18 +145,18 @@
         "ai"
       ],
       "ip_assets": [],
-      "site_count": 145,
+      "site_count": 226,
       "ip_count": 0,
-      "total": 145
+      "total": 226
     },
     "openai": {
       "site_assets": [
         "openai"
       ],
       "ip_assets": [],
-      "site_count": 18,
+      "site_count": 24,
       "ip_count": 0,
-      "total": 18
+      "total": 24
     },
     "telegram": {
       "site_assets": [
@@ -165,9 +165,9 @@
       "ip_assets": [
         "telegram"
       ],
-      "site_count": 20,
+      "site_count": 21,
       "ip_count": 12,
-      "total": 32
+      "total": 33
     },
     "twitter": {
       "site_assets": [
@@ -177,8 +177,8 @@
         "twitter"
       ],
       "site_count": 24,
-      "ip_count": 21,
-      "total": 45
+      "ip_count": 20,
+      "total": 44
     },
     "discord": {
       "site_assets": [
@@ -196,18 +196,18 @@
         "github"
       ],
       "ip_assets": [],
-      "site_count": 31,
+      "site_count": 60,
       "ip_count": 0,
-      "total": 31
+      "total": 60
     },
     "google": {
       "site_assets": [
         "google"
       ],
       "ip_assets": [],
-      "site_count": 853,
+      "site_count": 847,
       "ip_count": 0,
-      "total": 853
+      "total": 847
     },
     "apple": {
       "site_assets": [
@@ -244,26 +244,26 @@
         "netflix"
       ],
       "site_count": 36,
-      "ip_count": 80,
-      "total": 116
+      "ip_count": 122,
+      "total": 158
     },
     "disney": {
       "site_assets": [
         "disney"
       ],
       "ip_assets": [],
-      "site_count": 172,
+      "site_count": 234,
       "ip_count": 0,
-      "total": 172
+      "total": 234
     },
     "max": {
       "site_assets": [
         "max"
       ],
       "ip_assets": [],
-      "site_count": 87,
+      "site_count": 89,
       "ip_count": 0,
-      "total": 87
+      "total": 89
     },
     "primevideo": {
       "site_assets": [
@@ -288,54 +288,54 @@
         "spotify"
       ],
       "ip_assets": [],
-      "site_count": 28,
+      "site_count": 30,
       "ip_count": 0,
-      "total": 28
+      "total": 30
     },
     "tiktok": {
       "site_assets": [
         "tiktok"
       ],
       "ip_assets": [],
-      "site_count": 54,
+      "site_count": 60,
       "ip_count": 0,
-      "total": 54
+      "total": 60
     },
     "bilibili": {
       "site_assets": [
         "bilibili"
       ],
       "ip_assets": [],
-      "site_count": 116,
+      "site_count": 120,
       "ip_count": 0,
-      "total": 116
+      "total": 120
     },
     "games": {
       "site_assets": [
         "games"
       ],
       "ip_assets": [],
-      "site_count": 826,
+      "site_count": 924,
       "ip_count": 0,
-      "total": 826
+      "total": 924
     },
     "networktest": {
       "site_assets": [
         "networktest"
       ],
       "ip_assets": [],
-      "site_count": 83,
+      "site_count": 1939,
       "ip_count": 0,
-      "total": 83
+      "total": 1939
     },
     "connectivity-check": {
       "site_assets": [
         "connectivity-check"
       ],
       "ip_assets": [],
-      "site_count": 14,
+      "site_count": 28,
       "ip_count": 0,
-      "total": 14
+      "total": 28
     },
     "cloudflare": {
       "site_assets": [
@@ -344,36 +344,36 @@
       "ip_assets": [
         "cloudflare"
       ],
-      "site_count": 74,
-      "ip_count": 901,
-      "total": 975
+      "site_count": 76,
+      "ip_count": 911,
+      "total": 987
     },
     "social-media": {
       "site_assets": [
         "social-media"
       ],
       "ip_assets": [],
-      "site_count": 592,
+      "site_count": 607,
       "ip_count": 0,
-      "total": 592
+      "total": 607
     },
     "microsoft": {
       "site_assets": [
         "microsoft"
       ],
       "ip_assets": [],
-      "site_count": 620,
+      "site_count": 640,
       "ip_count": 0,
-      "total": 620
+      "total": 640
     },
     "trackerslist": {
       "site_assets": [
         "trackerslist"
       ],
       "ip_assets": [],
-      "site_count": 443,
+      "site_count": 431,
       "ip_count": 0,
-      "total": 443
+      "total": 431
     },
     "bybit": {
       "site_assets": [
@@ -389,27 +389,27 @@
         "cryptocurrency"
       ],
       "ip_assets": [],
-      "site_count": 184,
+      "site_count": 240,
       "ip_count": 0,
-      "total": 184
+      "total": 240
     },
     "google-cn": {
       "site_assets": [
         "google-cn"
       ],
       "ip_assets": [],
-      "site_count": 143,
+      "site_count": 112,
       "ip_count": 0,
-      "total": 143
+      "total": 112
     },
     "apple-cn": {
       "site_assets": [
         "apple-cn"
       ],
       "ip_assets": [],
-      "site_count": 164,
+      "site_count": 162,
       "ip_count": 0,
-      "total": 164
+      "total": 162
     },
     "chnlist": {
       "site_assets": [
@@ -419,27 +419,27 @@
         "cn",
         "private"
       ],
-      "site_count": 118209,
-      "ip_count": 10318,
-      "total": 128527
+      "site_count": 109767,
+      "ip_count": 8954,
+      "total": 118721
     },
     "proxy": {
       "site_assets": [
         "proxy"
       ],
       "ip_assets": [],
-      "site_count": 27829,
+      "site_count": 26634,
       "ip_count": 0,
-      "total": 27829
+      "total": 26634
     },
     "gfw": {
       "site_assets": [
         "gfw"
       ],
       "ip_assets": [],
-      "site_count": 6351,
+      "site_count": 6598,
       "ip_count": 0,
-      "total": 6351
+      "total": 6598
     }
   }
 }

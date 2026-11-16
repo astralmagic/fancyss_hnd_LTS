@@ -2,38 +2,59 @@
 
 # fancyss script for asuswrt/merlin based router with software center
 
-source /koolshare/scripts/base.sh
+source "${FSS_BASE_FILE:-/koolshare/scripts/base.sh}"
 eval $(dbus export ss_basic_)
 alias echo_date='echo 【$(TZ=UTC-8 date -R +%Y%m%d\ %X)】:'
-RULE_FILE=/koolshare/ss/rules/rules.json.js
-URL_MAIN="https://raw.githubusercontent.com/astralmagic/fancyss_hnd_LTS/lts/rules_ng"
+RULE_FILE="${FSS_RULE_FILE:-/koolshare/ss/rules/rules.json.js}"
+RULE_SAVE_DIR="${FSS_RULE_SAVE_DIR:-/koolshare/ss/rules}"
+RULE_LOG_FILE="${FSS_RULE_LOG_FILE:-/tmp/upload/ss_log.txt}"
+RULE_LOCK_DIR="${FSS_RULE_LOCK_DIR:-/tmp/fancyss_rule_update.lock}"
+RULE_TMP_ROOT="${FSS_RULE_TMP_ROOT:-/tmp}"
+URL_MAIN="${FSS_RULE_URL_MAIN:-https://raw.githubusercontent.com/astralmagic/fancyss_hnd_LTS/lts/rules_ng}"
+FSS_RULE_ACTIVE_TMPDIR=""
+FSS_RULE_LOCK_OWNED=0
 
 run(){
-	env -i PATH=${PATH} "$@"
+	env -i PATH="${PATH}" "$@"
 }
 
-rules_meta_by_key(){
-	local json_file="$1"
-	local key="$2"
-	[ -f "${json_file}" ] || return 1
-	[ -n "${key}" ] || return 1
-	run jq -r --arg key "${key}" '
-		def text($v):
-			if $v == null then
-				""
-			elif ($v | type) == "string" then
-				$v
-			else
-				($v | tostring)
-			end;
-		.[$key] as $item
-		| [
-			(text($item.name) | @base64),
-			(text($item.md5) | @base64),
-			(text($item.date) | @base64),
-			(if $item == null then "" else (($item | tojson) | @base64) end)
-		] | join("\u001f")
-	' "${json_file}" 2>/dev/null
+finish_rule_log_error(){
+	mkdir -p "$(dirname "${RULE_LOG_FILE}")"
+	echo XU6J03M6 >> "${RULE_LOG_FILE}"
+}
+
+cleanup_rule_update(){
+	if [ -n "${FSS_RULE_ACTIVE_TMPDIR}" ]; then
+		rm -rf "${FSS_RULE_ACTIVE_TMPDIR}"
+		FSS_RULE_ACTIVE_TMPDIR=""
+	fi
+	if [ "${FSS_RULE_LOCK_OWNED}" = "1" ] && [ "$(cat "${RULE_LOCK_DIR}/pid" 2>/dev/null)" = "$$" ]; then
+		rm -rf "${RULE_LOCK_DIR}"
+	fi
+	FSS_RULE_LOCK_OWNED=0
+}
+
+acquire_rule_lock(){
+	local holder_pid=""
+	mkdir -p "$(dirname "${RULE_LOCK_DIR}")"
+	if mkdir "${RULE_LOCK_DIR}" 2>/dev/null; then
+		printf '%s\n' "$$" > "${RULE_LOCK_DIR}/pid"
+		FSS_RULE_LOCK_OWNED=1
+		return 0
+	fi
+	holder_pid="$(cat "${RULE_LOCK_DIR}/pid" 2>/dev/null)"
+	if [ -n "${holder_pid}" ] && kill -0 "${holder_pid}" 2>/dev/null; then
+		echo_date "已有规则更新任务正在运行（PID: ${holder_pid}），跳过本次更新！"
+		return 1
+	fi
+	rm -rf "${RULE_LOCK_DIR}"
+	if mkdir "${RULE_LOCK_DIR}" 2>/dev/null; then
+		printf '%s\n' "$$" > "${RULE_LOCK_DIR}/pid"
+		FSS_RULE_LOCK_OWNED=1
+		return 0
+	fi
+	echo_date "无法获取规则更新锁，退出！"
+	return 1
 }
 
 rules_runtime_numbers_tsv(){
@@ -61,195 +82,240 @@ rules_runtime_numbers_tsv(){
 }
 
 start_update(){
-	# 1. 检测规则版本号文件
+	local rule_down_dir=""
+	local rule_stage_dir=""
+	local online_manifest=""
+	local updated_entries=""
+	local batch_failed=0
+	local reboot=0
+	local rule_spec=""
+	local rule_key=""
+	local rule_enabled=""
+
 	if [ ! -f "${RULE_FILE}" ];then
 		echo_date "没有找到规则版本号文件: rules.json.js！请尝试覆盖安装插件解决！退出！"
-		echo XU6J03M6 >> /tmp/upload/ss_log.txt
-		exit
+		finish_rule_log_error
+		return 1
 	fi
-	run jq --tab . "${RULE_FILE}" >/dev/null 2>&1
-	if [ "$?" != "0" ];then
+	if ! run jq --tab . "${RULE_FILE}" >/dev/null 2>&1;then
 		echo_date "本地规则版本号文件解析失败：${RULE_FILE}！请尝试覆盖安装插件解决！退出！"
-		echo XU6J03M6 >> /tmp/upload/ss_log.txt
-		exit
+		finish_rule_log_error
+		return 1
 	fi
+	if ! acquire_rule_lock; then
+		finish_rule_log_error
+		return 1
+	fi
+	trap 'cleanup_rule_update' EXIT INT TERM
+	if ! mkdir -p "${RULE_TMP_ROOT}" || ! rule_down_dir="$(mktemp -d "${RULE_TMP_ROOT}/fancyss_rule_download.XXXXXX")"; then
+		echo_date "创建规则更新临时目录失败，退出！"
+		cleanup_rule_update
+		finish_rule_log_error
+		return 1
+	fi
+	FSS_RULE_ACTIVE_TMPDIR="${rule_down_dir}"
+	rule_stage_dir="${rule_down_dir}/stage"
+	online_manifest="${rule_down_dir}/rules.json.js"
+	updated_entries="${rule_down_dir}/updated.tsv"
 
-	# 3. 准备下载文件夹
-	rm -rf /tmp/fancyss_rule_download
-	mkdir /tmp/fancyss_rule_download
-	local rule_save_dir=/koolshare/ss/rules
-	local rule_down_dir=/tmp/fancyss_rule_download
-
-	# 4. 开始更新
+	mkdir -p "${rule_stage_dir}" "${RULE_SAVE_DIR}"
+	: > "${updated_entries}"
 	echo ==================================================================================================
 	echo_date "开始更新fancyss规则，请等待..."
 
-	# 5. 先下载版本号文件
-	wget -4 --no-check-certificate --timeout=8 -qO - ${URL_MAIN}/rules.json.js > /tmp/rules.json.js
-	if [ "$?" == "0" ]; then
-		echo_date "检测到在线版本文件，继续..."
-	else
+	if ! wget -4 --timeout=8 -qO "${online_manifest}" "${URL_MAIN}/rules.json.js" || [ ! -s "${online_manifest}" ]; then
 		echo_date "没有检测到在线版本，可能是访问github有问题，去大陆白名单模式试试吧！"
-		rm -rf /tmp/rules.json.js
-		echo XU6J03M6 >> /tmp/upload/ss_log.txt
-		exit
+		cleanup_rule_update
+		finish_rule_log_error
+		return 1
 	fi
-	run jq --tab . /tmp/rules.json.js >/dev/null 2>&1
-	if [ "$?" != "0" ];then
+	if ! run jq --tab . "${online_manifest}" >/dev/null 2>&1;then
 		echo_date "在线规则版本号文件解析失败：${URL_MAIN}/rules.json.js！退出！"
-		rm -rf /tmp/rules.json.js
-		echo XU6J03M6 >> /tmp/upload/ss_log.txt
-		exit
+		cleanup_rule_update
+		finish_rule_log_error
+		return 1
 	fi
-
+	echo_date "检测到在线版本文件，继续..."
 
 	update_rule() {
-		# $1: key in rules.json.js
-		# $2: enabled (1/0)
 		local key="$1"
 		local enabled="$2"
-
-		local online_meta=""
-		local local_meta=""
-		local online_name_b64=""
-		local online_md5_b64=""
-		local online_date_b64=""
-		local online_obj_b64=""
-		local local_name_b64=""
-		local local_md5_b64=""
-		local local_date_b64=""
-		local local_obj_b64=""
-		local online_name online_md5 online_date_cmp online_obj
-		local local_date_cmp local_md5
-		local tmp_file dst_file tmp_md5
-		local sep="$(printf '\037')"
+		local online_name=""
+		local online_md5=""
+		local online_date=""
+		local local_date=""
+		local tmp_file=""
+		local dst_file=""
+		local tmp_md5=""
 
 		if [ "${enabled}" != "1" ]; then
 			echo_date "你并没有勾选${key}更新！"
 			return 0
 		fi
 
-		online_meta="$(rules_meta_by_key /tmp/rules.json.js "${key}")" || online_meta=""
-		IFS="${sep}" read -r online_name_b64 online_md5_b64 online_date_b64 online_obj_b64 <<-EOF
-		${online_meta}
-		EOF
-		[ -n "${online_name_b64}" ] && online_name="$(printf '%s' "${online_name_b64}" | base64_decode 2>/dev/null)"
-		[ -n "${online_md5_b64}" ] && online_md5="$(printf '%s' "${online_md5_b64}" | base64_decode 2>/dev/null)"
-		[ -n "${online_date_b64}" ] && online_date_cmp="$(printf '%s' "${online_date_b64}" | base64_decode 2>/dev/null | sed 's/[[:space:]]/_/g')"
-		[ -n "${online_obj_b64}" ] && online_obj="$(printf '%s' "${online_obj_b64}" | base64_decode 2>/dev/null)"
-
-		if [ -z "${online_name}" ] || [ "${online_name}" = "null" ]; then
-			echo_date "在线版本文件缺少字段：.${key}.name，跳过！"
+		online_name="$(run jq -r --arg key "${key}" '.[$key].name // empty' "${online_manifest}" 2>/dev/null)"
+		online_md5="$(run jq -r --arg key "${key}" '.[$key].md5 // empty' "${online_manifest}" 2>/dev/null)"
+		online_date="$(run jq -r --arg key "${key}" '.[$key].date // empty' "${online_manifest}" 2>/dev/null)"
+		local_date="$(run jq -r --arg key "${key}" '.[$key].date // empty' "${RULE_FILE}" 2>/dev/null)"
+		if [ -z "${online_name}" ] || [ -z "${online_md5}" ] || [ -z "${online_date}" ]; then
+			echo_date "在线版本文件缺少 ${key} 的名称、MD5 或日期，整批更新中止！"
 			return 1
 		fi
-		if [ -z "${online_md5}" ] || [ "${online_md5}" = "null" ]; then
-			echo_date "在线版本文件缺少字段：.${key}.md5，跳过！"
+		case "${online_name}" in
+		*/*|*..*|*[\ \	]*)
+			echo_date "在线版本文件包含非法规则文件名：${online_name}，整批更新中止！"
 			return 1
-		fi
-		if [ -z "${online_date_cmp}" ] || [ "${online_date_cmp}" = "null" ]; then
-			echo_date "在线版本文件缺少字段：.${key}.date，跳过！"
+			;;
+		esac
+		if ! printf '%s' "${online_md5}" | grep -Eiq '^[0-9a-f]{32}$'; then
+			echo_date "在线版本文件包含非法 MD5：${key}，整批更新中止！"
 			return 1
 		fi
 
-		local_meta="$(rules_meta_by_key "${RULE_FILE}" "${key}")" || local_meta=""
-		IFS="${sep}" read -r local_name_b64 local_md5_b64 local_date_b64 local_obj_b64 <<-EOF
-		${local_meta}
-		EOF
-		[ -n "${local_md5_b64}" ] && local_md5="$(printf '%s' "${local_md5_b64}" | base64_decode 2>/dev/null)"
-		[ -n "${local_date_b64}" ] && local_date_cmp="$(printf '%s' "${local_date_b64}" | base64_decode 2>/dev/null | sed 's/[[:space:]]/_/g')"
-		if [ -z "${local_date_cmp}" ] || [ "${local_date_cmp}" = "null" ]; then
-			local_date_cmp="0"
-		fi
-		if [ -z "${local_md5}" ] || [ "${local_md5}" = "null" ]; then
-			local_md5="0"
-		fi
-
-		echo_date "--------------------------------------------------------------------"
-		if [ "${local_date_cmp}" = "${online_date_cmp}" ] && [ "${force_update}" != "1" ]; then
+		dst_file="${RULE_SAVE_DIR}/${online_name}"
+		if [ "${local_date}" = "${online_date}" ] && [ "${force_update}" != "1" ] && [ -f "${dst_file}" ]; then
 			echo_date "检测到${key}本地版本号和在线版本号相同，不进行更新!"
 			return 0
 		fi
 
 		echo_date "检测到新版本${key}，开始更新..."
-		echo_date "下载${online_name}到临时文件..."
-
-		tmp_file="${rule_down_dir}/${online_name}"
-		dst_file="${rule_save_dir}/${online_name}"
-		rm -rf "${tmp_file}"
-
-		wget -4 --no-check-certificate --timeout=8 -qO - "${URL_MAIN}/${online_name}" > "${tmp_file}"
-		if [ "$?" != "0" ] || [ ! -s "${tmp_file}" ]; then
-			echo_date "${online_name}下载失败！"
-			rm -rf "${tmp_file}"
+		tmp_file="${rule_stage_dir}/${online_name}"
+		if ! wget -4 --timeout=8 -qO "${tmp_file}" "${URL_MAIN}/${online_name}" || [ ! -s "${tmp_file}" ]; then
+			echo_date "${online_name}下载失败，整批更新中止！"
 			return 1
 		fi
-
 		tmp_md5="$(md5sum "${tmp_file}" | awk '{print $1}')"
 		if [ "${tmp_md5}" != "${online_md5}" ]; then
-			echo_date "下载完成，但校验未通过！本地md5：${tmp_md5}，在线md5：${online_md5}"
-			rm -rf "${tmp_file}"
+			echo_date "${online_name}校验未通过（${tmp_md5} != ${online_md5}），整批更新中止！"
 			return 1
 		fi
-
-		echo_date "下载完成，校验通过，覆盖到：${dst_file}"
-		mv "${tmp_file}" "${dst_file}"
-
-		if [ -n "${online_obj}" ] && [ "${online_obj}" != "null" ]; then
-			local tmp_rule_json="${rule_down_dir}/rules.${key}.json.js"
-			rm -rf "${tmp_rule_json}"
-			run jq --argjson obj "${online_obj}" ".${key} = \$obj" "${RULE_FILE}" > "${tmp_rule_json}"
-			if [ "$?" != "0" ] || [ ! -s "${tmp_rule_json}" ]; then
-				echo_date "更新规则版本号文件失败：${RULE_FILE}（.${key}）"
-				rm -rf "${tmp_rule_json}"
-				return 1
-			fi
-			mv "${tmp_rule_json}" "${RULE_FILE}"
-		fi
-
-		reboot="1"
-		echo_date "【更新成功】你的${key}已经更新到最新！"
+		printf '%s\t%s\n' "${key}" "${online_name}" >> "${updated_entries}"
+		echo_date "${online_name}下载完成，校验通过。"
 		return 0
 	}
 
-	# 用户可选更新项（UI上有勾选项）
-	update_rule "gfwlist" "${ss_basic_gfwlist_update}"
-	update_rule "chnroute" "${ss_basic_chnroute_update}"
-	update_rule "chnlist" "${ss_basic_chnlist_update}"
+	for rule_spec in \
+		"gfwlist:${ss_basic_gfwlist_update}" \
+		"chnroute:${ss_basic_chnroute_update}" \
+		"chnlist:${ss_basic_chnlist_update}" \
+		"chnroute6:1" \
+		"rotlist:1" \
+		"white_list:1" \
+		"black_list:1" \
+		"block_list:1" \
+		"apple_china:1" \
+		"google_china:1" \
+		"cdn_test:1" \
+		"udplist:1"
+	do
+		rule_key="${rule_spec%%:*}"
+		rule_enabled="${rule_spec#*:}"
+		if ! update_rule "${rule_key}" "${rule_enabled}"; then
+			batch_failed=1
+			break
+		fi
+	done
 
-	# 必要/常用规则：无UI开关，默认跟随规则更新
-	update_rule "chnroute6" "1"
-	update_rule "adslist" "1"
-	update_rule "rotlist" "1"
-	update_rule "white_list" "1"
-	update_rule "black_list" "1"
-	update_rule "block_list" "1"
-	update_rule "apple_china" "1"
-	update_rule "google_china" "1"
-	update_rule "cdn_test" "1"
+	if [ "${batch_failed}" = "1" ]; then
+		echo_date "规则下载或校验失败，本次未替换任何规则文件，旧规则保持不动。"
+		cleanup_rule_update
+		finish_rule_log_error
+		return 1
+	fi
+
+	commit_batch() {
+		local backup_dir="${rule_down_dir}/backup"
+		local commit_dir="${RULE_SAVE_DIR}/.rule_update.$$"
+		local keys_json="${rule_down_dir}/keys.json"
+		local merged_manifest="${rule_down_dir}/rules.merged.json.js"
+		local key=""
+		local name=""
+
+		[ -s "${updated_entries}" ] || return 0
+		rm -rf "${backup_dir}" "${commit_dir}"
+		mkdir -p "${backup_dir}" "${commit_dir}" || return 1
+		cp -f "${RULE_FILE}" "${backup_dir}/rules.json.js" || return 1
+		run jq -Rn '[inputs | select(length > 0) | split("\t")[0]]' "${updated_entries}" > "${keys_json}" || return 1
+		if ! run jq -n \
+			--slurpfile current "${RULE_FILE}" \
+			--slurpfile online "${online_manifest}" \
+			--slurpfile keys "${keys_json}" \
+			'$current[0] as $current | $online[0] as $online | reduce $keys[0][] as $key ($current; .[$key] = $online[$key])' \
+			> "${merged_manifest}" || [ ! -s "${merged_manifest}" ]; then
+			return 1
+		fi
+		while IFS="$(printf '\t')" read -r key name
+		do
+			[ -n "${name}" ] || continue
+			[ ! -f "${RULE_SAVE_DIR}/${name}" ] || cp -f "${RULE_SAVE_DIR}/${name}" "${backup_dir}/${name}" || return 1
+			cp -f "${rule_stage_dir}/${name}" "${commit_dir}/${name}" || return 1
+		done < "${updated_entries}"
+		cp -f "${merged_manifest}" "${commit_dir}/rules.json.js" || return 1
+
+		while IFS="$(printf '\t')" read -r key name
+		do
+			[ -n "${name}" ] || continue
+			if ! mv -f "${commit_dir}/${name}" "${RULE_SAVE_DIR}/${name}"; then
+				echo_date "替换${name}失败，正在恢复更新前规则。"
+				restore_batch "${backup_dir}"
+				rm -rf "${commit_dir}"
+				return 1
+			fi
+		done < "${updated_entries}"
+		if ! mv -f "${commit_dir}/rules.json.js" "${RULE_FILE}"; then
+			echo_date "替换规则清单失败，正在恢复更新前规则。"
+			restore_batch "${backup_dir}"
+			rm -rf "${commit_dir}"
+			return 1
+		fi
+		rm -rf "${commit_dir}"
+		reboot=1
+		echo_date "整批规则校验与替换完成。"
+		return 0
+	}
+
+	restore_batch() {
+		local backup_dir="$1"
+		local key=""
+		local name=""
+		while IFS="$(printf '\t')" read -r key name
+		do
+			[ -n "${name}" ] || continue
+			if [ -f "${backup_dir}/${name}" ]; then
+				cp -f "${backup_dir}/${name}" "${RULE_SAVE_DIR}/${name}"
+			else
+				rm -f "${RULE_SAVE_DIR}/${name}"
+			fi
+		done < "${updated_entries}"
+		cp -f "${backup_dir}/rules.json.js" "${RULE_FILE}"
+	}
+
+	if ! commit_batch; then
+		echo_date "规则提交失败，本次未保留任何部分更新。"
+		cleanup_rule_update
+		finish_rule_log_error
+		return 1
+	fi
 
 	echo_date " --------------------------------------------------------------------"
-	rm -rf /tmp/rules.json.js
-	
 	echo_date "规则更新进程运行完毕！"
-	# write number
 	IFS="$(printf '\037')" read -r rule_gfw_date rule_chnroute_date rule_chnlist_date rule_gfw_count rule_chnroute_count rule_chnroute_ip_count rule_chnlist_count <<-EOF
 	$(rules_runtime_numbers_tsv "${RULE_FILE}")
 	EOF
 	nvram set update_gfwlist="${rule_gfw_date}"
 	nvram set update_chnroute="${rule_chnroute_date}"
 	nvram set update_chnlist="${rule_chnlist_date}"
-	
 	nvram set gfwlist_numbers="${rule_gfw_count}"
 	nvram set chnroute_numbers="${rule_chnroute_count}"
 	nvram set chnroute_ips="${rule_chnroute_ip_count}"
 	nvram set chnlist_numbers="${rule_chnlist_count}"
-	#======================================================================
-	# reboot fancyss
-	if [ "${reboot}" == "1" ];then
+	if [ "${reboot}" = "1" ] && [ "${FSS_SKIP_RESTART:-0}" != "1" ];then
 		echo_date "自动重启fancyss，以应用新的规则文件！请稍后！"
 		run sh /koolshare/ss/ssconfig.sh restart
 	fi
+	cleanup_rule_update
 	echo ==================================================================================================
+	return 0
 }
 
 change_cru(){
@@ -262,6 +328,36 @@ change_cru(){
 		echo_date "fancyss规则定时更新任务未启用！"
 	fi
 }
+
+if [ "$#" -gt 1 ]; then
+	case $2 in
+	1)
+		mkdir -p "$(dirname "${RULE_LOG_FILE}")"
+		: > "${RULE_LOG_FILE}"
+		http_response "$1"
+		change_cru > "${RULE_LOG_FILE}"
+		echo XU6J03M6 >> "${RULE_LOG_FILE}"
+		exit 0
+		;;
+	2)
+		mkdir -p "$(dirname "${RULE_LOG_FILE}")"
+		: > "${RULE_LOG_FILE}"
+		http_response "$1"
+		ss_basic_gfwlist_update=1
+		ss_basic_chnroute_update=1
+		ss_basic_chnlist_update=1
+		force_update=0
+		change_cru > "${RULE_LOG_FILE}"
+		rc=0
+		start_update >> "${RULE_LOG_FILE}" || rc=$?
+		if [ "${rc}" -eq 0 ]; then
+			echo XU6J03M6 >> "${RULE_LOG_FILE}"
+		fi
+		exit "${rc}"
+		;;
+	esac
+	exit 0
+fi
 
 case $1 in
 force)
@@ -281,25 +377,5 @@ update)
 *)
 	change_cru
 	start_update
-	;;
-esac
-
-case $2 in
-1)
-	true > /tmp/upload/ss_log.txt
-	http_response "$1"
-	change_cru > /tmp/upload/ss_log.txt
-	echo XU6J03M6 >> /tmp/upload/ss_log.txt
-	;;
-2)
-	true > /tmp/upload/ss_log.txt
-	http_response "$1"
-	ss_basic_gfwlist_update=1
-	ss_basic_chnroute_update=1
-	ss_basic_chnlist_update=1
-	force_update=0
-	change_cru > /tmp/upload/ss_log.txt
-	start_update >> /tmp/upload/ss_log.txt
-	echo XU6J03M6 >> /tmp/upload/ss_log.txt
 	;;
 esac
