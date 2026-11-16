@@ -340,7 +340,7 @@ dbus() {
             "#!/bin/sh\ncase \"$1\" in\n"
             "l) [ ! -f \"$CRU_STATE\" ] || cat \"$CRU_STATE\" ;;\n"
             "a) printf '%s\\t%s\\n' \"$2\" \"$3\" >> \"$CRU_STATE\" ;;\n"
-            "d) [ ! -f \"$CRU_STATE\" ] || grep -v \"^$2\\t\" \"$CRU_STATE\" > \"$CRU_STATE.new\" || true; [ ! -f \"$CRU_STATE.new\" ] || mv \"$CRU_STATE.new\" \"$CRU_STATE\" ;;\n"
+            "d) if [ -f \"$CRU_STATE\" ]; then awk -F '\\t' -v id=\"$2\" '$1 != id' \"$CRU_STATE\" > \"$CRU_STATE.new\" && mv \"$CRU_STATE.new\" \"$CRU_STATE\"; fi ;;\n"
             "esac\n"
         )
         cru.chmod(0o755)
