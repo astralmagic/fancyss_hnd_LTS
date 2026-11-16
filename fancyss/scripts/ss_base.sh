@@ -21,9 +21,11 @@ fss_require_shunt_lib() {
 NEW_PATH=$(echo $PATH|tr ':' '\n'|sed '/opt/d;/mmc/d'|awk '!a[$0]++'|tr '\n' ':'|sed '$ s/:$//')
 export PATH=${NEW_PATH}
 source helper.sh
-fss_cleanup_acl_default_port_keys >/dev/null 2>&1
-eval $(dbus export ss | sed 's/export //' | sed 's/;export /\n/g;' | sed '/ssconf_.*$/d'|sed 's/^/export /' | tr '\n' ';')
-export FSS_GLOBAL_BASIC_MODE="${ss_basic_mode}"
+if [ "${FSS_BASE_SKIP_DBUS_EXPORT:-0}" != "1" ]; then
+	fss_cleanup_acl_default_port_keys >/dev/null 2>&1
+	eval $(dbus export ss | sed 's/export //' | sed 's/;export /\n/g;' | sed '/ssconf_.*$/d'|sed 's/^/export /' | tr '\n' ';')
+	export FSS_GLOBAL_BASIC_MODE="${ss_basic_mode}"
+fi
 AIRPORT_DNS_ACTIVE="0"
 AIRPORT_DNS_CURRENT_MATCHED="0"
 AIRPORT_DNS_AIRPORT_IDENTITY=""
@@ -520,11 +522,11 @@ number_test(){
 
 cmd() {
 	echo_date "$@"
-	env -i PATH=${PATH} "$@" >/dev/null 2>&1 &
+	env -i PATH="${PATH}" "$@" >/dev/null 2>&1 &
 }
 
 run(){
-	env -i PATH=${PATH} "$@"
+	env -i PATH="${PATH}" "$@"
 }
 
 run_loud(){
@@ -533,7 +535,11 @@ run_loud(){
 }
 
 run_bg(){
-	env -i PATH=${PATH} "$@" >/dev/null 2>&1 &
+	env -i PATH="${PATH}" "$@" >/dev/null 2>&1 &
+}
+
+run_bg_detached(){
+	env -i PATH="${PATH}" nohup "$@" </dev/null >/dev/null 2>&1 &
 }
 
 __timeout_init() {
@@ -556,16 +562,16 @@ __timeout_init() {
 	if [ -n "${__TIMEOUT_CMD}" ]; then
 		# Prefer GNU/coreutils style: timeout DURATION CMD...
 		# BusyBox uses: timeout -t SECONDS [CMD...]
-		if env -i PATH=${PATH} ${__TIMEOUT_CMD} --help 2>&1 | grep -q -- "-t SECS"; then
+		if env -i PATH="${PATH}" ${__TIMEOUT_CMD} --help 2>&1 | grep -q -- "-t SECS"; then
 			# Some BusyBox timeout returns 0 even on timeout; avoid it to keep 124 semantics.
-			env -i PATH=${PATH} ${__TIMEOUT_CMD} -t 1 sh -c "sleep 2" >/dev/null 2>&1
+			env -i PATH="${PATH}" ${__TIMEOUT_CMD} -t 1 sh -c "sleep 2" >/dev/null 2>&1
 			if [ "$?" = "124" ]; then
 				__TIMEOUT_STYLE="bb"
 			else
 				__TIMEOUT_CMD=""
 				__TIMEOUT_STYLE=""
 			fi
-		elif env -i PATH=${PATH} ${__TIMEOUT_CMD} 1 sh -c ":" >/dev/null 2>&1; then
+		elif env -i PATH="${PATH}" ${__TIMEOUT_CMD} 1 sh -c ":" >/dev/null 2>&1; then
 			__TIMEOUT_STYLE="gnu"
 		else
 			__TIMEOUT_CMD=""
@@ -587,17 +593,17 @@ __timeout_run() {
 	fi
 
 	if [ -n "${__TIMEOUT_CMD}" -a "${__TIMEOUT_STYLE}" = "gnu" ]; then
-		env -i PATH=${PATH} ${__TIMEOUT_CMD} "${_t}" "$@"
+		env -i PATH="${PATH}" ${__TIMEOUT_CMD} "${_t}" "$@"
 		return $?
 	elif [ -n "${__TIMEOUT_CMD}" -a "${__TIMEOUT_STYLE}" = "bb" ]; then
-		env -i PATH=${PATH} ${__TIMEOUT_CMD} -t "${_t}" "$@"
+		env -i PATH="${PATH}" ${__TIMEOUT_CMD} -t "${_t}" "$@"
 		return $?
 	fi
 
 	# Shell fallback: run command in background, kill it if still running after _t seconds.
 	# Avoid setsid on BusyBox as it can detach and make wait() return immediately.
 	local _cmd_pid _timer_pid _rc _timer_rc _kill_target _flag
-	env -i PATH=${PATH} "$@" &
+	env -i PATH="${PATH}" "$@" &
 	_cmd_pid=$!
 	_kill_target="${_cmd_pid}"
 	_flag="/tmp/.timeout_${$}_${_cmd_pid}"
@@ -803,20 +809,250 @@ detect_running_status2(){
 	fi
 }
 
+fss_listening_socket_inodes() {
+	local port="$1"
+	local port_hex=""
+	local proc_root="${FSS_PROC_ROOT:-/proc}"
+	local proto=""
+	local net_file=""
+	printf '%s' "${port}" | grep -Eq '^[0-9]+$' || return 1
+	[ "${port}" -gt 0 ] && [ "${port}" -le 65535 ] || return 1
+	port_hex="$(printf '%04X' "${port}")"
+	for proto in tcp tcp6 udp udp6
+	do
+		net_file="${proc_root}/net/${proto}"
+		[ -r "${net_file}" ] || continue
+		awk -v port_hex="${port_hex}" -v proto="${proto}" '
+			FNR > 1 {
+				split($2, local_addr, ":")
+				if (toupper(local_addr[2]) != port_hex) next
+				if (proto ~ /^tcp/) {
+					if ($4 != "0A") next
+				} else {
+					split($3, rem_addr, ":")
+					if ($4 != "07" || rem_addr[2] != "0000") next
+				}
+				if ($10 != "" && $10 != "0") print $10
+			}
+		' "${net_file}" 2>/dev/null
+	done | awk '!seen[$0]++'
+}
+
+fss_port_listened_by_bins() {
+	local port="$1"
+	shift
+	local bins="$*"
+	local bin=""
+	local pid=""
+	local fd=""
+	local link=""
+	local inode=""
+	local inodes=""
+	[ -n "${port}" ] && [ -n "${bins}" ] || return 1
+
+	if netstat -nlp 2>/dev/null | awk -v port="${port}" -v bins="${bins}" '
+		BEGIN {
+			count = split(bins, wanted, " ")
+			for (i = 1; i <= count; i++) names[wanted[i]] = 1
+		}
+		/^(tcp|udp)/ {
+			n = split($4, address, ":")
+			if (address[n] != port) next
+			if ($1 ~ /^tcp/ && $6 != "LISTEN") next
+			if ($1 ~ /^udp/ && $5 !~ /:\*$/) next
+			if ($NF !~ /^[0-9]+\//) next
+			name = $NF
+			sub(/^.*\//, "", name)
+			if (name in names) found = 1
+		}
+		END { exit(found ? 0 : 1) }
+	'; then
+		return 0
+	fi
+
+	inodes="$(fss_listening_socket_inodes "${port}" | tr '\n' ' ')"
+	[ -n "${inodes}" ] || return 1
+	for bin in "$@"
+	do
+		for pid in $(pidof "${bin}" 2>/dev/null)
+		do
+			[ -d "${FSS_PROC_ROOT:-/proc}/${pid}/fd" ] || continue
+			for fd in "${FSS_PROC_ROOT:-/proc}/${pid}/fd/"*
+			do
+				[ -e "${fd}" ] || [ -L "${fd}" ] || continue
+				link="$(readlink "${fd}" 2>/dev/null)" || continue
+				case "${link}" in
+				socket:\[*\])
+					inode="${link#socket:\[}"
+					inode="${inode%\]}"
+					case " ${inodes} " in
+					*" ${inode} "*) return 0 ;;
+					esac
+					;;
+				esac
+			done
+		done
+	done
+	return 1
+}
+
+fss_port_owner_pids() {
+	local port="$1"
+	local proc_root="${FSS_PROC_ROOT:-/proc}"
+	local pids=""
+	local inodes=""
+	local fd=""
+	local link=""
+	local inode=""
+	local pid=""
+	printf '%s' "${port}" | grep -Eq '^[0-9]+$' || return 1
+	[ "${port}" -gt 0 ] && [ "${port}" -le 65535 ] || return 1
+
+	pids="$(netstat -nlp 2>/dev/null | awk -v port="${port}" '
+		/^(tcp|udp)/ {
+			n = split($4, address, ":")
+			if (address[n] != port) next
+			if ($1 ~ /^tcp/ && $6 != "LISTEN") next
+			if ($1 ~ /^udp/ && $5 !~ /:\*$/) next
+			if ($NF ~ /^[0-9]+\//) {
+				split($NF, owner, "/")
+				if (!seen[owner[1]]++) print owner[1]
+			}
+		}
+	')"
+	if [ -n "${pids}" ]; then
+		printf '%s\n' "${pids}"
+		return 0
+	fi
+
+	inodes="$(fss_listening_socket_inodes "${port}" | tr '\n' ' ')"
+	[ -n "${inodes}" ] || return 1
+	for fd in "${proc_root}/"[0-9]*"/fd/"*
+	do
+		[ -e "${fd}" ] || [ -L "${fd}" ] || continue
+		link="$(readlink "${fd}" 2>/dev/null)" || continue
+		case "${link}" in
+		socket:\[*\])
+			inode="${link#socket:\[}"
+			inode="${inode%\]}"
+			case " ${inodes} " in
+			*" ${inode} "*)
+				pid="${fd%/fd/*}"
+				pid="${pid##*/}"
+				if [ -n "${pid}" ]; then
+					if [ -n "${pids}" ]; then
+						pids="${pids}
+${pid}"
+					else
+						pids="${pid}"
+					fi
+				fi
+				;;
+			esac
+			;;
+		esac
+	done
+	[ -n "${pids}" ] || return 1
+	printf '%s\n' "${pids}" | awk '!seen[$0]++'
+	return 0
+}
+
+fss_socks5_open_bin() {
+	local proc_root="${FSS_PROC_ROOT:-/proc}"
+	local bins="v2ray xray naive tuic-client anytls-zig rss-local"
+	local matched=""
+	local inodes=""
+	local bin=""
+	local pid=""
+	local fd=""
+	local link=""
+	local inode=""
+
+	matched="$(netstat -nlp 2>/dev/null | awk -v port="23456" -v bins="${bins}" '
+		BEGIN {
+			count = split(bins, order, " ")
+			for (i = 1; i <= count; i++) wanted[order[i]] = 1
+		}
+		/^tcp/ {
+			n = split($4, address, ":")
+			if (address[n] != port || $6 != "LISTEN") next
+			if ($NF ~ /^[0-9]+\//) {
+				name = $NF
+				sub(/^.*\//, "", name)
+				if (name in wanted) found[name] = 1
+			}
+		}
+		END {
+			for (i = 1; i <= count; i++) {
+				if (order[i] in found) {
+					print order[i]
+					exit 0
+				}
+			}
+			exit 1
+		}
+	')"
+	if [ -n "${matched}" ]; then
+		printf '%s\n' "${matched}"
+		return 0
+	fi
+
+	inodes="$(fss_listening_socket_inodes 23456 | tr '\n' ' ')"
+	[ -n "${inodes}" ] || return 1
+	for bin in ${bins}
+	do
+		for pid in $(pidof "${bin}" 2>/dev/null)
+		do
+			[ -d "${proc_root}/${pid}/fd" ] || continue
+			for fd in "${proc_root}/${pid}/fd/"*
+			do
+				[ -e "${fd}" ] || [ -L "${fd}" ] || continue
+				link="$(readlink "${fd}" 2>/dev/null)" || continue
+				case "${link}" in
+				socket:\[*\])
+					inode="${link#socket:\[}"
+					inode="${inode%\]}"
+					case " ${inodes} " in
+					*" ${inode} "*)
+						printf '%s\n' "${bin}"
+						return 0
+						;;
+					esac
+					;;
+				esac
+			done
+		done
+	done
+	return 1
+}
+
 detect_running_status3(){
-	# detect process by netstat
+	# detect process by listening port and owning process
 	local BINNAME=$1
 	local PORT=$2
 	local VERBOSE=$3
 	local FORCE=$4
 	[ "${ss_basic_noruncheck}" == "1" -a -z "${FORCE}" ] && return
 	local i=50
-	local RET
+	local RET=""
+	local listen_port=""
+	local old_ifs=""
  	until [ -n "${RET}" ]; do
  		# wait for 0.1s
 		usleep 100000
 		i=$(($i - 1))
-		RET=$(netstat -nlp 2>/dev/null|grep -Ew "${PORT}"|grep -Eo "${BINNAME}"|head -n1)
+		old_ifs="${IFS}"
+		IFS='|'
+		for listen_port in ${PORT}
+		do
+			IFS="${old_ifs}"
+			if fss_port_listened_by_bins "${listen_port}" "${BINNAME}"; then
+				RET="${BINNAME}"
+				break
+			fi
+			IFS='|'
+		done
+		IFS="${old_ifs}"
 		if [ "$i" -lt 1 ]; then
 			echo_date "$1进程启动失败，请检查你的配置！"
 			#return 1
@@ -934,15 +1170,18 @@ kill_used_port(){
 		echo_date "检测到冲突端口：${used_ports}，尝试关闭占用端口的程序..."
 		for used_port in ${used_ports}
 		do
-			local _ret=$(netstat -nlp 2>/dev/null | grep -E "^tcp|^udp|^raw" | grep -w "${used_port}" | awk '{print $NF}')
-			local _conflic_prg=$(echo "${_ret}" | awk -F "/" '{print $2}' | sort -u | tr '\n' ' ' | sed 's/[[:space:]]$//g' )
-			local _conflic_pid=$(echo "${_ret}" | awk -F "/" '{print $1}' | sort -u | tr '\n' ' ' | sed 's/[[:space:]]$//g' )
-			if [ "${FSS_SKIP_XRAY_PORT_CLEANUP}" = "1" ] && echo " ${_conflic_prg} " | grep -q " xray "; then
-				echo_date "[hot-reload] 冲突端口 ${used_port} 当前由 xray 占用，保留现有进程。"
-				continue
-			fi
-			echo_date "关闭冲突端口 ${used_port} 占用程序：${_conflic_prg}，pid：${_conflic_pid}"
-			kill -9 "${_conflic_pid}" >/dev/null 2>&1
+			local _conflic_pid=""
+			local _conflic_prg=""
+			for _conflic_pid in $(fss_port_owner_pids "${used_port}" 2>/dev/null)
+			do
+				_conflic_prg="$(cat "${FSS_PROC_ROOT:-/proc}/${_conflic_pid}/comm" 2>/dev/null)"
+				if [ "${FSS_SKIP_XRAY_PORT_CLEANUP}" = "1" ] && [ "${_conflic_prg}" = "xray" ]; then
+					echo_date "[hot-reload] 冲突端口 ${used_port} 当前由 xray 占用，保留现有进程。"
+					continue
+				fi
+				echo_date "关闭冲突端口 ${used_port} 占用程序：${_conflic_prg}，pid：${_conflic_pid}"
+				kill -9 "${_conflic_pid}" >/dev/null 2>&1
+			done
 		done
 	fi
 }

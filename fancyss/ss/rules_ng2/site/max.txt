@@ -9,6 +9,8 @@ domain:elpionero.es
 domain:execute-api.ap-southeast-1.amazonaws.com
 domain:execute-api.us-east-1.amazonaws.com
 domain:forthethrone.com
+domain:h264.io
+domain:hbo
 domain:hbo-europe.com
 domain:hbo.ba
 domain:hbo.bg

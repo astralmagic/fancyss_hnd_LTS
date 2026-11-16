@@ -3,6 +3,11 @@
 PATH="/bin:/sbin:/usr/bin:/usr/sbin:/koolshare/bin:${PATH}"
 export PATH
 
+FSS_BASE_SKIP_SHUNT_SOURCE=1
+FSS_BASE_SKIP_DBUS_EXPORT=1
+FSS_BASE_EAGER_NODE_ENV=0
+source /koolshare/scripts/ss_base.sh
+
 ss_basic_mode="$(dbus get ss_basic_mode 2>/dev/null)"
 
 OUTPUT_FILE="/tmp/upload/ss_shunt_stats.json"
@@ -82,7 +87,7 @@ follow_ws_stream() {
 }
 
 run() {
-	env -i PATH=${PATH} "$@"
+	env -i PATH="${PATH}" "$@"
 }
 
 write_empty_payload() {
@@ -145,14 +150,7 @@ pick_xapi_tool() {
 }
 
 is_xray_api_ready() {
-	netstat -nlp 2>/dev/null | awk '
-		$4 ~ /(^127\.0\.0\.1:10085$|^:::10085$|^0\.0\.0\.0:10085$)/ && $0 ~ /xray/ {
-			found = 1
-		}
-		END {
-			exit(found ? 0 : 1)
-		}
-	'
+	fss_port_listened_by_bins 10085 xray
 }
 
 collect_stats_payload() {

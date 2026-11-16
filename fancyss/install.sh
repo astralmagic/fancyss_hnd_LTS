@@ -18,7 +18,7 @@ module=${DIR##*/}
 LINUX_VER=$(uname -r|awk -F"." '{print $1$2}')
 
 run_bg(){
-	env -i PATH=${PATH} "$@" >/dev/null 2>&1 &
+	env -i PATH="${PATH}" "$@" >/dev/null 2>&1 &
 }
 
 version_ge() {
@@ -322,6 +322,10 @@ restart_status_runtime_async() {
 	local helper="/tmp/fancyss_restart_status_runtime.sh"
 	cat > "${helper}" <<-'EOF'
 		#!/bin/sh
+		FSS_BASE_SKIP_SHUNT_SOURCE=1
+		FSS_BASE_SKIP_DBUS_EXPORT=1
+		FSS_BASE_EAGER_NODE_ENV=0
+		source /koolshare/scripts/ss_base.sh
 		LOG_FILE="/tmp/upload/status-runtime-helper.log"
 		log_status_runtime() {
 			mkdir -p /tmp/upload
@@ -373,7 +377,7 @@ restart_status_runtime_async() {
 				waited=$((waited + 1))
 			done
 			waited=0
-			while ! netstat -nlp 2>/dev/null | grep -w "23456" | grep -Eq "xray|v2ray|naive|tuic|anytls-zig|rss-local"
+			while ! fss_socks5_open_bin >/dev/null 2>&1
 			do
 				[ "${waited}" -ge 15 ] && break
 				sleep 1
@@ -1501,7 +1505,7 @@ cleanup_jffs_install_tmp(){
 	local target=""
 	[ -d "/jffs" ] || return 0
 	echo_date "清理JFFS根目录临时日志和旧安装包..."
-	before=$(df | awk '$NF == "/jffs" {print $4; exit}')
+	before=$(df -Pk | awk '$NF == "/jffs" {print $4; exit}')
 	for target in \
 		/jffs/syslog.log \
 		/jffs/driver_log.log \
@@ -1527,7 +1531,7 @@ cleanup_jffs_install_tmp(){
 		rm -f "${target}" >/dev/null 2>&1
 	done
 	sync
-	after=$(df | awk '$NF == "/jffs" {print $4; exit}')
+	after=$(df -Pk | awk '$NF == "/jffs" {print $4; exit}')
 	if [ -n "${before}" ] && [ -n "${after}" ];then
 		freed=$((after - before))
 		if [ "${freed}" -gt "0" ];then
@@ -1754,13 +1758,13 @@ install_now(){
 	if [ "$?" == "0" ];then
 		# 检测data分区剩余空间
 		echo_date "检测/data分区剩余空间..."
-		local SPACE_DATA_AVAL1=$(df | grep -w "/data" | awk '{print $4}')
+		local SPACE_DATA_AVAL1=$(df -Pk | awk '$NF == "/data" {print $4; exit}')
 		echo_date "/data分区剩余空间为：${SPACE_DATA_AVAL1}KB"
 		local _BINS="xray v2ray hysteria2 naive anytls-zig sslocal rss-local rss-tunnel rss-redir"
 		for _BIN in ${_BINS}
 		do
 			if [ -f "/tmp/shadowsocks/bin/${_BIN}" ];then
-				local SPACE_DATA_AVAL1=$(df | grep -w "/data" | awk '{print $4}')
+				local SPACE_DATA_AVAL1=$(df -Pk | awk '$NF == "/data" {print $4; exit}')
 				local SPACE_DATA_AVAL2=$((${SPACE_DATA_AVAL1} - 256))
 				local BIN_SIZE=$(du /tmp/shadowsocks/bin/${_BIN} | awk '{print $1}')
 				if [ "${BIN_SIZE}" -lt "${SPACE_DATA_AVAL2}" ];then
@@ -1777,7 +1781,7 @@ install_now(){
 	# 检测jffs储存空间是否足够
 	echo_date "检测jffs分区剩余空间..."
 
-	SPACE_AVAL=$(df | grep -w "/jffs" | awk '{print $4}')
+	SPACE_AVAL=$(df -Pk | awk '$NF == "/jffs" {print $4; exit}')
 	JFFS_FS_TYPE=$(mount | awk '$3 == "/jffs" {print $5; exit}')
 	SPACE_TREE_NEED=$(du -s /tmp/shadowsocks 2>/dev/null | awk '{print $1}')
 	cd /tmp

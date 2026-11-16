@@ -13,6 +13,15 @@ SUB_PROFILE_SCHEMA_VERSION="1"
 SUB_PROFILE_DBUS_PREFIX="ss_subprof_"
 SUB_PROFILE_IDS_KEY="ss_subprof_ids"
 NODE_TOOL_CONF_FILE="/koolshare/ss/rules/node-tool.conf"
+SUBPROF_CRU_BIN="${SUBPROF_CRU_BIN:-/usr/sbin/cru}"
+
+subprof_log() {
+	if command -v profile_log >/dev/null 2>&1; then
+		profile_log "$@" >&2
+	else
+		printf '【%s】: %s\n' "$(TZ=UTC-8 date -R '+%Y%m%d %X' 2>/dev/null || date '+%Y%m%d %H:%M:%S')" "$*" >&2
+	fi
+}
 
 subprof_jq_bin() {
 	if [ -x "/koolshare/bin/jq" ]; then
@@ -870,11 +879,11 @@ subprof_profile_schedule_tsv() {
 
 subprof_clear_cron_jobs() {
 	local job_name=""
-	if [ -x "/usr/sbin/cru" ]; then
-		for job_name in $(cru l 2>/dev/null | awk '/^(ssnodeupdate|ssnodeprof_)/ {print $1}')
+	if [ -x "${SUBPROF_CRU_BIN}" ]; then
+		for job_name in $("${SUBPROF_CRU_BIN}" l 2>/dev/null | awk '/^(ssnodeupdate|ssnodeprof_)/ {print $1}')
 		do
 			[ -n "${job_name}" ] || continue
-			cru d "${job_name}" >/dev/null 2>&1 || true
+			"${SUBPROF_CRU_BIN}" d "${job_name}" >/dev/null 2>&1 || true
 		done
 	fi
 	sed -i '/ssnodeupdate/d;/ssnodeprof_/d' /var/spool/cron/crontabs/* >/dev/null 2>&1 || true
@@ -901,7 +910,7 @@ subprof_rebuild_cron_jobs() {
 	local job_index=0
 
 	subprof_clear_cron_jobs
-	[ -x "/usr/sbin/cru" ] || return 0
+	[ -x "${SUBPROF_CRU_BIN}" ] || return 0
 	for profile_id in $(subprof_list_profile_ids)
 	do
 		[ -n "${profile_id}" ] || continue
@@ -960,7 +969,10 @@ EOF
 		job_name="$(subprof_cron_job_name "${profile_id}")" || continue
 		delay_seconds="$(subprof_cron_delay_for_index "${job_index}")"
 		command_text="sleep ${delay_seconds}; FSS_SUBSCRIBE_LOCK_WAIT=1 /koolshare/scripts/ss_node_subscribe.sh 3 ${profile_id}"
-		cru a "${job_name}" "${cron_expr} ${command_text}" >/dev/null 2>&1 || true
+		if ! "${SUBPROF_CRU_BIN}" a "${job_name}" "${cron_expr} ${command_text}" >/dev/null 2>&1; then
+			subprof_log "订阅定时任务注册失败：${profile_id}"
+			return 1
+		fi
 		job_index=$((job_index + 1))
 	done
 }
@@ -975,6 +987,28 @@ subprof_enabled_profile_count() {
 	}
 	awk 'NF{c++} END{print c+0}' "${tmp_file}"
 	rm -f "${tmp_file}"
+}
+
+subprof_state_json_or_default() {
+	local state_json="$1"
+	if [ -n "${state_json}" ] && printf '%s' "${state_json}" | "$(subprof_jq_bin)" -e 'type == "object"' >/dev/null 2>&1; then
+		printf '%s\n' "${state_json}"
+	else
+		printf '{}\n'
+	fi
+}
+
+subprof_write_state_or_log() {
+	local state_key="$1"
+	local new_state="$2"
+	if [ -z "${new_state}" ]; then
+		subprof_log "订阅状态序列化失败，未写入：${state_key}"
+		return 1
+	fi
+	if ! subprof_dbus_set_json_by_key "${state_key}" "${new_state}"; then
+		subprof_log "订阅状态写入失败：${state_key}"
+		return 1
+	fi
 }
 
 subprof_mark_state_success() {
@@ -993,6 +1027,7 @@ subprof_mark_state_success() {
 	[ -n "${profile_id}" ] || return 1
 	state_key="$(subprof_state_key "${profile_id}")" || return 1
 	state_json="$(subprof_dbus_get_json_by_key "${state_key}" 2>/dev/null)" || state_json=""
+	state_json="$(subprof_state_json_or_default "${state_json}")"
 	now_ts="$(date +%s)"
 	new_state="$(printf '%s' "${state_json}" | "$(subprof_jq_bin)" -c \
 		--arg id "${profile_id}" \
@@ -1017,7 +1052,7 @@ subprof_mark_state_success() {
 			last_ua_preset: $ua_preset
 		}
 	')" || return 1
-	subprof_dbus_set_json_by_key "${state_key}" "${new_state}"
+	subprof_write_state_or_log "${state_key}" "${new_state}"
 }
 
 subprof_mark_state_failure() {
@@ -1037,6 +1072,7 @@ subprof_mark_state_failure() {
 	[ -n "${profile_id}" ] || return 1
 	state_key="$(subprof_state_key "${profile_id}")" || return 1
 	state_json="$(subprof_dbus_get_json_by_key "${state_key}" 2>/dev/null)" || state_json=""
+	state_json="$(subprof_state_json_or_default "${state_json}")"
 	now_ts="$(date +%s)"
 	new_state="$(printf '%s' "${state_json}" | "$(subprof_jq_bin)" -c \
 		--arg id "${profile_id}" \
@@ -1061,7 +1097,7 @@ subprof_mark_state_failure() {
 			last_ua_preset: $ua_preset
 		}
 	')" || return 1
-	subprof_dbus_set_json_by_key "${state_key}" "${new_state}"
+	subprof_write_state_or_log "${state_key}" "${new_state}"
 }
 
 subprof_migrate_legacy_profiles_if_needed() {

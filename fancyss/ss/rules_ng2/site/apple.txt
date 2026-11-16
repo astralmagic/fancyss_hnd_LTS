@@ -97,6 +97,7 @@ domain:apple-pay.wang
 domain:apple-store.cn
 domain:apple-store.net
 domain:apple-store.wang
+domain:apple-studies.com
 domain:apple-usa.net
 domain:apple-watch.com.ru
 domain:apple.ae
@@ -325,6 +326,7 @@ domain:applepremiumresellers.com.au
 domain:applereach.com
 domain:applereach.net
 domain:apples-msk.ru
+domain:appleschoolcontent.com
 domain:applescreensavers.com
 domain:applescript.info
 domain:appleshare.info
@@ -405,6 +407,7 @@ domain:appstoreapple.cn
 domain:appule.com
 domain:appye.com
 domain:apyle.com
+domain:apzones.com
 domain:asto.re
 domain:aucheapbeats.com
 domain:audiobeatsau.com
@@ -414,6 +417,7 @@ domain:auricularemonsterbeats.com
 domain:auricularesbeatsbaratosshop.com
 domain:auricularesbeatsmarkt.com
 domain:ausbeatsbydrdre.com
+domain:axm-usercontent-apple.com
 domain:bag-glasses1.com
 domain:bandgirlz.com
 domain:baxsound.com
@@ -988,10 +992,10 @@ domain:ibooksauthor.com
 domain:ichat.co.in
 domain:icloud-apple.cn
 domain:icloud-content.com
+domain:icloud-content.com.cn
 domain:icloud-isupport.com
 domain:icloud-sandbox.com
 domain:icloud.ch
-domain:icloud.cn
 domain:icloud.com
 domain:icloud.com.cn
 domain:icloud.de
@@ -1550,6 +1554,7 @@ full:amp-api-updates.apps.apple.com
 full:amp-api.apps.apple.com
 full:amp-api.media.apple.com
 full:amp-api.music.apple.com
+full:amp-api.podcasts.apple.com
 full:aod-ssl.itunes.apple.com
 full:aod.itunes.apple.com
 full:api-edge.apps.apple.com
@@ -1563,7 +1568,6 @@ full:appleworldwidedeveloper.hb-api.omtrdc.net
 full:appleworldwidedeveloper.sc.omtrdc.net
 full:apps.mzstatic.com
 full:apptrailers.itunes.apple.com
-full:auth.music.apple.com
 full:bag-cdn.itunes-apple.com.akadns.net
 full:bag.itunes.apple.com
 full:beatselectronicsllc.tt.omtrdc.net
@@ -1589,6 +1593,7 @@ full:cl1.apple.com
 full:cl2-cdn.origin-apple.com.akadns.net
 full:cl2-cn.apple.com
 full:cl2.apple.com
+full:cl2.apple.com.edgekey.net.globalredir.akadns.net
 full:cl3-cdn.origin-apple.com.akadns.net
 full:cl3.apple.com
 full:cl4-cdn.origin-apple.com.akadns.net
@@ -1616,11 +1621,14 @@ full:devstreaming-cdn.apple.com
 full:discussionschinese.apple.com
 full:download.developer.apple.com
 full:downloaddispatch.itunes.apple.com
+full:entitlements-edge.itunes.apple.com
 full:experiments.apple.com
 full:fides-pol.apple.com
+full:fpinit.itunes.apple.com
 full:gs-loc-cn.apple.com
 full:gs-loc.apple.com
 full:gsp10-ssl-cn.ls.apple.com
+full:gsp11-cn.ls.apple.com
 full:gsp12-cn.ls.apple.com
 full:gsp13-cn.ls.apple.com
 full:gsp4-cn.ls.apple.com
@@ -1643,13 +1651,10 @@ full:guzzoni.apple.com
 full:guzzoni.smoot.apple.com
 full:hls-amt.itunes.apple.com
 full:hls.itunes.apple.com
-full:icloud-cdn.icloud.com.akadns.net
-full:icloud.cdn-apple.com
 full:images.apple.com.edgekey.net.globalredir.akadns.net
 full:inappcheck-cn.itunes-apple.com.akadns.net
 full:inappcheck-lb.itunes-apple.com.akadns.net
 full:inappcheck.itunes.apple.com
-full:ingest.apple-studies.com
 full:init-kt.apple.com
 full:init-p01md-lb.push-apple.com.akadns.net
 full:init-p01md.apple.com
@@ -1683,6 +1688,7 @@ full:itunesconnect.apple.com
 full:js-cdn.music.apple.com
 full:km.support.apple.com
 full:maps.apple.com
+full:mensura.cdn-apple.com
 full:mesu-cdn.apple.com.akadns.net
 full:mesu-china.apple.com.akadns.net
 full:mesu.apple.com
@@ -1695,9 +1701,7 @@ full:myapp.itunes.apple.com
 full:notary-submissions-prod.s3-accelerate.amazonaws.com
 full:notary-submissions-prod.s3.us-west-2.amazonaws.com
 full:np-edge.itunes.apple.com
-full:ocsp-lb.apple.com.akadns.net
 full:ocsp.apple.com
-full:ocsp2-lb.apple.com.akadns.net
 full:ocsp2.apple.com
 full:oscdn.apple.com
 full:oscdn.origin-apple.com.akadns.net
@@ -1705,18 +1709,19 @@ full:osxapps.itunes.apple.com
 full:osxapps.itunes.g.aaplimg.com
 full:p-events-delivery.akamaized.net
 full:pancake.apple.com
-full:pancake.cdn-apple.com.akadns.net
 full:pba0.apple.com
 full:pd-nk.itunes.apple.com
 full:pd.itunes.apple.com
 full:play-edge.itunes.apple.com
 full:play.itunes.apple.com
 full:play.music.apple.com
+full:podcasts.apple.com
+full:podcasts.itunes.apple.com
 full:probe.siri.apple.com
 full:prod-support.apple-support.akadns.net
 full:publicassets.cdn-apple.com
 full:push-apple.com.akadns.net
-full:reserve-prime.apple.com
+full:radio.itunes.apple.com
 full:s.mzstatic.com
 full:s1.mzstatic.com
 full:s2.mzstatic.com
@@ -1731,7 +1736,9 @@ full:seed-swallow.siri.apple.com
 full:seed.siri.apple.com
 full:sequoia.apple.com
 full:sf-api-token-service.itunes.apple.com
+full:sh-pod1-smp-device.apple.com
 full:sh-pod2-smp-device.apple.com
+full:sh-pod3-smp-device.apple.com
 full:shazam-insights.cdn-apple.com
 full:smp-device-content.apple.com
 full:sp.itunes.apple.com
@@ -1762,7 +1769,10 @@ full:sylvan.apple.com
 full:sync.itunes.apple.com
 full:tf-feedback.itunes.apple.com
 full:tj-pod1-smp-device.apple.com
+full:tj-pod2-smp-device.apple.com
+full:tj-pod3-smp-device.apple.com
 full:tv.applemusic.com
+full:universal-activity-service.itunes.apple.com
 full:updates-http.cdn-apple.com
 full:updates-http.cdn-apple.com.akadns.net
 full:updates.cdn-apple.com

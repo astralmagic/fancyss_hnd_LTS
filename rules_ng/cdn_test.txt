@@ -5,6 +5,7 @@ a1.phobos.apple.com
 ad.doubleclick.net
 admob-cn.com
 all.ldycdn.com
+app-analytics-services.com
 app-cdn.2q10.com
 app-measurement.com
 app-measurement-cn.com
@@ -17,6 +18,7 @@ dnl-11.geo.kaspersky.com
 doubleclick-cn.net
 dsany.sgnic.sg
 edge.yunjiasu.com
+en.made-in-china.com
 fotadown.mayitek.com.wsdvs.com
 gcpnode.com
 gonglchuangl.net
@@ -51,6 +53,7 @@ pic1.mp.tvguo.tv
 play.nyaacat.com
 r1.res.outlook.com
 recaptcha.net
+recaptcha-cn.net
 redirector.gvt1.com
 retail.cn.sc.com
 rsb.net
@@ -77,6 +80,7 @@ www.howbuy.com
 www.landian.vip
 www.landiannews.com
 www.microad-cn.com
+www.micstatic.com
 www.mojidict.com
 www.oneplus.com
 www.shandongair.com

@@ -163,7 +163,7 @@ profile_save() {
 		profile_log "保存订阅配置失败，请检查别名和订阅链接。"
 		return 1
 	fi
-	subprof_rebuild_cron_jobs >/dev/null 2>&1 || true
+	subprof_rebuild_cron_jobs >/dev/null 2>&1 || profile_log "订阅定时任务注册失败：${profile_id}"
 	profile_log "订阅配置已保存：${profile_id}"
 	return 0
 }

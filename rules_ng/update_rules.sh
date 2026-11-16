@@ -10,7 +10,19 @@ file_mtime_ts() {
 	local f="$1"
 	local epoch
 	epoch="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f")"
-	TZ=CST-8 date -d "@${epoch}" +'%Y-%m-%d %H:%M'
+	python3 - "$epoch" <<'PY'
+import datetime, sys
+zone = datetime.timezone(datetime.timedelta(hours=8))
+print(datetime.datetime.fromtimestamp(int(sys.argv[1]), zone).strftime('%Y-%m-%d %H:%M'))
+PY
+}
+
+sed_inplace() {
+	if sed --version >/dev/null 2>&1; then
+		sed -i "$@"
+	else
+		sed -i '' "$@"
+	fi
 }
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -78,15 +90,17 @@ json_set_rule() {
 	local count="$5"
 	local count_ip="${6:-}"
 
+	local json_tmp="${RULE_FILE}.tmp"
 	if [ -n "$count_ip" ]; then
 		jq --arg name "$name" --arg date "$date" --arg md5 "$md5" --arg count "$count" --arg count_ip "$count_ip" \
 			".$key |= (.name=\$name | .date=\$date | .md5=\$md5 | .count=\$count | .count_ip=\$count_ip)" \
-			"$RULE_FILE" | sponge "$RULE_FILE"
+			"$RULE_FILE" > "$json_tmp"
 	else
 		jq --arg name "$name" --arg date "$date" --arg md5 "$md5" --arg count "$count" \
 			".$key |= (.name=\$name | .date=\$date | .md5=\$md5 | .count=\$count)" \
-			"$RULE_FILE" | sponge "$RULE_FILE"
+			"$RULE_FILE" > "$json_tmp"
 	fi
+	mv -f "$json_tmp" "$RULE_FILE"
 }
 
 update_local_txt_rule() {
@@ -237,11 +251,11 @@ PY
 		| sort -u >"$merged"
 
 	# asus asd detect these domains
-	sed -i '/hasi\./d' "$merged"
-	sed -i '/v2ex/d' "$merged"
-	sed -i '/apple\.com/d' "$merged"
-	sed -i '/m-team/d' "$merged"
-	sed -i '/windowsupdate/d' "$merged"
+	sed_inplace '/hasi\./d' "$merged"
+	sed_inplace '/v2ex/d' "$merged"
+	sed_inplace '/apple\.com/d' "$merged"
+	sed_inplace '/m-team/d' "$merged"
+	sed_inplace '/windowsupdate/d' "$merged"
 
 	update_generated_gz_rule "gfwlist" "gfwlist.gz" "$merged"
 	rm -f "${CURR_PATH}/gfwlist.txt" || true
@@ -264,7 +278,7 @@ update_chnlist_and_related() {
 		| sed '/^#/d' \
 		| sed 's/server=\/\.//g' \
 		| sed 's/server=\///g' \
-		| sed -r 's/\/\S{1,30}//g' \
+		| sed -r 's/\/[^[:space:]]{1,30}//g' \
 		| sed '/^$/d' \
 		| sort -u >"$chn_txt"
 	update_generated_gz_rule "chnlist" "chnlist.gz" "$chn_txt"
@@ -274,7 +288,7 @@ update_chnlist_and_related() {
 		| sed '/^#/d' \
 		| sed 's/server=\/\.//g' \
 		| sed 's/server=\///g' \
-		| sed -r 's/\/\S{1,30}//g' \
+		| sed -r 's/\/[^[:space:]]{1,30}//g' \
 		| sed '/^$/d' \
 		| sort -u >"$apple_txt"
 	update_generated_txt_rule "apple_china" "apple_china.txt" "$apple_txt"
@@ -283,7 +297,7 @@ update_chnlist_and_related() {
 		| sed '/^#/d' \
 		| sed 's/server=\/\.//g' \
 		| sed 's/server=\///g' \
-		| sed -r 's/\/\S{1,30}//g' \
+		| sed -r 's/\/[^[:space:]]{1,30}//g' \
 		| sed '/^$/d' \
 		| sort -u >"$google_txt"
 	update_generated_txt_rule "google_china" "google_china.txt" "$google_txt"
@@ -310,22 +324,22 @@ update_chnroute() {
 	local merged="${tmpdir}/chnroute.txt"
 
 	curl_download "https://raw.githubusercontent.com/misakaio/chnroutes2/master/chnroutes.txt" "$misakaio" "download chnroute source (misakaio)"
-	sed -i '/^#/d' "$misakaio"
+	sed_inplace '/^#/d' "$misakaio"
 
 	curl_stdout "https://ftp.apnic.net/stats/apnic/delegated-apnic-latest" "download chnroute source (apnic delegated)" \
 		| awk -F'|' '$2=="CN" && $3=="ipv4" { printf("%s/%d\n", $4, 32-log($5)/log(2)) }' >"$apnic"
 
 	curl_download "https://raw.githubusercontent.com/17mon/china_ip_list/refs/heads/master/china_ip_list.txt" "$mon17" "download chnroute source (17mon)"
-	sed -i '/^#/d' "$mon17"
+	sed_inplace '/^#/d' "$mon17"
 
 	curl_download "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/ipip_country/ipip_country_cn.netset" "$ipip" "download chnroute source (firehol ipip)"
 	curl_download "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/geolite2_country/country_cn.netset" "$maxmind" "download chnroute source (firehol maxmind)"
 
 	# keep only valid ipv4 routes (CIDR or single IP), avoid accidental matches from non-data content
-	sed -i '/^#/d;/^$/d' "$ipip" "$maxmind"
+	sed_inplace '/^#/d;/^$/d' "$ipip" "$maxmind"
 	cat "$misakaio" "$apnic" "$mon17" "$ipip" "$maxmind" \
 		| grep -E '^([0-9]{1,3}[\\.]){3}[0-9]{1,3}(/[0-9]{1,2})?$' \
-		| iprange >"$merged"
+		| python3 -c 'import ipaddress,sys; networks = ipaddress.collapse_addresses(ipaddress.ip_network(line.strip()) for line in sys.stdin if line.strip()); print("\n".join(str(network) for network in networks))' >"$merged"
 
 	local ip_count
 	ip_count="$(cat "$merged" | count_ipv4_total)"
@@ -358,7 +372,7 @@ update_adslist() {
 }
 
 update_all() {
-	require_cmd curl jq sponge gzip md5sum awk sed sort iprange python3 stat
+	require_cmd curl jq gzip md5sum awk sed sort python3 stat
 	curl_common_args
 	[ -f "$RULE_FILE" ] || echo '{}' >"$RULE_FILE"
 	jq -e . "$RULE_FILE" >/dev/null 2>&1 || die "invalid json: $RULE_FILE"

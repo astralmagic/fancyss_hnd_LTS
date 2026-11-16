@@ -68,15 +68,15 @@ fetch_url() {
 }
 
 pick_host_geotool() {
-	if [ -x "${REPO_ROOT}/tool/geotool/zig-out/bin/geotool" ]; then
+	if [ -x "${REPO_ROOT}/tool/geotool/zig-out/bin/geotool" ] && "${REPO_ROOT}/tool/geotool/zig-out/bin/geotool" --help >/dev/null 2>&1; then
 		printf '%s\n' "${REPO_ROOT}/tool/geotool/zig-out/bin/geotool"
 		return 0
 	fi
-	if [ -x "${REPO_ROOT}/binaries/geotool/geotool-v1.2-linux-x86_64" ]; then
+	if [ -x "${REPO_ROOT}/binaries/geotool/geotool-v1.2-linux-x86_64" ] && "${REPO_ROOT}/binaries/geotool/geotool-v1.2-linux-x86_64" --help >/dev/null 2>&1; then
 		printf '%s\n' "${REPO_ROOT}/binaries/geotool/geotool-v1.2-linux-x86_64"
 		return 0
 	fi
-	if command -v geotool >/dev/null 2>&1; then
+	if command -v geotool >/dev/null 2>&1 && geotool --help >/dev/null 2>&1; then
 		command -v geotool
 		return 0
 	fi
@@ -130,6 +130,107 @@ build_count_summary() {
 		tsv_to_simple_json < "${TMP_DIR}/ip_stats_v4.tsv" > "${TMP_DIR}/ip_v4.json"
 		tsv_to_simple_json < "${TMP_DIR}/ip_stats_v6.tsv" > "${TMP_DIR}/ip_v6.json"
 		ip_json="$(tsv_to_ip_json "${TMP_DIR}/ip_total.json" "${TMP_DIR}/ip_v4.json" "${TMP_DIR}/ip_v6.json")"
+	elif command -v python3 >/dev/null 2>&1 && [ -s "${RULES_ROOT}/dat/geosite.dat" ] && [ -s "${RULES_ROOT}/dat/geoip.dat" ]; then
+		source="geotool"
+		python3 - "${RULES_ROOT}/dat/geosite.dat" "${RULES_ROOT}/dat/geoip.dat" "${TMP_DIR}/py_site.json" "${TMP_DIR}/py_ip.json" <<'PY'
+import json
+import sys
+
+def read_varint(buf, pos):
+    val = 0
+    shift = 0
+    while True:
+        b = buf[pos]
+        pos += 1
+        val |= (b & 0x7f) << shift
+        if not (b & 0x80):
+            return val, pos
+        shift += 7
+
+def iter_fields(buf):
+    pos = 0
+    n = len(buf)
+    while pos < n:
+        raw, pos = read_varint(buf, pos)
+        num, wt = raw >> 3, raw & 0x07
+        if wt == 0:
+            val, pos = read_varint(buf, pos)
+            yield num, wt, val
+        elif wt == 1:
+            if pos + 8 > n:
+                raise EOFError("truncated fixed64")
+            yield num, wt, buf[pos:pos + 8]
+            pos += 8
+        elif wt == 2:
+            ln, pos = read_varint(buf, pos)
+            if pos + ln > n:
+                raise EOFError("truncated length-delimited")
+            yield num, wt, buf[pos:pos + ln]
+            pos += ln
+        elif wt == 5:
+            if pos + 4 > n:
+                raise EOFError("truncated fixed32")
+            yield num, wt, buf[pos:pos + 4]
+            pos += 4
+        else:
+            raise ValueError(f"unsupported wire type: {wt}")
+
+with open(sys.argv[1], "rb") as f:
+    geosite_raw = f.read()
+with open(sys.argv[2], "rb") as f:
+    geoip_raw = f.read()
+
+site_counts = {}
+for num, wt, entry in iter_fields(geosite_raw):
+    if num == 1 and wt == 2:
+        cc = code = ""
+        cnt = 0
+        for fnum, fwt, fval in iter_fields(entry):
+            if fnum == 1 and fwt == 2:
+                cc = fval.decode("utf-8")
+            elif fnum == 4 and fwt == 2:
+                code = fval.decode("utf-8")
+            elif fnum == 2 and fwt == 2:
+                cnt += 1
+        cat = (cc or code).lower()
+        if not cat:
+            raise ValueError("missing geosite category")
+        site_counts[cat] = {"total": cnt}
+
+ip_counts = {}
+for num, wt, entry in iter_fields(geoip_raw):
+    if num == 1 and wt == 2:
+        cc = code = ""
+        tot = v4 = v6 = 0
+        for fnum, fwt, fval in iter_fields(entry):
+            if fnum == 1 and fwt == 2:
+                cc = fval.decode("utf-8")
+            elif fnum == 5 and fwt == 2:
+                code = fval.decode("utf-8")
+            elif fnum == 2 and fwt == 2:
+                ip_bytes = b""
+                for cnum, cwt, cval in iter_fields(fval):
+                    if cnum == 1 and cwt == 2:
+                        ip_bytes = cval
+                tot += 1
+                if len(ip_bytes) == 4:
+                    v4 += 1
+                elif len(ip_bytes) == 16:
+                    v6 += 1
+                else:
+                    raise ValueError(f"invalid ip length: {len(ip_bytes)}")
+        cat = (cc or code).lower()
+        if not cat:
+            raise ValueError("missing geoip category")
+        ip_counts[cat] = {"total": tot, "ipv4": v4, "ipv6": v6}
+
+with open(sys.argv[3], "w") as f:
+    json.dump({k: site_counts[k] for k in sorted(site_counts)}, f)
+with open(sys.argv[4], "w") as f:
+    json.dump({k: ip_counts[k] for k in sorted(ip_counts)}, f)
+PY
+		site_json="$(cat "${TMP_DIR}/py_site.json")"
+		ip_json="$(cat "${TMP_DIR}/py_ip.json")"
 	else
 		find "${SITE_DIR}" -maxdepth 1 -type f -name '*.txt' | sort | while IFS= read -r file
 		do
@@ -351,14 +452,23 @@ emit_source() {
 	family="$1"
 	source_json="$2"
 	type=$(printf '%s' "$source_json" | jq -r '.type')
+	remote_tmp=""
+	case "$family:$type" in
+	site:remote_domain_list_custom|site:remote_666os_site|ip:remote_666os_ip)
+		url=$(printf '%s' "$source_json" | jq -r '.url')
+		remote_tmp="$(mktemp "${TMP_DIR}/source.XXXXXX")"
+		fetch_url "$url" > "${remote_tmp}" || {
+			rm -f "${remote_tmp}"
+			return 1
+		}
+		;;
+	esac
 	case "$family:$type" in
 	site:remote_domain_list_custom)
-		url=$(printf '%s' "$source_json" | jq -r '.url')
-		fetch_url "$url" | normalize_site_domain_list_custom
+		normalize_site_domain_list_custom < "${remote_tmp}"
 		;;
 	site:remote_666os_site)
-		url=$(printf '%s' "$source_json" | jq -r '.url')
-		fetch_url "$url" | normalize_site_666os
+		normalize_site_666os < "${remote_tmp}"
 		;;
 	site:local_gzip_domain_suffix)
 		path=$(printf '%s' "$source_json" | jq -r '.path')
@@ -369,8 +479,7 @@ emit_source() {
 		cat "${REPO_ROOT}/${path}" | normalize_site_plain_suffix
 		;;
 	ip:remote_666os_ip)
-		url=$(printf '%s' "$source_json" | jq -r '.url')
-		fetch_url "$url" | normalize_ip_plain
+		normalize_ip_plain < "${remote_tmp}"
 		;;
 	ip:local_plain_cidr)
 		path=$(printf '%s' "$source_json" | jq -r '.path')
@@ -381,6 +490,7 @@ emit_source() {
 		return 1
 		;;
 	esac
+	[ -z "${remote_tmp}" ] || rm -f "${remote_tmp}"
 }
 
 build_asset_family() {
@@ -416,6 +526,10 @@ build_asset_family() {
 			normalize_site_tokens < "$tmp_file" | sort -u > "${tmp_file}.norm"
 		else
 			normalize_ip_plain < "$tmp_file" | sort -u > "${tmp_file}.norm"
+		fi
+		if [ "$mode" != "manual" ] && [ ! -s "${tmp_file}.norm" ]; then
+			echo "generated asset is empty: ${family}/${id}" >&2
+			exit 1
 		fi
 		mv -f "${tmp_file}.norm" "$out_file"
 	done
@@ -477,7 +591,7 @@ sync_package_tree() {
 
 build_asset_family site
 build_asset_family ip
-build_geodata_if_possible || true
+build_geodata_if_possible
 build_count_summary
 build_manifest
 sync_package_tree

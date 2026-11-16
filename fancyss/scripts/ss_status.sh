@@ -2,6 +2,8 @@
 
 STATUS_HTTP_ID="$1"
 
+FSS_BASE_SKIP_SHUNT_SOURCE=1
+FSS_BASE_EAGER_NODE_ENV=0
 source /koolshare/scripts/ss_base.sh
 
 if [ -n "${STATUS_HTTP_ID}" ];then
@@ -47,9 +49,7 @@ pick_status_tool(){
 }
 
 status_socks5_ready() {
-	netstat -nlp 2>/dev/null \
-		| grep -w "23456" \
-		| grep -Eq "xray|v2ray|naive|tuic|anytls-zig|rss-local"
+	fss_socks5_open_bin >/dev/null 2>&1
 }
 
 set_waiting_status(){

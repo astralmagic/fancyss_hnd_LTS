@@ -42,6 +42,11 @@ jobs:
           bash -n binaries/smartdns/get_smartdns.sh
           make -n -C binaries update_xray update_v2ray_plugin update_vray-plugin update_anytls_zig update_smartdns update_chinadns_ng update_sub_tool update_node_tool >/dev/null
 
+      - name: Run P1 regression and AnyTLS integration tests
+        run: |
+          python3 tests/test_p1_regressions.py -v
+          python3 tests/test_anytls_integration.py -v
+
       - name: Check lazy node environment derivation
         run: |
           set -euo pipefail
