@@ -11,6 +11,10 @@ fancyss Changelog
    - fix	修复懒加载场景下 NaïveProxy/AnyTLS 通用密码未派生、可能以空密码启动的问题，并恢复不支持 UDP 协议的 ACL 限制。
    - fix	修复 `ss_xray.sh` 版本比较未剥离 `-commit` 后缀导致已安装最新版仍重复重下的问题；插件与 Xray 仅在受控源版本更高时更新，不再因上游版本较旧而自动降级；移除上游个人公告拉取。
    - fix	默认收敛为确定性 HND/HND v8 打包并生成仅含 HND 校验的 `version.json.js`（清理陈旧非 HND 预编译包与冗余 `bin-ipq64` 二进制），修正 Xray 与 `v2ray-plugin` 构建入口，增加版本清单及包内二进制一致性校验。
+   - fix	修复机场专属 DNS 引导文件被重复清理、Hysteria2 空上下行速度误拒绝、ChinaDNS-ng hosts 行末句点、嵌套挂载空间误判，以及新订阅首次同步状态无法落盘的问题。
+   - fix	无进程名 `netstat` 固件上的启动、状态、订阅更新与 NAT 重载统一改用监听 socket 和目标进程 PID 的严格归属检测，避免端口被无关进程占用时误判成功。
+   - update	刷新传统规则与 geosite/geoip 资产；规则在线更新改为受控 HTTPS 源、整批下载校验和失败回滚，不再向路由器在线下发大包广告规则。
+   - add	提供 `ANYTLS_BACKEND=go` 实验构建选项，包含有界连接、默认证书校验、SNI 和资源回收；稳定包仍默认使用 Zig，实机与 24 小时验证前不改变后端。
 
 3.5.30（20260601）
    - update	Xray-core 升级到自编译 `v26.6.1-94ffd50`。
