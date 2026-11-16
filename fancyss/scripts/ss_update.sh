@@ -20,7 +20,7 @@ main_url="https://raw.githubusercontent.com/astralmagic/fancyss_hnd_LTS/lts/pack
 # --------------------------------------
 
 run(){
-	env -i PATH=${PATH} "$@"
+	env -i PATH="${PATH}" "$@"
 }
 
 # arm hnd hnd_v8 qca mtk
@@ -57,7 +57,7 @@ update_ss(){
 		ln -sf /koolshare/bin/curl-fancyss /tmp/curl-update
 	fi
 
-	SOCKS5_OPEN=$(netstat -nlp 2>/dev/null|grep -w "23456"|grep -Eo "v2ray|xray|naive|tuic|anytls-zig")
+	SOCKS5_OPEN=$(fss_socks5_open_bin 2>/dev/null)
 	if [ -n "${SOCKS5_OPEN}" ];then
 		run /tmp/curl-update -4sk -L --connect-timeout 5 --max-time 120 --retry 3 --retry-delay 1 -x socks5h://127.0.0.1:23456 ${main_url}/${VERSION} >/tmp/version.json.js
 	else

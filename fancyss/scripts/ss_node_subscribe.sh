@@ -1,8 +1,7 @@
 #!/bin/sh
 
 # fancyss subscribe script for asuswrt/merlin based router with software center
-source /koolshare/scripts/base.sh
-source /koolshare/scripts/ss_node_common.sh
+source /koolshare/scripts/ss_base.sh
 [ -f /koolshare/scripts/ss_subscribe_profile_lib.sh ] && source /koolshare/scripts/ss_subscribe_profile_lib.sh
 NEW_PATH=$(echo $PATH|tr ':' '\n'|sed '/opt/d;/mmc/d'|awk '!a[$0]++'|tr '\n' ':'|sed '$ s/:$//')
 export PATH=${NEW_PATH}
@@ -4620,7 +4619,7 @@ count_total(){
 }
 
 run(){
-	env -i PATH=${PATH} "$@"
+	env -i PATH="${PATH}" "$@"
 }
 
 __timeout_init() {
@@ -4643,9 +4642,9 @@ __timeout_init() {
 	if [ -n "${__TIMEOUT_CMD}" ]; then
 		# Prefer GNU/coreutils style: timeout DURATION CMD...
 		# BusyBox (newer) is compatible; older BusyBox uses: timeout -t SECONDS -s SIG CMD...
-		if env -i PATH=${PATH} ${__TIMEOUT_CMD} 1 sh -c ":" >/dev/null 2>&1; then
+		if env -i PATH="${PATH}" ${__TIMEOUT_CMD} 1 sh -c ":" >/dev/null 2>&1; then
 			__TIMEOUT_STYLE="gnu"
-		elif env -i PATH=${PATH} ${__TIMEOUT_CMD} -t 1 -s KILL sh -c ":" >/dev/null 2>&1; then
+		elif env -i PATH="${PATH}" ${__TIMEOUT_CMD} -t 1 -s KILL sh -c ":" >/dev/null 2>&1; then
 			__TIMEOUT_STYLE="bb"
 		else
 			__TIMEOUT_CMD=""
@@ -4667,10 +4666,10 @@ __timeout_run() {
 	fi
 
 	if [ -n "${__TIMEOUT_CMD}" -a "${__TIMEOUT_STYLE}" = "gnu" ]; then
-		env -i PATH=${PATH} ${__TIMEOUT_CMD} "${_t}" "$@"
+		env -i PATH="${PATH}" ${__TIMEOUT_CMD} "${_t}" "$@"
 		return $?
 	elif [ -n "${__TIMEOUT_CMD}" -a "${__TIMEOUT_STYLE}" = "bb" ]; then
-		env -i PATH=${PATH} ${__TIMEOUT_CMD} -t "${_t}" -s KILL "$@" 2>/dev/null
+		env -i PATH="${PATH}" ${__TIMEOUT_CMD} -t "${_t}" -s KILL "$@" 2>/dev/null
 		return $?
 	fi
 
@@ -4678,11 +4677,11 @@ __timeout_run() {
 	# Try to isolate process group via setsid when available.
 	local _cmd_pid _timer_pid _rc _timer_rc _kill_target
 	if command -v setsid >/dev/null 2>&1; then
-		env -i PATH=${PATH} setsid "$@" &
+		env -i PATH="${PATH}" setsid "$@" &
 		_cmd_pid=$!
 		_kill_target="-${_cmd_pid}"
 	else
-		env -i PATH=${PATH} "$@" &
+		env -i PATH="${PATH}" "$@" &
 		_cmd_pid=$!
 		_kill_target="${_cmd_pid}"
 	fi
@@ -7128,8 +7127,9 @@ add_hy2_node(){
 get_fancyss_running_status(){
 	local STATUS_1=$(dbus get ss_basic_enable 2>/dev/null)
 	local STATUS_2=$(iptables --t nat -S|grep SHADOWSOCKS|grep -w "3333" 2>/dev/null)
-	local STATUS_3=$(netstat -nlp 2>/dev/null|grep -w "3333"|grep -E "ss-redir|sslocal|v2ray|koolgame|xray|ipt2socks")
-	local STATUS_4=$(netstat -nlp 2>/dev/null|grep -w "7913")
+	local STATUS_3=""
+	fss_port_listened_by_bins 3333 ss-redir sslocal v2ray koolgame xray ipt2socks rss-redir && STATUS_3="1"
+	local STATUS_4=$(fss_port_owner_pids 7913 2>/dev/null)
 	# 当插件状态为开启，iptables状态正常，透明端口进程正常，DNS端口正常，DNS配置文件正常
 	if [ "${STATUS_1}" == "1" -a -n "${STATUS_2}" -a -n "${STATUS_3}" -a -n "${STATUS_4}" -a -f "/jffs/configs/dnsmasq.d/wblist.conf" ];then
 		echo 1
@@ -7312,7 +7312,7 @@ download_by_curl(){
 
 		# 下载失败，使用代理下载
 		echo_date "❌️直连下载订阅失败！尝试使用当前节点代理下载订阅！"
-		SOCKS5_OPEN=$(netstat -nlp 2>/dev/null|grep -w "23456"|grep -Eo "v2ray|xray|naive|tuic|anytls-zig")
+		SOCKS5_OPEN=$(fss_socks5_open_bin 2>/dev/null)
 		if [ -n "${SOCKS5_OPEN}" ];then
 			SUB_LAST_DOWNLOAD_MODE="proxy"
 			echo_date "✈️使用当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点：[$(sub_get_node_field_plain "${CURR_NODE}" name)]提供的网络下载..."
@@ -7325,7 +7325,7 @@ download_by_curl(){
 		fi
 	elif [ "${SUB_BY_PROXY}" == "1" ]; then
 		# 代理下载
-		SOCKS5_OPEN=$(netstat -nlp 2>/dev/null|grep -w "23456"|grep -Eo "v2ray|xray|naive|tuic|anytls-zig")
+		SOCKS5_OPEN=$(fss_socks5_open_bin 2>/dev/null)
 		if [ -n "${SOCKS5_OPEN}" ];then
 			local EXT_ARG="-x socks5h://127.0.0.1:23456"
 			SUB_LAST_DOWNLOAD_MODE="proxy"
@@ -7911,12 +7911,12 @@ start_node_subscribe(){
 			get_online_rule_now "${url}"
 			case $? in
 			0)
-				subprof_mark_state_success "${profile_id}" "${SUB_LAST_URL_HASH}" "${SUB_LAST_ONLINE_GROUP}" "${SUB_LAST_DOWNLOAD_TOOL}" "${SUB_LAST_DOWNLOAD_PATH}" "${SUB_ACTIVE_UA_MODE}" "${SUB_ACTIVE_UA_PRESET}" >/dev/null 2>&1 || true
+				subprof_mark_state_success "${profile_id}" "${SUB_LAST_URL_HASH}" "${SUB_LAST_ONLINE_GROUP}" "${SUB_LAST_DOWNLOAD_TOOL}" "${SUB_LAST_DOWNLOAD_PATH}" "${SUB_ACTIVE_UA_MODE}" "${SUB_ACTIVE_UA_PRESET}" || true
 				continue
 				;;
 			*)
 				SUB_HAS_FAILURE=1
-				subprof_mark_state_failure "${profile_id}" "${SUB_LAST_DOWNLOAD_ERROR:-订阅处理失败}" "${SUB_LAST_URL_HASH}" "${SUB_LAST_ONLINE_GROUP}" "${SUB_LAST_DOWNLOAD_TOOL}" "${SUB_LAST_DOWNLOAD_PATH}" "${SUB_ACTIVE_UA_MODE}" "${SUB_ACTIVE_UA_PRESET}" >/dev/null 2>&1 || true
+				subprof_mark_state_failure "${profile_id}" "${SUB_LAST_DOWNLOAD_ERROR:-订阅处理失败}" "${SUB_LAST_URL_HASH}" "${SUB_LAST_ONLINE_GROUP}" "${SUB_LAST_DOWNLOAD_TOOL}" "${SUB_LAST_DOWNLOAD_PATH}" "${SUB_ACTIVE_UA_MODE}" "${SUB_ACTIVE_UA_PRESET}" || true
 				subscribe_failed
 				;;
 			esac

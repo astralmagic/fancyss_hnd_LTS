@@ -5,6 +5,7 @@
 export FSS_BASE_EAGER_NODE_ENV=0
 export FSS_BASE_SKIP_SHUNT_SOURCE=1
 source /koolshare/scripts/ss_base.sh
+[ -f /koolshare/scripts/ss_subscribe_profile_lib.sh ] && source /koolshare/scripts/ss_subscribe_profile_lib.sh
 unset FSS_BASE_EAGER_NODE_ENV
 unset FSS_BASE_SKIP_SHUNT_SOURCE
 NEW_PATH=$(echo $PATH|tr ':' '\n'|sed '/opt/d;/mmc/d'|awk '!a[$0]++'|tr '\n' ':'|sed '$ s/:$//')
@@ -1126,7 +1127,6 @@ refresh_node_direct_domain_file() {
 	fss_refresh_node_direct_cache
 	fss_airport_dns_override_load >/dev/null 2>&1 || true
 	if [ "${AIRPORT_DNS_ACTIVE}" = "1" ];then
-		fss_refresh_airport_special_runtime_domain_files >/dev/null 2>&1 || true
 		if [ -s "${FSS_NODE_DIRECT_RUNTIME_OTHER_FILE}" ];then
 			cp -f "${FSS_NODE_DIRECT_RUNTIME_OTHER_FILE}" "${FSS_NODE_DIRECT_RUNTIME_FILE}"
 		else
@@ -2087,6 +2087,12 @@ start_smartdns(){
 	fi
 }
 
+prepare_chng_hosts() {
+	local hosts_dir="${1:-/tmp/etc}"
+	cp -rf "${hosts_dir}/hosts" "${hosts_dir}/chng_hosts"
+	sed -i 's/\.[[:space:]]/ /g;s/\.$//' "${hosts_dir}/chng_hosts"
+}
+
 start_chinadns_ng(){
 	# 0. set default var
 	local CDNS_LINE=""
@@ -2696,8 +2702,7 @@ start_chinadns_ng(){
 	fi
 
 	# for hosts file
-	cp -rf /tmp/etc/hosts /tmp/etc/chng_hosts
-	sed -i 's/\.[[:space:]]/ /g' /etc/chng_hosts
+	prepare_chng_hosts /tmp/etc
 	
 	cat >>"/tmp/chinadns_ng.conf" <<-EOF
 	
@@ -2705,7 +2710,7 @@ start_chinadns_ng(){
 		filter-qtype 64,65
 
 		# hosts
-		hosts /etc/chng_hosts
+		hosts /tmp/etc/chng_hosts
 		
 		# dns 缓存
 		cache 8192
@@ -2746,9 +2751,9 @@ start_chinadns_ng(){
 	if [ "${_debug_mode}" == "1" ];then
 		ulimit -c unlimited
 		cd /tmp
-		env -i PATH=${PATH} chinadns-ng -C /tmp/chinadns_ng.conf >/tmp/chinadns_log.txt 2>&1 &
+		env -i PATH="${PATH}" chinadns-ng -C /tmp/chinadns_ng.conf >/tmp/chinadns_log.txt 2>&1 &
 	else
-		env -i PATH=${PATH} chinadns-ng -C /tmp/chinadns_ng.conf >/dev/null 2>&1 &
+		env -i PATH="${PATH}" chinadns-ng -C /tmp/chinadns_ng.conf >/dev/null 2>&1 &
 	fi
 	
 	detect_running_status chinadns-ng
@@ -4902,39 +4907,7 @@ creat_hy2_json(){
 		ss_basic_hy2_sni="${ss_basic_hy2_sni}"
 	fi
 
-	# 避免用户输入单位，检测下是否是纯数值
-	if [ $(number_test ${ss_basic_hy2_up}) != "0" ];then
-		echo_date "错误！当前hysteria2节点上行速度设置不正确，请输入纯数字！"
-		close_in_five
-	fi
-	if [ $(number_test ${ss_basic_hy2_dl}) != "0" ];then
-		echo_date "错误！当前hysteria2节点下行速度设置不正确，请输入纯数字！"
-		close_in_five
-	fi
-
-	# 默认情况：有 up/down 时 brutal，无 up/down 时 bbr: https://github.com/XTLS/Xray-core/issues/5546
-	if [ -n "${ss_basic_hy2_up}" -a -z "${ss_basic_hy2_dl}" ]; then
-		echo_date "错误！当前hysteria2节点设置了上行速度未设置下行！请更正！"
-		close_in_five
-	elif [ -z "${ss_basic_hy2_up}" -a -n "${ss_basic_hy2_dl}" ]; then
-		echo_date "错误！当前hysteria2节点设置了下行速度未设置下行！请更正！"
-		close_in_five
-	elif [ -z "${ss_basic_hy2_up}" -a -z "${ss_basic_hy2_dl}" ]; then
-		# 未设置上下行可以允许，但是congestion必须设置为bbr，设置逻辑在：get_value_congestion
-		if [ -z "${ss_basic_hy2_cg}" ];then
-			echo_date "提醒！hysteria2协议未设置上行和下行速度，拥塞算法将采用：bbr！"
-		else
-			echo_date "提醒！hysteria2协议未设置上行和下行速度，拥塞算法将采用：bbr，而不是你设置的：${ss_basic_hy2_cg}"
-		fi
-	elif [ -n "${ss_basic_hy2_up}" -a -n "${ss_basic_hy2_dl}" ]; then
-		if [ -z "${ss_basic_hy2_cg}" ];then
-			# 之前的版本没有开放此选项，帮用户设置为brutal
-			echo_date "hysteria2协议拥塞算法将采用有上下行情况下的默认设置：brutal"
-		else
-			# 上下行都设置了且正确，此时可以使用用户选择的congestion
-			echo_date "hysteria2协议拥塞算法将采用你设置的：${ss_basic_hy2_cg}"
-		fi
-	fi
+	validate_hy2_speed_settings
 	
 	# outbounds area
 	cat >>"${HY2_CONFIG_TEMP}" <<-EOF
@@ -4993,6 +4966,37 @@ creat_hy2_json(){
 	if ! append_xray_ipv6_tproxy_inbound "${HY2_CONFIG_FILE}"; then
 		echo_date "错误：追加IPv6透明代理入口到Xray配置文件失败！"
 		close_in_five flag
+	fi
+}
+
+validate_hy2_speed_settings() {
+	if [ -n "${ss_basic_hy2_up}" ] && [ "$(number_test "${ss_basic_hy2_up}")" != "0" ];then
+		echo_date "错误！当前hysteria2节点上行速度设置不正确，请输入纯数字！"
+		close_in_five
+	fi
+	if [ -n "${ss_basic_hy2_dl}" ] && [ "$(number_test "${ss_basic_hy2_dl}")" != "0" ];then
+		echo_date "错误！当前hysteria2节点下行速度设置不正确，请输入纯数字！"
+		close_in_five
+	fi
+
+	if [ -n "${ss_basic_hy2_up}" -a -z "${ss_basic_hy2_dl}" ]; then
+		echo_date "错误！当前hysteria2节点设置了上行速度未设置下行！请更正！"
+		close_in_five
+	elif [ -z "${ss_basic_hy2_up}" -a -n "${ss_basic_hy2_dl}" ]; then
+		echo_date "错误！当前hysteria2节点设置了下行速度未设置上行！请更正！"
+		close_in_five
+	elif [ -z "${ss_basic_hy2_up}" -a -z "${ss_basic_hy2_dl}" ]; then
+		if [ -z "${ss_basic_hy2_cg}" ];then
+			echo_date "提醒！hysteria2协议未设置上行和下行速度，拥塞算法将采用：bbr！"
+		else
+			echo_date "提醒！hysteria2协议未设置上行和下行速度，拥塞算法将采用：bbr，而不是你设置的：${ss_basic_hy2_cg}"
+		fi
+	elif [ -n "${ss_basic_hy2_up}" -a -n "${ss_basic_hy2_dl}" ]; then
+		if [ -z "${ss_basic_hy2_cg}" ];then
+			echo_date "hysteria2协议拥塞算法将采用有上下行情况下的默认设置：brutal"
+		else
+			echo_date "hysteria2协议拥塞算法将采用你设置的：${ss_basic_hy2_cg}"
+		fi
 	fi
 }
 
@@ -5184,7 +5188,11 @@ start_anytls(){
 	}
 
 	server_addr="$(anytls_hostport "${ss_basic_anytls_server}" "${ss_basic_anytls_port}")"
-	printf '%s' "${ss_basic_anytls_pass}" > "${pass_file}"
+	if ! (umask 077; rm -f "${pass_file}" && set -C && printf '%s' "${ss_basic_anytls_pass}" > "${pass_file}"); then
+		echo_date "无法安全写入AnyTLS密码文件，退出！"
+		close_in_five flag
+		return 1
+	fi
 	if [ "${ss_basic_anytls_ai}" = "1" ]; then
 		verify_arg="--insecure"
 	else
@@ -5192,14 +5200,14 @@ start_anytls(){
 	fi
 
 	echo_date "开启ipt2socks进程..."
-	run_bg ipt2socks -p 23456 -l 3333 -b 0.0.0.0 -B :: -n 10000 -R
+	run_bg_detached ipt2socks -p 23456 -l 3333 -b 0.0.0.0 -B :: -n 10000 -R
 	detect_running_status2 ipt2socks 23456
 
 	echo_date "开启AnyTLS客户端进程..."
 	if [ -n "${ss_basic_anytls_sni}" ]; then
-		run_bg /koolshare/bin/anytls-zig -server "${server_addr}" --password-file "${pass_file}" -l 127.0.0.1:23456 -sni "${ss_basic_anytls_sni}" "${verify_arg}"
+		run_bg_detached /koolshare/bin/anytls-zig -server "${server_addr}" --password-file "${pass_file}" -l 127.0.0.1:23456 -sni "${ss_basic_anytls_sni}" "${verify_arg}"
 	else
-		run_bg /koolshare/bin/anytls-zig -server "${server_addr}" --password-file "${pass_file}" -l 127.0.0.1:23456 "${verify_arg}"
+		run_bg_detached /koolshare/bin/anytls-zig -server "${server_addr}" --password-file "${pass_file}" -l 127.0.0.1:23456 "${verify_arg}"
 	fi
 	detect_running_status3 anytls-zig 23456 1 force
 }
@@ -5215,17 +5223,21 @@ write_cron_job() {
 	fi
 	
 	# 定时订阅
-	sed -i '/ssnodeupdate/d' /var/spool/cron/crontabs/* >/dev/null 2>&1
-	if [ "${ss_basic_node_update}" == "1" ]; then
-		if [ "${ss_basic_node_update_day}" == "0" ]; then
-			cru a ssnodeupdate "0 ${ss_basic_node_update_hr} * * * /koolshare/scripts/ss_node_subscribe.sh fancyss 3"
-			echo_date "⏰️fancyss规则定时更新任务启用，每天${ss_basic_node_update_hr}点自动更新订阅。"
-		else
-			cru a ssnodeupdate "0 ${ss_basic_node_update_hr} * * ${ss_basic_node_update_day} /koolshare/scripts/ss_node_subscribe.sh fancyss 3"
-			echo_date "⏰️fancyss规则定时更新任务启用，每周${ss_basic_node_update_day}的${ss_basic_node_update_hr}点自动更新订阅。"
-		fi
+	if type subprof_rebuild_cron_jobs >/dev/null 2>&1 && subprof_has_profiles; then
+		subprof_rebuild_cron_jobs >/dev/null 2>&1 || echo_date "订阅定时任务恢复失败，请重新保存订阅配置。"
 	else
-		echo_date "❎️fancyss定时更新订阅节点任务未启用！"
+		sed -i '/ssnodeupdate/d;/ssnodeprof_/d' /var/spool/cron/crontabs/* >/dev/null 2>&1
+		if [ "${ss_basic_node_update}" == "1" ]; then
+			if [ "${ss_basic_node_update_day}" == "0" ]; then
+				cru a ssnodeupdate "0 ${ss_basic_node_update_hr} * * * /koolshare/scripts/ss_node_subscribe.sh fancyss 3"
+				echo_date "⏰️fancyss定时更新订阅任务启用，每天${ss_basic_node_update_hr}点自动更新订阅。"
+			else
+				cru a ssnodeupdate "0 ${ss_basic_node_update_hr} * * ${ss_basic_node_update_day} /koolshare/scripts/ss_node_subscribe.sh fancyss 3"
+				echo_date "⏰️fancyss定时更新订阅任务启用，每周${ss_basic_node_update_day}的${ss_basic_node_update_hr}点自动更新订阅。"
+			fi
+		else
+			echo_date "❎️fancyss定时更新订阅节点任务未启用！"
+		fi
 	fi
 	
 	# 定时webtest
@@ -5244,9 +5256,9 @@ kill_cron_job() {
 		echo_date "删除fancyss规则定时更新任务..."
 		sed -i '/ssupdate/d' /var/spool/cron/crontabs/* >/dev/null 2>&1
 	fi
-	if [ -n "$(cru l | grep ssnodeupdate)" ]; then
+	if [ -n "$(cru l | grep -E 'ssnodeupdate|ssnodeprof_')" ]; then
 		echo_date "删除定时订阅任务..."
-		sed -i '/ssnodeupdate/d' /var/spool/cron/crontabs/* >/dev/null 2>&1
+		sed -i '/ssnodeupdate/d;/ssnodeprof_/d' /var/spool/cron/crontabs/* >/dev/null 2>&1
 	fi
 	if [ -n "$(cru l | grep sslatencyjob)" ]; then
 		echo_date 删除SSR定时订阅任务...
@@ -7022,7 +7034,7 @@ detect_ip(){
 		local IP=$(run curl-fancyss ${CURL_IP_FLAG} -s -m ${TIMEOUT} ${SUBJECT} 2>&1 | grep -Eo "([0-9]{1,3}[\.]){3}[0-9]{1,3}" | grep -v "Terminated")
 	elif [ "${METHOD}" == "1" ];then
 		# 检测代理ip
-		local SOCKS5_OPEN=$(netstat -nlpt 2>/dev/null|grep -w "23456"|grep -Eo "v2ray|xray|naive|tuic|anytls-zig")
+		local SOCKS5_OPEN=$(fss_socks5_open_bin 2>/dev/null)
 		if [ -n "${SOCKS5_OPEN}" ];then
 			local IP=$(run curl-fancyss ${CURL_IP_FLAG} -s -x socks5h://127.0.0.1:23456 -m ${TIMEOUT} ${SUBJECT} 2>&1 | grep -v "Terminated")
 		else
@@ -7037,7 +7049,7 @@ detect_ip(){
 check_frn_public_ip(){
 	echo_date "开始代理出口ip检测..."
 
-	local SOCKS5_OPEN=$(netstat -nlp 2>/dev/null | grep -w "23456" | grep -Eo "v2ray|xray|naive|tuic|anytls-zig" | head -n1)
+	local SOCKS5_OPEN=$(fss_socks5_open_bin 2>/dev/null)
 	if [ -n "${SOCKS5_OPEN}" ];then
 		echo_date "检测方式1：socks5"
 	else
@@ -7461,7 +7473,7 @@ flush_nat)
 		;;
 start_nat)
 	# start on nat-start
-	SOCKS5_OPEN=$(netstat -nlpt 2>/dev/null|grep -w "23456"|grep -Eo "v2ray|xray|naive|tuic|anytls-zig")
+	SOCKS5_OPEN=$(fss_socks5_open_bin 2>/dev/null)
 	if [ -z "${SOCKS5_OPEN}" ];then
 		# 代理程序没有运行，可能是刚开机，不继续
 		return 0

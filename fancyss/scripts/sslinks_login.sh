@@ -1,6 +1,9 @@
 #!/bin/sh
 
-source /koolshare/scripts/base.sh
+FSS_BASE_SKIP_SHUNT_SOURCE=1
+FSS_BASE_SKIP_DBUS_EXPORT=1
+FSS_BASE_EAGER_NODE_ENV=0
+source /koolshare/scripts/ss_base.sh
 [ -f /koolshare/scripts/ss_subscribe_profile_lib.sh ] && source /koolshare/scripts/ss_subscribe_profile_lib.sh
 
 LOG_FILE=/tmp/upload/ss_log.txt
@@ -57,7 +60,7 @@ sslinks_curl_bin() {
 sslinks_curl_proxy_args() {
 	case "${SSLINKS_TRANSPORT}" in
 	socks5)
-		netstat -nlp 2>/dev/null | grep -q "127.0.0.1:23456" || return 1
+		fss_socks5_open_bin >/dev/null 2>&1 || return 1
 		printf '%s\n' "--socks5-hostname 127.0.0.1:23456"
 		return 0
 		;;

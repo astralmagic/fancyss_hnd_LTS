@@ -6,7 +6,7 @@ source /koolshare/scripts/ss_base.sh
 [ -f /koolshare/scripts/ss_subscribe_profile_lib.sh ] && source /koolshare/scripts/ss_subscribe_profile_lib.sh
 
 run(){
-	env -i PATH=${PATH} "$@"
+	env -i PATH="${PATH}" "$@"
 }
 
 GET_MODE_NAME() {
@@ -785,6 +785,41 @@ print_bin_version_line() {
 	printf '%-16s %-16s %s\n' "${name}" "${version}" "${note}"
 }
 
+format_anytls_version_line() {
+	local bin="${1:-/koolshare/bin/anytls-zig}"
+	local raw=""
+	local ver=""
+	local extra=""
+	local note="AnyTLS 客户端（兼容程序名，版本标识后端）"
+	raw="$(get_zig_tool_version "${bin}" 2>/dev/null)"
+	case "${raw}" in
+	anytls-go\ *)
+		ver="${raw#anytls-go }"
+		extra=""
+		case "${ver}" in
+		*" "*)
+			extra="${ver#* }"
+			ver="${ver%% *}"
+			;;
+		esac
+		extra="${extra#(}"
+		extra="${extra%)}"
+		if [ -n "${extra}" ]; then
+			note="AnyTLS 客户端（兼容程序名；${extra}）"
+		fi
+		if [ -n "${ver}" ]; then
+			ver="anytls-go/${ver}"
+		else
+			ver="anytls-go"
+		fi
+		print_bin_version_line "anytls-zig" "${ver}" "${note}"
+		;;
+	*)
+		print_bin_version_line "anytls-zig" "${raw}" "${note}"
+		;;
+	esac
+}
+
 ECHO_VERSION(){
 	echo
 	echo "2️⃣插件主要二进制程序版本："
@@ -804,7 +839,7 @@ ECHO_VERSION(){
 			printf '%-16s %-16s %s\n' "tuic-client" "$(run tuic-client -V|awk '{print $NF}')" "https://github.com/Itsusinn/tuic"
 		fi
 		if [ -x "/koolshare/bin/anytls-zig" ];then
-			print_bin_version_line "anytls-zig" "$(get_zig_tool_version /koolshare/bin/anytls-zig)" "fancyss Zig / AnyTLS 客户端"
+			format_anytls_version_line "/koolshare/bin/anytls-zig"
 		fi
 		if [ -x "/koolshare/bin/ipt2socks" ];then
 			printf '%-16s %-16s %s\n' "ipt2socks" "$(run /koolshare/bin/ipt2socks -V|awk '{print $2}')" "https://github.com/zfl9/ipt2socks"
