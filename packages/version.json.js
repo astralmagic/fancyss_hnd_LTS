@@ -1,8 +1,8 @@
 {
   "name": "fancyss",
   "version": "3.5.31",
-  "md5_hnd_full": "96258bf72e86eb4c551ff81daeb71a7c",
-  "md5_hnd_lite": "3775f0b1664324e397cb688e9b5fd75a",
-  "md5_hnd_v8_full": "f67ede66f754cc03a4b6ba342c93eb0e",
-  "md5_hnd_v8_lite": "433a7daca8243e9b50bbcdf6c3b070f2"
+  "md5_hnd_full": "7ea1e37bcd38ff655799efc8bde74e7e",
+  "md5_hnd_lite": "0c6ab78be9726c58fca2b87d7b400b5a",
+  "md5_hnd_v8_full": "f13406e1669e7cebdea7958f132dc5be",
+  "md5_hnd_v8_lite": "34ecdb97094f9f06f0226836c2f2f1b6"
 }
