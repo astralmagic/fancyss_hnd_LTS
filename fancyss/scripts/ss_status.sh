@@ -4,7 +4,9 @@ STATUS_HTTP_ID="$1"
 
 FSS_BASE_SKIP_SHUNT_SOURCE=1
 FSS_BASE_EAGER_NODE_ENV=0
+FSS_BASE_READONLY_ACL=1
 source /koolshare/scripts/ss_base.sh
+unset FSS_BASE_READONLY_ACL
 
 if [ -n "${STATUS_HTTP_ID}" ];then
 	ACTION="${STATUS_HTTP_ID}"

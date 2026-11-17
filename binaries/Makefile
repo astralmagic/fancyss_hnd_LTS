@@ -40,9 +40,10 @@ update_chinadns_ng:
 	chinadns-ng/get_latest.sh
 
 update_geotool:
-	cd ../tool/geotool && rm -f dist/geotool-v$$(cat VERSION)-linux-armv5te dist/geotool-v$$(cat VERSION)-linux-armv7a dist/geotool-v$$(cat VERSION)-linux-armv7hf dist/geotool-v$$(cat VERSION)-linux-aarch64 dist/SHA256SUMS-v$$(cat VERSION) && ZIG="$(ZIG_COMPAT)" bash scripts/build-release.sh armv5te armv7a armv7hf aarch64
+	cd ../tool/geotool && rm -f dist/geotool-v$$(cat VERSION)-linux-armv5te dist/geotool-v$$(cat VERSION)-linux-armv7a dist/geotool-v$$(cat VERSION)-linux-armv7hf dist/geotool-v$$(cat VERSION)-linux-aarch64 dist/geotool-v$$(cat VERSION)-linux-x86_64 dist/SHA256SUMS-v$$(cat VERSION) && ZIG="$(ZIG_COMPAT)" bash scripts/build-release.sh x86_64 armv5te armv7a armv7hf aarch64
 	mkdir -p geotool
-	rm -f geotool/geotool-v$$(cat ../tool/geotool/VERSION)-linux-armv5te geotool/geotool-v$$(cat ../tool/geotool/VERSION)-linux-armv7a geotool/geotool-v$$(cat ../tool/geotool/VERSION)-linux-armv7hf geotool/geotool-v$$(cat ../tool/geotool/VERSION)-linux-aarch64 geotool/SHA256SUMS-v$$(cat ../tool/geotool/VERSION)
+	rm -f geotool/geotool-v$$(cat ../tool/geotool/VERSION)-linux-armv5te geotool/geotool-v$$(cat ../tool/geotool/VERSION)-linux-armv7a geotool/geotool-v$$(cat ../tool/geotool/VERSION)-linux-armv7hf geotool/geotool-v$$(cat ../tool/geotool/VERSION)-linux-aarch64 geotool/geotool-v$$(cat ../tool/geotool/VERSION)-linux-x86_64 geotool/SHA256SUMS-v$$(cat ../tool/geotool/VERSION)
+	cp -f ../tool/geotool/dist/geotool-v$$(cat ../tool/geotool/VERSION)-linux-x86_64 geotool/
 	cp -f ../tool/geotool/dist/geotool-v$$(cat ../tool/geotool/VERSION)-linux-armv5te geotool/
 	cp -f ../tool/geotool/dist/geotool-v$$(cat ../tool/geotool/VERSION)-linux-armv7a geotool/
 	cp -f ../tool/geotool/dist/geotool-v$$(cat ../tool/geotool/VERSION)-linux-armv7hf geotool/
@@ -50,9 +51,10 @@ update_geotool:
 	cp -f ../tool/geotool/dist/SHA256SUMS-v$$(cat ../tool/geotool/VERSION) geotool/
 
 update_xapi_tool:
-	cd ../tool/xapi-tool && rm -f dist/xapi-tool-v$$(cat VERSION)-linux-armv7a dist/xapi-tool-v$$(cat VERSION)-linux-armv7hf dist/xapi-tool-v$$(cat VERSION)-linux-aarch64 dist/SHA256SUMS-v$$(cat VERSION) && ZIG="$(ZIG_COMPAT)" bash scripts/build-release.sh armv7a armv7hf aarch64
+	cd ../tool/xapi-tool && rm -f dist/xapi-tool-v$$(cat VERSION)-linux-armv7a dist/xapi-tool-v$$(cat VERSION)-linux-armv7hf dist/xapi-tool-v$$(cat VERSION)-linux-aarch64 dist/xapi-tool-v$$(cat VERSION)-linux-x86_64 dist/SHA256SUMS-v$$(cat VERSION) && UPX_BIN="$${UPX_BIN:-$$(command -v upx-5.0.2 || command -v upx || true)}" ZIG="$(ZIG_COMPAT)" bash scripts/build-release.sh x86_64 armv7a armv7hf aarch64
 	mkdir -p xapi-tool
-	rm -f xapi-tool/xapi-tool-v$$(cat ../tool/xapi-tool/VERSION)-linux-armv7a xapi-tool/xapi-tool-v$$(cat ../tool/xapi-tool/VERSION)-linux-armv7hf xapi-tool/xapi-tool-v$$(cat ../tool/xapi-tool/VERSION)-linux-aarch64 xapi-tool/SHA256SUMS-v$$(cat ../tool/xapi-tool/VERSION)
+	rm -f xapi-tool/xapi-tool-v$$(cat ../tool/xapi-tool/VERSION)-linux-armv7a xapi-tool/xapi-tool-v$$(cat ../tool/xapi-tool/VERSION)-linux-armv7hf xapi-tool/xapi-tool-v$$(cat ../tool/xapi-tool/VERSION)-linux-aarch64 xapi-tool/xapi-tool-v$$(cat ../tool/xapi-tool/VERSION)-linux-x86_64 xapi-tool/SHA256SUMS-v$$(cat ../tool/xapi-tool/VERSION)
+	cp -f ../tool/xapi-tool/dist/xapi-tool-v$$(cat ../tool/xapi-tool/VERSION)-linux-x86_64 xapi-tool/
 	cp -f ../tool/xapi-tool/dist/xapi-tool-v$$(cat ../tool/xapi-tool/VERSION)-linux-armv7a xapi-tool/
 	cp -f ../tool/xapi-tool/dist/xapi-tool-v$$(cat ../tool/xapi-tool/VERSION)-linux-armv7hf xapi-tool/
 	cp -f ../tool/xapi-tool/dist/xapi-tool-v$$(cat ../tool/xapi-tool/VERSION)-linux-aarch64 xapi-tool/
@@ -100,9 +102,9 @@ update_status_tool:
 	cp -f ../tool/status-tool/dist/SHA256SUMS-v$$(cat ../tool/status-tool/VERSION) status-tool/
 
 update_webtest_tool:
-	cd ../tool/webtest-tool && rm -f dist/webtest-tool-v$$(cat VERSION)-linux-armv5te dist/webtest-tool-v$$(cat VERSION)-linux-armv7a dist/webtest-tool-v$$(cat VERSION)-linux-armv7hf dist/webtest-tool-v$$(cat VERSION)-linux-aarch64 dist/webtest-tool-v$$(cat VERSION)-linux-x86_64 dist/webtestctl-v$$(cat VERSION)-linux-armv5te dist/webtestctl-v$$(cat VERSION)-linux-armv7a dist/webtestctl-v$$(cat VERSION)-linux-armv7hf dist/webtestctl-v$$(cat VERSION)-linux-aarch64 dist/webtestctl-v$$(cat VERSION)-linux-x86_64 && ZIG="$(ZIG_COMPAT)" bash scripts/build-release.sh armv5te armv7a armv7hf aarch64 x86_64
+	cd ../tool/webtest-tool && rm -f dist/webtest-tool-v$$(cat VERSION)-linux-armv5te dist/webtest-tool-v$$(cat VERSION)-linux-armv7a dist/webtest-tool-v$$(cat VERSION)-linux-armv7hf dist/webtest-tool-v$$(cat VERSION)-linux-aarch64 dist/webtest-tool-v$$(cat VERSION)-linux-x86_64 dist/webtestctl-v$$(cat VERSION)-linux-armv5te dist/webtestctl-v$$(cat VERSION)-linux-armv7a dist/webtestctl-v$$(cat VERSION)-linux-armv7hf dist/webtestctl-v$$(cat VERSION)-linux-aarch64 dist/webtestctl-v$$(cat VERSION)-linux-x86_64 dist/SHA256SUMS-v$$(cat VERSION) && ZIG="$(ZIG_COMPAT)" bash scripts/build-release.sh armv5te armv7a armv7hf aarch64 x86_64
 	mkdir -p webtest-tool
-	rm -f webtest-tool/webtest-tool-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv5te webtest-tool/webtest-tool-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv7a webtest-tool/webtest-tool-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv7hf webtest-tool/webtest-tool-v$$(cat ../tool/webtest-tool/VERSION)-linux-aarch64 webtest-tool/webtest-tool-v$$(cat ../tool/webtest-tool/VERSION)-linux-x86_64 webtest-tool/webtestctl-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv5te webtest-tool/webtestctl-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv7a webtest-tool/webtestctl-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv7hf webtest-tool/webtestctl-v$$(cat ../tool/webtest-tool/VERSION)-linux-aarch64 webtest-tool/webtestctl-v$$(cat ../tool/webtest-tool/VERSION)-linux-x86_64
+	rm -f webtest-tool/webtest-tool-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv5te webtest-tool/webtest-tool-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv7a webtest-tool/webtest-tool-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv7hf webtest-tool/webtest-tool-v$$(cat ../tool/webtest-tool/VERSION)-linux-aarch64 webtest-tool/webtest-tool-v$$(cat ../tool/webtest-tool/VERSION)-linux-x86_64 webtest-tool/webtestctl-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv5te webtest-tool/webtestctl-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv7a webtest-tool/webtestctl-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv7hf webtest-tool/webtestctl-v$$(cat ../tool/webtest-tool/VERSION)-linux-aarch64 webtest-tool/webtestctl-v$$(cat ../tool/webtest-tool/VERSION)-linux-x86_64 webtest-tool/SHA256SUMS-v$$(cat ../tool/webtest-tool/VERSION)
 	cp -f ../tool/webtest-tool/dist/webtest-tool-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv5te webtest-tool/
 	cp -f ../tool/webtest-tool/dist/webtest-tool-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv7a webtest-tool/
 	cp -f ../tool/webtest-tool/dist/webtest-tool-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv7hf webtest-tool/
@@ -113,3 +115,4 @@ update_webtest_tool:
 	cp -f ../tool/webtest-tool/dist/webtestctl-v$$(cat ../tool/webtest-tool/VERSION)-linux-armv7hf webtest-tool/
 	cp -f ../tool/webtest-tool/dist/webtestctl-v$$(cat ../tool/webtest-tool/VERSION)-linux-aarch64 webtest-tool/
 	cp -f ../tool/webtest-tool/dist/webtestctl-v$$(cat ../tool/webtest-tool/VERSION)-linux-x86_64 webtest-tool/
+	cp -f ../tool/webtest-tool/dist/SHA256SUMS-v$$(cat ../tool/webtest-tool/VERSION) webtest-tool/

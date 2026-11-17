@@ -13,6 +13,25 @@ wt_node_get_plain() {
 	fss_get_node_field_plain "$2" "$1"
 }
 
+wt_warn_xray_allow_insecure() {
+	local node_id="$1"
+	local proto_label="$2"
+	local ai_val="$3"
+	local pcs_val="$4"
+	local msg=""
+
+	if [ "${ai_val}" = "1" ] || [ "${ai_val}" = "true" ]; then
+		if [ -z "${pcs_val}" ]; then
+			msg="⚠️警告：节点#${node_id}(${proto_label})勾选了allowInsecure但未配置pinnedPeerCertSha256，Xray-core v26.6+已移除该字段，TLS握手将失败"
+			if type echo_date >/dev/null 2>&1; then
+				echo_date "${msg}" >&2
+			else
+				printf '%s\n' "${msg}" >&2
+			fi
+		fi
+	fi
+}
+
 wt_get_path_empty() {
 	if [ -n "$1" ]; then
 		echo [\"$1\"]
@@ -562,6 +581,7 @@ wt_gen_vmess_outbound() {
 		fi
 
 		if [ "${v2ray_network_security}" == "tls" ];then
+			wt_warn_xray_allow_insecure "${nu}" "VMess" "${v2ray_network_security_ai}" ""
 			if [ "${v2ray_network_security_alpn_h2}" == "1" -a "${v2ray_network_security_alpn_http}" == "1" ];then
 				local apln="[\"h2\",\"http/1.1\"]"
 			elif [ "${v2ray_network_security_alpn_h2}" != "1" -a "${v2ray_network_security_alpn_http}" == "1" ];then
@@ -771,6 +791,7 @@ wt_gen_vless_outbound() {
 
 		if [ "${xray_network_security}" == "tls" -o "${xray_network_security}" == "xtls" ];then
 			local xray_network_security_ai=$(wt_node_get_plain xray_network_security_ai ${nu})
+			wt_warn_xray_allow_insecure "${nu}" "Xray(${xray_prot})" "${xray_network_security_ai}" "${xray_pcs}"
 			local xray_network_security_alpn_h2=$(wt_node_get_plain xray_network_security_alpn_h2 ${nu})
 			local xray_network_security_alpn_ht=$(wt_node_get_plain xray_network_security_alpn_http ${nu})
 			if [ "${xray_network_security_alpn_h2}" == "1" -a "${xray_network_security_alpn_ht}" == "1" ];then
@@ -982,6 +1003,7 @@ wt_gen_trojan_outbound() {
 	local trojan_vcn=$(wt_node_get_plain trojan_vcn ${nu})
 	local trojan_ai=$(wt_node_get_plain trojan_ai ${nu})
 	local trojan_tfo=$(wt_node_get_plain trojan_tfo ${nu})
+	wt_warn_xray_allow_insecure "${nu}" "Trojan" "${trojan_ai}" "${trojan_pcs}"
 
 	local _server_ip=$(wt_get_server_addr "${trojan_server}")
 	out_file=$(wt_get_out_file_path "${nu}" "${mark}")
@@ -1046,6 +1068,7 @@ wt_gen_hy2_outbound() {
 	local hy2_ai=$(wt_node_get_plain hy2_ai ${nu})
 	local hy2_tfo=$(wt_node_get_plain hy2_tfo ${nu})
 	local hy2_cg=$(wt_node_get_plain hy2_cg ${nu})
+	wt_warn_xray_allow_insecure "${nu}" "Hysteria2" "${hy2_ai}" "${hy2_pcs}"
 
 	if [ -z "${hy2_sni}" ];then
 		__valid_ip_silent "${hy2_server}"

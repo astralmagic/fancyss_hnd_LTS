@@ -355,13 +355,18 @@ get_arp_mac_by_ip() {
 resolve_acl_mac() {
 	local acl="$1"
 	local acl_ip=""
+	local orig_mac=""
 	local acl_mac=""
 	eval acl_ip=\$ss_acl_ip_${acl}
-	eval acl_mac=\$ss_acl_mac_${acl}
+	eval orig_mac=\$ss_acl_mac_${acl}
+	acl_mac="${orig_mac}"
 
 	acl_mac=$(normalize_acl_mac "${acl_mac}")
 	if acl_is_cidr_rule "${acl_ip}"; then
-		[ -n "${acl_mac}" ] && dbus remove ss_acl_mac_${acl}
+		if [ -n "${orig_mac}" ] && [ "${FSS_BASE_READONLY_ACL:-0}" != "1" ]; then
+			dbus remove ss_acl_mac_${acl}
+		fi
+		unset ss_acl_mac_${acl}
 		return 1
 	fi
 
@@ -370,13 +375,18 @@ resolve_acl_mac() {
 	fi
 
 	if [ -n "${acl_mac}" ]; then
-		dbus set ss_acl_mac_${acl}=${acl_mac}
+		if [ "${acl_mac}" != "${orig_mac}" ] && [ "${FSS_BASE_READONLY_ACL:-0}" != "1" ]; then
+			dbus set ss_acl_mac_${acl}=${acl_mac}
+		fi
 		eval ss_acl_mac_${acl}="${acl_mac}"
 		echo "${acl_mac}"
 		return 0
 	fi
 
-	dbus remove ss_acl_mac_${acl}
+	if [ -n "${orig_mac}" ] && [ "${FSS_BASE_READONLY_ACL:-0}" != "1" ]; then
+		dbus remove ss_acl_mac_${acl}
+	fi
+	unset ss_acl_mac_${acl}
 	return 1
 }
 
@@ -474,39 +484,41 @@ get_acl_rule_indexes() {
 		if is_acl_rule_complete "${acl}";then
 			resolve_acl_mac "${acl}" >/dev/null 2>&1
 			valid_acl_nu="${valid_acl_nu} ${acl}"
-		else
+		elif [ "${FSS_BASE_READONLY_ACL:-0}" != "1" ] && [ "${FSS_BASE_SKIP_DBUS_EXPORT:-0}" != "1" ]; then
 			cleanup_acl_rule "${acl}"
 		fi
 	done
 	echo ${valid_acl_nu}
 }
 
-acl_nu=$(get_acl_rule_indexes)
-if [ -n "${acl_nu}" ];then
-	default_mode=$(resolve_acl_default_mode 1)
-else
-	default_mode=$(resolve_acl_default_mode 0)
-fi
-default_udp_flag=$(resolve_acl_udp_flag "$(resolve_acl_default_udp_raw)" "${default_mode}")
-if [ "${default_mode}" != "0" -a "${default_udp_flag}" == "1" ];then
-	mangle=1
-fi
-
-for acl in ${acl_nu}
-do
-	eval acl_mode=\$ss_acl_mode_${acl}
-	eval acl_udp=\$ss_acl_udp_${acl}
-	acl_udp=$(resolve_acl_udp_flag "${acl_udp}" "${acl_mode}")
-	if [ "${acl_mode}" != "0" -a "${acl_udp}" == "1" ];then
-		mangle=1
-		break
+if [ "${FSS_BASE_SKIP_DBUS_EXPORT:-0}" != "1" ]; then
+	acl_nu=$(get_acl_rule_indexes)
+	if [ -n "${acl_nu}" ];then
+		default_mode=$(resolve_acl_default_mode 1)
+	else
+		default_mode=$(resolve_acl_default_mode 0)
 	fi
-done
+	default_udp_flag=$(resolve_acl_udp_flag "$(resolve_acl_default_udp_raw)" "${default_mode}")
+	if [ "${default_mode}" != "0" -a "${default_udp_flag}" == "1" ];then
+		mangle=1
+	fi
 
-fss_base_apply_node_no_udp
+	for acl in ${acl_nu}
+	do
+		eval acl_mode=\$ss_acl_mode_${acl}
+		eval acl_udp=\$ss_acl_udp_${acl}
+		acl_udp=$(resolve_acl_udp_flag "${acl_udp}" "${acl_mode}")
+		if [ "${acl_mode}" != "0" -a "${acl_udp}" == "1" ];then
+			mangle=1
+			break
+		fi
+	done
 
-[ -z "$(dbus get ss_basic_furl)" ] && ss_basic_furl="$(get_fancyss_default_furl)"
-[ -z "$(dbus get ss_basic_curl)" ] && ss_basic_curl="$(get_fancyss_default_curl)"
+	fss_base_apply_node_no_udp
+
+	[ -z "$(dbus get ss_basic_furl)" ] && ss_basic_furl="$(get_fancyss_default_furl)"
+	[ -z "$(dbus get ss_basic_curl)" ] && ss_basic_curl="$(get_fancyss_default_curl)"
+fi
 
 #----------------------------
 number_test(){

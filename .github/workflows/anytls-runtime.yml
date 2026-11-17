@@ -2,9 +2,9 @@ name: AnyTLS runtime regression
 
 on:
   push:
-    paths: ['tool/anytls-go/**', 'tests/**', 'build.sh', 'fancyss/install.sh', 'fancyss/res/shunt_manifest.json.js', 'fancyss/scripts/**', 'fancyss/ss/**', 'binaries/Makefile', 'rules_ng/**', 'rules_ng2/**', 'scripts/**', '.github/workflows/anytls-runtime.yml']
+    paths: ['tool/anytls-go/**', 'tests/**', 'build.sh', 'fancyss/install.sh', 'fancyss/res/shunt_manifest.json.js', 'fancyss/scripts/**', 'fancyss/ss/**', 'fancyss/webs/Module_shadowsocks.asp', 'binaries/Makefile', 'binaries/tuic-client/**', 'binaries/smartdns/**', 'doc/analysis/p2_hnd_v8_stability_triage.md', 'rules_ng/**', 'rules_ng2/**', 'scripts/**', '.github/workflows/anytls-runtime.yml']
   pull_request:
-    paths: ['tool/anytls-go/**', 'tests/**', 'build.sh', 'fancyss/install.sh', 'fancyss/res/shunt_manifest.json.js', 'fancyss/scripts/**', 'fancyss/ss/**', 'binaries/Makefile', 'rules_ng/**', 'rules_ng2/**', 'scripts/**', '.github/workflows/anytls-runtime.yml']
+    paths: ['tool/anytls-go/**', 'tests/**', 'build.sh', 'fancyss/install.sh', 'fancyss/res/shunt_manifest.json.js', 'fancyss/scripts/**', 'fancyss/ss/**', 'fancyss/webs/Module_shadowsocks.asp', 'binaries/Makefile', 'binaries/tuic-client/**', 'binaries/smartdns/**', 'doc/analysis/p2_hnd_v8_stability_triage.md', 'rules_ng/**', 'rules_ng2/**', 'scripts/**', '.github/workflows/anytls-runtime.yml']
   workflow_dispatch:
 
 permissions:
@@ -25,8 +25,14 @@ jobs:
             /fancyss/install.sh
             /fancyss/scripts/
             /fancyss/ss/
+            /fancyss/webs/Module_shadowsocks.asp
             /fancyss/res/shunt_manifest.json.js
             /binaries/Makefile
+            /binaries/tuic-client/get_latest.sh
+            /binaries/tuic-client/latest.txt
+            /binaries/smartdns/get_smartdns.sh
+            /binaries/smartdns/latest.txt
+            /doc/analysis/p2_hnd_v8_stability_triage.md
             /rules_ng/
             /rules_ng2/
             /scripts/
@@ -44,9 +50,10 @@ jobs:
           go test -race -count=3 -timeout 90s ./...
       - name: Shell syntax and fixture integration
         run: |
-          bash -n build.sh fancyss/scripts/ss_base.sh fancyss/scripts/ss_proc_status.sh fancyss/ss/ssconfig.sh tool/anytls-go/scripts/build-release.sh
-          sh -n fancyss/install.sh fancyss/scripts/ss_rule_update.sh fancyss/scripts/ss_subscribe_profile_lib.sh fancyss/scripts/ss_shunt_stats.sh
+          bash -n build.sh binaries/tuic-client/get_latest.sh binaries/smartdns/get_smartdns.sh fancyss/scripts/ss_base.sh fancyss/scripts/ss_proc_status.sh fancyss/ss/ssconfig.sh tool/anytls-go/scripts/build-release.sh
+          sh -n fancyss/install.sh fancyss/scripts/ss_node_common.sh fancyss/scripts/ss_node_subscribe.sh fancyss/scripts/ss_webtest_gen.sh fancyss/scripts/ss_status.sh fancyss/scripts/ss_rule_update.sh fancyss/scripts/ss_subscribe_profile_lib.sh fancyss/scripts/ss_shunt_stats.sh
           python3 tests/test_p1_regressions.py -v
+          python3 tests/test_p2_regressions.py -v
           python3 tests/test_anytls_integration.py -v
       - name: Race-instrumented CLI workload
         env:

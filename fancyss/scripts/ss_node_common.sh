@@ -565,8 +565,8 @@ fss_node_json_snapshot_tsv() {
 		[
 			text(.name),
 			text(.type),
-			text((.server // .hy2_server)),
-			text((.port // .hy2_port)),
+			text((.server // .hy2_server // .naive_server // .anytls_server)),
+			text((.port // .hy2_port // .naive_port // .anytls_port)),
 			text(._identity)
 		] | join("\u001f")
 	' 2>/dev/null
@@ -621,17 +621,51 @@ fss_is_runtime_field() {
 }
 
 fss_resolve_node_field_name() {
-	case "$1" in
+	local field="$1"
+	local node_type="${2:-}"
+
+	case "${field}" in
 	xray_svn)
 		echo "xray_vcn"
+		return 0
 		;;
 	hy2_svn)
 		echo "hy2_vcn"
-		;;
-	*)
-		echo "$1"
+		return 0
 		;;
 	esac
+
+	case "${node_type}" in
+	5)
+		case "${field}" in
+		password) echo "trojan_uuid"; return 0 ;;
+		esac
+		;;
+	6)
+		case "${field}" in
+		password) echo "naive_pass"; return 0 ;;
+		server) echo "naive_server"; return 0 ;;
+		port) echo "naive_port"; return 0 ;;
+		method) echo "naive_prot"; return 0 ;;
+		esac
+		;;
+	8)
+		case "${field}" in
+		password) echo "hy2_pass"; return 0 ;;
+		server) echo "hy2_server"; return 0 ;;
+		port) echo "hy2_port"; return 0 ;;
+		esac
+		;;
+	9)
+		case "${field}" in
+		password) echo "anytls_pass"; return 0 ;;
+		server) echo "anytls_server"; return 0 ;;
+		port) echo "anytls_port"; return 0 ;;
+		esac
+		;;
+	esac
+
+	echo "${field}"
 }
 
 fss_identity_hash_v1() {
@@ -2315,7 +2349,7 @@ fss_node_legacy_to_v2_json() {
 				key=${line%%=*}
 				value=${line#*=}
 				case "${key}" in
-				ssconf_basic_*_"${node_index}")
+				(ssconf_basic_*_"${node_index}")
 					key=${key#ssconf_basic_}
 					key=${key%_"${node_index}"}
 					[ -z "${value}" ] && continue
@@ -2613,13 +2647,61 @@ fss_node_json_simple_value() {
 	local node_json="$1"
 	local field="$2"
 	local value=""
+	local jq_bin=""
+
 	[ -n "${node_json}" ] || return 1
 	[ -n "${field}" ] || return 1
-	value="$(printf '%s' "${node_json}" | sed -n 's/.*"'"${field}"'"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p' | sed -n '1p')"
-	if [ -z "${value}" ];then
-		value="$(printf '%s' "${node_json}" | sed -n 's/.*"'"${field}"'"[[:space:]]*:[[:space:]]*\([^,}][^,}]*\).*/\1/p' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed -n '1p')"
+	if printf '%s' "${node_json}" | grep -Eq "\"${field}\"[[:space:]]*:[[:space:]]*\"\""; then
+		return 0
 	fi
-	printf '%s' "${value}"
+	value="$(printf '%s' "${node_json}" | sed -n 's/.*"'"${field}"'"[[:space:]]*:[[:space:]]*"\([^"\\]*\)".*/\1/p' | sed -n '1p')"
+	if [ -n "${value}" ]; then
+		printf '%s' "${value}"
+		return 0
+	fi
+	if printf '%s' "${node_json}" | grep -Eq "\"${field}\"[[:space:]]*:[[:space:]]*\""; then
+		jq_bin="$(fss_pick_jq_bin)"
+		if [ -n "${jq_bin}" ]; then
+			value="$(printf '%s' "${node_json}" | "${jq_bin}" -r --arg k "${field}" '
+				.[$k] as $v
+				| if $v == null then ""
+				  elif ($v | type) == "boolean" then (if $v then "1" else "0" end)
+				  elif ($v | type) == "string" then $v
+				  else ($v | tostring)
+				  end
+			' 2>/dev/null)"
+			printf '%s' "${value}"
+			return 0
+		fi
+	fi
+	value="$(printf '%s' "${node_json}" | sed -n 's/.*"'"${field}"'"[[:space:]]*:[[:space:]]*\([^,}][^,}]*\).*/\1/p' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed -n '1p')"
+	case "${value}" in
+	null|"")
+		return 0
+		;;
+	true)
+		if fss_is_bool_field "${field}"; then
+			printf '1'
+		else
+			printf 'true'
+		fi
+		return 0
+		;;
+	false)
+		if fss_is_bool_field "${field}"; then
+			printf '0'
+		else
+			printf 'false'
+		fi
+		return 0
+		;;
+	\"*)
+		return 0
+		;;
+	*)
+		printf '%s' "${value}"
+		;;
+	esac
 }
 
 fss_v2_get_node_json_by_id() {
@@ -2974,7 +3056,7 @@ fss_find_node_id_by_identity() {
 				key=${line%%=*}
 				value=${line#*=}
 				case "${key}" in
-				fss_node_[0-9]*)
+				(fss_node_[0-9]*)
 					fss_b64_decode "${value}" 2>/dev/null || true
 					printf '\n'
 					;;
@@ -3027,6 +3109,8 @@ fss_get_node_field_plain() {
 	local node_id="$1"
 	local field="$2"
 	local store_field=""
+	local node_type=""
+	local alt_field=""
 	local schema value="" node_json=""
 
 	[ -z "${node_id}" ] && return 1
@@ -3036,8 +3120,21 @@ fss_get_node_field_plain() {
 	schema=$(fss_detect_storage_schema)
 	if [ "${schema}" = "2" ];then
 		node_json=$(fss_v2_get_node_json_by_id "${node_id}" 2>/dev/null) || return 1
+		case "${store_field}" in
+		password|server|port|method)
+			node_type="$(fss_node_json_simple_value "${node_json}" "type")"
+			alt_field="$(fss_resolve_node_field_name "${field}" "${node_type}")"
+			if [ "${alt_field}" != "${store_field}" ]; then
+				store_field="${alt_field}"
+			fi
+			;;
+		esac
 		if ! fss_is_b64_field "${store_field}"; then
-			fss_node_json_simple_value "${node_json}" "${store_field}"
+			value="$(fss_node_json_simple_value "${node_json}" "${store_field}")"
+			if [ -z "${value}" ] && [ "${store_field}" != "${field}" ]; then
+				value="$(fss_node_json_simple_value "${node_json}" "${field}")"
+			fi
+			printf '%s' "${value}"
 			return 0
 		fi
 		fss_unpack_node_field_meta "${node_json}" "${store_field}" || return 1
@@ -3045,6 +3142,18 @@ fss_get_node_field_plain() {
 		[ -n "${value}" ] && value=$(fss_v2_field_plain_value "${node_json}" "${store_field}" "${value}" "${FSS_NODE_FIELD_B64_MODE}" "${FSS_NODE_FIELD_SOURCE}")
 	else
 		value=$(dbus get ssconf_basic_${store_field}_${node_id})
+		if [ -z "${value}" ]; then
+			case "${store_field}" in
+			password|server|port|method)
+				node_type=$(dbus get ssconf_basic_type_${node_id})
+				alt_field=$(fss_resolve_node_field_name "${field}" "${node_type}")
+				if [ "${alt_field}" != "${store_field}" ]; then
+					store_field="${alt_field}"
+					value=$(dbus get ssconf_basic_${store_field}_${node_id})
+				fi
+				;;
+			esac
+		fi
 		if [ -n "${value}" ] && fss_is_b64_field "${store_field}"; then
 			value=$(fss_b64_decode "${value}")
 		fi
@@ -3236,6 +3345,11 @@ fss_node_json_server_host_port() {
 				text(.hy2_server),
 				text(.hy2_port)
 			]
+		elif $type == "9" then
+			[
+				text(.anytls_server),
+				text(.anytls_port)
+			]
 		else
 			[
 				text(.server),
@@ -3301,6 +3415,10 @@ fss_get_node_server_host_port() {
 	8)
 		host="$(fss_get_node_field_plain "${node_id}" "hy2_server")"
 		port="$(fss_get_node_field_plain "${node_id}" "hy2_port")"
+		;;
+	9)
+		host="$(fss_get_node_field_plain "${node_id}" "anytls_server")"
+		port="$(fss_get_node_field_plain "${node_id}" "anytls_port")"
 		;;
 	*)
 		host="$(fss_get_node_field_plain "${node_id}" "server")"
@@ -3640,12 +3758,18 @@ fss_export_current_node_env_with_node_tool() {
 	local tmp_file=""
 
 	node_tool="$(fss_pick_node_tool 2>/dev/null)" || return 1
-	[ -n "${fields_csv}" ] || return 1
-	tmp_file="/tmp/fss_node_env.${node_id}.$$.$RANDOM"
-	"${node_tool}" current-env --ids "${node_id}" --fields "${fields_csv}" > "${tmp_file}" 2>/dev/null || {
-		rm -f "${tmp_file}"
-		return 1
-	}
+	tmp_file="/tmp/fss_node_env.${node_id}.$$"
+	if [ -n "${fields_csv}" ]; then
+		fss_run_node_tool "${node_tool}" current-env --ids "${node_id}" --fields "${fields_csv}" > "${tmp_file}" 2>/dev/null || {
+			rm -f "${tmp_file}"
+			return 1
+		}
+	else
+		fss_run_node_tool "${node_tool}" current-env --ids "${node_id}" > "${tmp_file}" 2>/dev/null || {
+			rm -f "${tmp_file}"
+			return 1
+		}
+	fi
 	[ -s "${tmp_file}" ] || {
 		rm -f "${tmp_file}"
 		return 1
@@ -3661,7 +3785,7 @@ fss_export_current_node_env_with_node_tool() {
 fss_export_current_node_env() {
 	local node_id="$1"
 	shift
-	local field value schema node_json meta_file encoded_value
+	local field value schema node_json meta_file tmp_env_file jq_bin
 
 	[ -z "${node_id}" ] && node_id=$(fss_get_current_node_id)
 	[ -z "${node_id}" ] && return 1
@@ -3673,7 +3797,10 @@ fss_export_current_node_env() {
 	if [ "${schema}" = "2" ];then
 		fss_export_current_node_env_with_node_tool "${node_id}" "$@" && return 0
 		node_json=$(fss_v2_get_node_json_by_id "${node_id}") || return 1
-		meta_file="/tmp/fss_export_env.${node_id}.$$.$RANDOM"
+		jq_bin="$(fss_pick_jq_bin)"
+		[ -n "${jq_bin}" ] || return 1
+		meta_file="/tmp/fss_export_meta.${node_id}.$$"
+		tmp_env_file="/tmp/fss_export_env.${node_id}.$$"
 		: > "${meta_file}" || return 1
 		for field in "$@"
 		do
@@ -3681,70 +3808,81 @@ fss_export_current_node_env() {
 			printf '%s\t%s\n' "${field}" "$(fss_resolve_node_field_name "${field}")" >> "${meta_file}"
 		done
 
-		while IFS='	' read -r field encoded_value
-		do
-			[ -n "${field}" ] || continue
-			[ -n "${encoded_value}" ] || continue
-			value=$(fss_b64_decode "${encoded_value}")
-			[ -n "${value}" ] && export ss_basic_${field}="${value}"
-		done <<EOF
-$(printf '%s' "${node_json}" | jq -r --rawfile meta "${meta_file}" '
-	def is_bool($f):
-		$f == "v2ray_use_json"
-		or $f == "v2ray_mux_enable"
-		or $f == "v2ray_network_security_ai"
-		or $f == "v2ray_network_security_alpn_h2"
-		or $f == "v2ray_network_security_alpn_http"
-		or $f == "xray_use_json"
-		or $f == "xray_network_security_ai"
-		or $f == "xray_network_security_alpn_h2"
-		or $f == "xray_network_security_alpn_http"
-		or $f == "xray_show"
-		or $f == "trojan_ai"
-		or $f == "trojan_tfo"
-		or $f == "hy2_ai"
-		or $f == "hy2_tfo"
-		or $f == "anytls_ai";
-	def is_b64($f):
-		$f == "password"
-		or $f == "naive_pass"
-		or $f == "v2ray_json"
-		or $f == "xray_json"
-		or $f == "tuic_json";
-	def need_compact_json($f):
-		$f == "v2ray_json"
-		or $f == "xray_json"
-		or $f == "tuic_json";
-	def compact_json_string:
-		try (fromjson | tojson) catch .;
-	def to_plain_value($root; $field; $value):
-		if is_b64($field) then
-			if (($root._b64_mode // "") == "raw") or (($root._source // "") != "subscribe") then
-				$value
-			else
-				(try ($value | @base64d) catch $value)
-			end
-		else
-			$value
-		end;
-	. as $root
-	| ($meta | split("\n") | map(select(length > 0) | split("\t")))[] as $item
-	| ($item[0]) as $field
-	| ($item[1]) as $store_field
-	| ($root[$store_field] // empty | if type == "string" then . else tostring end) as $raw_value
-	| select($raw_value != "")
-	| (to_plain_value($root; $store_field; $raw_value)) as $plain_value
-	| (
-		if is_b64($store_field) and $store_field != "password" and $store_field != "naive_pass" then
-			(if need_compact_json($store_field) then ($plain_value | compact_json_string) else $plain_value end) | @base64
-		else
-			$plain_value
-		end
-	  ) as $legacy_value
-	| "\($field)\t\($legacy_value | @base64)"
-')
-EOF
-		rm -f "${meta_file}"
+		printf '%s' "${node_json}" | "${jq_bin}" -r --rawfile meta "${meta_file}" '
+			def resolve_store($t; $f):
+				if $f == "xray_svn" then "xray_vcn"
+				elif $f == "hy2_svn" then "hy2_vcn"
+				elif $t == "5" and $f == "password" then "trojan_uuid"
+				elif $t == "6" and $f == "password" then "naive_pass"
+				elif $t == "6" and $f == "server" then "naive_server"
+				elif $t == "6" and $f == "port" then "naive_port"
+				elif $t == "6" and $f == "method" then "naive_prot"
+				elif $t == "8" and $f == "password" then "hy2_pass"
+				elif $t == "8" and $f == "server" then "hy2_server"
+				elif $t == "8" and $f == "port" then "hy2_port"
+				elif $t == "9" and $f == "password" then "anytls_pass"
+				elif $t == "9" and $f == "server" then "anytls_server"
+				elif $t == "9" and $f == "port" then "anytls_port"
+				else $f end;
+			def is_b64($f):
+				$f == "password"
+				or $f == "naive_pass"
+				or $f == "v2ray_json"
+				or $f == "xray_json"
+				or $f == "tuic_json";
+			def need_compact_json($f):
+				$f == "v2ray_json"
+				or $f == "xray_json"
+				or $f == "tuic_json";
+			def compact_json_string:
+				try (fromjson | tojson) catch .;
+			def to_plain_value($root; $field; $value):
+				if is_b64($field) then
+					if (($root._b64_mode // "") == "raw") or (($root._source // "") != "subscribe") then
+						$value
+					else
+						(try ($value | @base64d) catch $value)
+					end
+				else
+					$value
+				end;
+			. as $root
+			| ($root.type // "") as $node_type
+			| ($meta | split("\n") | map(select(length > 0) | split("\t"))) as $requested
+			| (if ($requested | length) > 0 then
+				$requested
+			   else
+				($root | keys_unsorted | map(select(length > 0 and (startswith("_") | not))) | sort | map([., resolve_store($node_type; .)]))
+			   end)[] as $item
+			| ($item[0]) as $field
+			| ($item[1]) as $store_field
+			| (if ($root[$store_field] != null) then $store_field else resolve_store($node_type; $store_field) end) as $eff_field
+			| ($root[$eff_field]) as $val
+			| select($val != null)
+			| (if ($val | type) == "string" then $val
+			   elif ($val | type) == "boolean" then (if $val then "1" else "0" end)
+			   elif ($val | type) == "number" then ($val | tostring)
+			   else ($val | tojson) end) as $raw_value
+			| select($raw_value != "")
+			| (to_plain_value($root; $eff_field; $raw_value)) as $plain_value
+			| select($plain_value != "")
+			| (
+				if is_b64($eff_field) and $eff_field != "password" and $eff_field != "naive_pass" then
+					(if need_compact_json($eff_field) then ($plain_value | compact_json_string) else $plain_value end) | @base64
+				else
+					$plain_value
+				end
+			  ) as $legacy_value
+			| "export ss_basic_\($field)=\($legacy_value | @sh)"
+		' > "${tmp_env_file}" 2>/dev/null || {
+			rm -f "${meta_file}" "${tmp_env_file}"
+			return 1
+		}
+		. "${tmp_env_file}" || {
+			rm -f "${meta_file}" "${tmp_env_file}"
+			return 1
+		}
+		rm -f "${meta_file}" "${tmp_env_file}"
 		return 0
 	fi
 
@@ -3786,10 +3924,11 @@ fss_set_node_field_plain() {
 	local node_id="$1"
 	local field="$2"
 	local value="$3"
-	local schema node_json updated_json current_value updated_at is_runtime="0"
+	local schema node_json updated_json current_value updated_at is_runtime="0" jq_bin=""
 
 	[ -z "${node_id}" ] && return 1
 	[ -z "${field}" ] && return 1
+	field=$(fss_resolve_node_field_name "${field}")
 
 	schema=$(fss_detect_storage_schema)
 	if [ "${schema}" != "2" ];then
@@ -3798,6 +3937,8 @@ fss_set_node_field_plain() {
 	fi
 
 	node_json=$(fss_v2_get_node_json_by_id "${node_id}") || return 1
+	jq_bin="$(fss_pick_jq_bin)"
+	[ -n "${jq_bin}" ] || return 1
 	if fss_is_bool_field "${field}"; then
 		[ "${value}" = "1" ] && value="1" || value="0"
 	fi
@@ -3806,7 +3947,7 @@ fss_set_node_field_plain() {
 	fss_is_runtime_field "${field}" && is_runtime="1"
 	updated_at=$(fss_now_ts_ms)
 	if [ "${is_runtime}" = "1" ]; then
-		updated_json=$(printf '%s' "${node_json}" | jq -c --arg k "${field}" --arg v "${value}" '
+		updated_json=$(printf '%s' "${node_json}" | "${jq_bin}" -c --arg k "${field}" --arg v "${value}" '
 			if $v == "" then
 				del(.[$k])
 			else
@@ -3814,7 +3955,7 @@ fss_set_node_field_plain() {
 			end
 		') || return 1
 	else
-		updated_json=$(printf '%s' "${node_json}" | jq -c --arg k "${field}" --arg v "${value}" --argjson updated_at "${updated_at}" '
+		updated_json=$(printf '%s' "${node_json}" | "${jq_bin}" -c --arg k "${field}" --arg v "${value}" --argjson updated_at "${updated_at}" '
 			if $v == "" then
 				del(.[$k])
 			else

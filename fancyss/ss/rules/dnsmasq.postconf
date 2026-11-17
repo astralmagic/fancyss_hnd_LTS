@@ -5,7 +5,12 @@
 # ss_basic_dns_serverx=0，dns query → dnsmasq(53) → chinadns-ng(7913)
 # ss_basic_dns_serverx=1，dns query → dnsmasq(53) → martdns(7913)
 
+FSS_BASE_SKIP_SHUNT_SOURCE=1
+FSS_BASE_EAGER_NODE_ENV=0
+FSS_BASE_SKIP_DBUS_EXPORT=1
+FSS_BASE_READONLY_ACL=1
 source /koolshare/scripts/ss_base.sh
+unset FSS_BASE_SKIP_SHUNT_SOURCE FSS_BASE_EAGER_NODE_ENV FSS_BASE_SKIP_DBUS_EXPORT FSS_BASE_READONLY_ACL
 CONFIG=$1
 INDEX=$2
 

@@ -2445,6 +2445,8 @@ sub_get_node_server_plain(){
 	local server
 	server=$(sub_get_node_field_plain "${node_id}" server)
 	[ -z "${server}" ] && server=$(sub_get_node_field_plain "${node_id}" hy2_server)
+	[ -z "${server}" ] && server=$(sub_get_node_field_plain "${node_id}" naive_server)
+	[ -z "${server}" ] && server=$(sub_get_node_field_plain "${node_id}" anytls_server)
 	printf '%s' "${server}"
 }
 
@@ -2453,6 +2455,8 @@ sub_get_node_port_plain(){
 	local port
 	port=$(sub_get_node_field_plain "${node_id}" port)
 	[ -z "${port}" ] && port=$(sub_get_node_field_plain "${node_id}" hy2_port)
+	[ -z "${port}" ] && port=$(sub_get_node_field_plain "${node_id}" naive_port)
+	[ -z "${port}" ] && port=$(sub_get_node_field_plain "${node_id}" anytls_port)
 	printf '%s' "${port}"
 }
 
@@ -7280,33 +7284,34 @@ get_ua(){
 }
 
 download_by_curl(){
-	local url_encode=$(echo "$1")
+	local url_encode="$1"
 	local header_file="$(sub_header_file_path "${SUB_LINK_HASH:0:4}")"
 	
 	echo_date "⬇️使用curl下载订阅..."
-	local UA=$(get_ua)
+	local UA=""
+	UA="$(get_ua)"
 	SUB_LAST_DOWNLOAD_TOOL="curl"
 	SUB_LAST_DOWNLOAD_PATH="shell"
 	SUB_LAST_DOWNLOAD_UA="${UA}"
 	if [ -n "${UA}" ];then
-		echo_date "🪧使用UA：$UA"
-		local UA_ARG="--user-agent ${UA}"
+		echo_date "🪧使用UA：${UA}"
+		set -- --user-agent "${UA}"
 	else
 		echo_date "🪧使用UA：curl"
-		local UA_ARG=""
+		set --
 	fi
 
-	if [ ! -L "/tmp/curl-update" ];then
+	if [ ! -L "/tmp/curl-subscribe" ];then
 		ln -sf /koolshare/bin/curl-fancyss /tmp/curl-subscribe
 	fi
 	
-	if [ "${SUB_BY_PROXY}" == "0" ]; then
+	if [ "${SUB_BY_PROXY}" = "0" ]; then
 		# 先直连下载
 		SUB_LAST_DOWNLOAD_MODE="direct"
 		echo_date "➡️通过本地网络直连下载订阅..."
 		rm -f "${header_file}" >/dev/null 2>&1
-		run /tmp/curl-subscribe -sSk -L ${UA_ARG} -D "${header_file}" --connect-timeout 5 -m 5 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt
-		if [ "$?" == "0" ]; then
+		run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt"
+		if [ "$?" = "0" ]; then
 			return 0
 		fi
 
@@ -7317,107 +7322,111 @@ download_by_curl(){
 			SUB_LAST_DOWNLOAD_MODE="proxy"
 			echo_date "✈️使用当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点：[$(sub_get_node_field_plain "${CURR_NODE}" name)]提供的网络下载..."
 			rm -f "${header_file}" >/dev/null 2>&1
-			run /tmp/curl-subscribe -sSk -L ${UA_ARG} -D "${header_file}" --connect-timeout 5 -m 5 -x socks5h://127.0.0.1:23456 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt
+			run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 -x socks5h://127.0.0.1:23456 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt"
 			return $?
 		else
 			echo_date "⚠️当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点工作异常，结束curl订阅下载！"
 			return 1
 		fi
-	elif [ "${SUB_BY_PROXY}" == "1" ]; then
+	elif [ "${SUB_BY_PROXY}" = "1" ]; then
 		# 代理下载
 		SOCKS5_OPEN=$(fss_socks5_open_bin 2>/dev/null)
 		if [ -n "${SOCKS5_OPEN}" ];then
-			local EXT_ARG="-x socks5h://127.0.0.1:23456"
 			SUB_LAST_DOWNLOAD_MODE="proxy"
 			echo_date "✈️使用当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点：[$(sub_get_node_field_plain "${CURR_NODE}" name)]提供的网络下载..."
 			rm -f "${header_file}" >/dev/null 2>&1
-			run /tmp/curl-subscribe -sSk -L ${UA_ARG} -D "${header_file}" --connect-timeout 5 -m 5 -x socks5h://127.0.0.1:23456 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt
+			run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 -x socks5h://127.0.0.1:23456 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt"
 			return $?
 		else
-			local EXT_ARG=""
 			echo_date "⚠️当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点工作异常，改用常规网络下载..."
 			return 1
 		fi
-	elif [ "${SUB_BY_PROXY}" == "2" ]; then
+	elif [ "${SUB_BY_PROXY}" = "2" ]; then
 		# 直连下载
 		SUB_LAST_DOWNLOAD_MODE="direct"
 		echo_date "⬇️使用常规网络下载..."
 		rm -f "${header_file}" >/dev/null 2>&1
-		run /tmp/curl-subscribe -sSk -L ${UA_ARG} -D "${header_file}" --connect-timeout 5 -m 5 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt
+		run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt"
 		return $?
 	fi
 }
 
 download_by_wget(){
-	local url_encode=$(echo "$1")
+	local url_encode="$1"
 	local header_file="$(sub_header_file_path "${SUB_LINK_HASH:0:4}")"
+	local wget_rc=0
 	#local url_encode="${url_encode}&flag=shadowrocket"
 	echo_date "⬇️使用wget下载订阅..."
-	local UA=$(get_ua)
+	local UA=""
+	UA="$(get_ua)"
 	SUB_LAST_DOWNLOAD_TOOL="wget"
 	SUB_LAST_DOWNLOAD_PATH="shell"
 	SUB_LAST_DOWNLOAD_UA="${UA}"
 	if [ -n "${UA}" ];then
-		echo_date "🪧使用UA：$UA"
-		local UA_ARG="--user-agent ${UA}"
+		echo_date "🪧使用UA：${UA}"
+		set -- --user-agent "${UA}"
 	else
 		echo_date "🪧使用UA：wget"
-		local UA_ARG=""
+		set --
 	fi
 
-	if [ -n $(echo $1 | grep -E "^https") ]; then
-		local EXT_OPT="--no-check-certificate"
-	else
-		local EXT_OPT=""
+	case "${url_encode}" in
+	https://*)
+		set -- "$@" --no-check-certificate
+		;;
+	esac
+	
+	if [ -d "/root" ] && [ -w "/root" ] && [ ! -f "/root/.wget-hsts" ]; then 
+		touch /root/.wget-hsts 2>/dev/null || true
+		chmod 644 /root/.wget-hsts 2>/dev/null || true
 	fi
 	
-	if [ ! -f "/root/.wget-hsts" ]; then 
-		touch /root/.wget-hsts
-		chmod 644 /root/.wget-hsts
-	fi
-	
-	if [ "${SUB_BY_PROXY}" == "0" ]; then
+	if [ "${SUB_BY_PROXY}" = "0" ]; then
 		# 先直连下载
 		SUB_LAST_DOWNLOAD_MODE="direct"
 		echo_date "➡️通过本地网络直连下载订阅..."
 		rm -f "${header_file}" >/dev/null 2>&1
-		run5 wget -S -t 3 ${UA_ARG} -q ${EXT_OPT} "${url_encode}" -O ${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt 2>"${header_file}"
-		if [ "$?" == "0" ]; then
+		run5 wget -S -t 3 "$@" -q "${url_encode}" -O "${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt" 2>"${header_file}"
+		if [ "$?" = "0" ]; then
 			return 0
 		fi
 		
 		# 下载失败，使用代理下载
 		echo_date "❌️直连下载订阅失败！尝试使用当前节点代理下载订阅！"
 		proxy_rule add "${DOMAIN_NAME}"
-		if [ "$?" == "0" ];then
+		if [ "$?" = "0" ];then
 			SUB_LAST_DOWNLOAD_MODE="proxy"
 			echo_date "✈️使用当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点：[$(sub_get_node_field_plain "${CURR_NODE}" name)]提供的网络下载..."
 			rm -f "${header_file}" >/dev/null 2>&1
-			run5 wget -S -t 3 ${UA_ARG} -q ${EXT_OPT} "${url_encode}" -O ${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt 2>"${header_file}"
+			wget_rc=0
+			run5 wget -S -t 3 "$@" -q "${url_encode}" -O "${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt" 2>"${header_file}" || wget_rc=$?
+			proxy_rule del "${DOMAIN_NAME}"
+			return "${wget_rc}"
 		else
 			echo_date "⚠️当前订阅链接域名：${DOMAIN_NAME}解析失败，结束wget订阅下载！"
 			return 1
 		fi
-		proxy_rule del "${DOMAIN_NAME}"
-	elif [ "${SUB_BY_PROXY}" == "1" ]; then
+	elif [ "${SUB_BY_PROXY}" = "1" ]; then
 		# 代理下载
 		proxy_rule add "${DOMAIN_NAME}"
-		if [ "$?" == "0" ];then
+		if [ "$?" = "0" ];then
 			SUB_LAST_DOWNLOAD_MODE="proxy"
 			echo_date "✈️使用当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点：[$(sub_get_node_field_plain "${CURR_NODE}" name)]提供的网络下载..."
 			rm -f "${header_file}" >/dev/null 2>&1
-			run5 wget -S -t 3 ${UA_ARG} -q ${EXT_OPT} "${url_encode}" -O ${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt 2>"${header_file}"
+			wget_rc=0
+			run5 wget -S -t 3 "$@" -q "${url_encode}" -O "${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt" 2>"${header_file}" || wget_rc=$?
+			proxy_rule del "${DOMAIN_NAME}"
+			return "${wget_rc}"
 		else
 			echo_date "⚠️当前订阅链接域名：${DOMAIN_NAME}解析失败，结束wget订阅下载！"
 			return 1
 		fi
-		proxy_rule del "${DOMAIN_NAME}"
-	elif [ "${SUB_BY_PROXY}" == "2" ]; then
+	elif [ "${SUB_BY_PROXY}" = "2" ]; then
 		# 直连下载
 		SUB_LAST_DOWNLOAD_MODE="direct"
 		echo_date "⬇️使用常规网络下载..."
 		rm -f "${header_file}" >/dev/null 2>&1
-		run5 wget -S -t 3 ${UA_ARG} -q ${EXT_OPT} "${url_encode}" -O ${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt 2>"${header_file}"
+		run5 wget -S -t 3 "$@" -q "${url_encode}" -O "${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt" 2>"${header_file}"
 		return $?
 	fi
 }
@@ -8099,6 +8108,198 @@ start_offline_update() {
 	echo_date "==================================================================="
 }
 
+# 创建本地导入的订阅配置 profile（enabled=false，避免全部同步误拉取空 URL）
+subprof_create_local_import_profile() {
+	local profile_name="$1"
+	local profile_id=""
+	local profile_key=""
+	local state_key=""
+	local normalized_json=""
+	local state_json=""
+	local jq_bin=""
+
+	profile_id="$(subprof_generate_profile_id 2>/dev/null)" || return 1
+	profile_key="$(subprof_profile_key "${profile_id}")" || return 1
+	state_key="$(subprof_state_key "${profile_id}")" || return 1
+	jq_bin="$(subprof_jq_bin 2>/dev/null)" || jq_bin="jq"
+
+	normalized_json="$(printf '%s' "{}" | "${jq_bin}" -c \
+		--arg id "${profile_id}" \
+		--arg name "${profile_name}" \
+		'{
+			version: 1,
+			id: $id,
+			name: $name,
+			url: "",
+			enabled: false,
+			subscribe_mode: "2",
+			download: { policy: "auto" },
+			ua: { mode: "fixed", preset: "default", custom: "" },
+			filter: { exclude: "", include: "", keep_info_node: true },
+			flags: { allow_insecure: false, node_log: true },
+			hy2: { up: "", dl: "", tfo_switch: "2", cg_opt: "bbr" },
+			schedule: {
+				enabled: false,
+				type: "1",
+				week: "1",
+				day: "7",
+				hour: "3",
+				minute: "5",
+				interval_value: "1",
+				interval_unit: "2",
+				custom_hours: ""
+			}
+		}')" || return 1
+
+	subprof_dbus_set_json_by_key "${profile_key}" "${normalized_json}" || return 1
+
+	state_json="$(printf '%s' "{}" | "${jq_bin}" -c \
+		--arg id "${profile_id}" \
+		'{version:1,id:$id,last_ok_ts:0,last_error_ts:0,last_error:"",last_url_hash:"",last_group:""}')" || true
+	subprof_dbus_set_json_by_key "${state_key}" "${state_json}" >/dev/null 2>&1 || true
+
+	subprof_add_profile_id "${profile_id}"
+	printf '%s\n' "${profile_id}"
+}
+
+# 从本地上传的 YAML / URI 配置文件导入节点
+start_yaml_file_import() {
+	local yaml_file="/tmp/upload/ss_yaml_upload.yaml"
+	local file_size=""
+	local profile_name="本地YAML导入"
+	local import_profile_id=""
+	local prev_profile_id="${SUB_ACTIVE_PROFILE_ID}"
+	local sub_tool=""
+	local jq_bin=""
+	local payload_kind="unknown"
+	local inspect_file="${DIR}/yaml_inspect.json"
+	local parsed_file="${DIR}/yaml_parsed_nodes.txt"
+	local pkg_type=""
+	local default_group="YAML导入"
+	local node_count="0"
+	local rc=0
+
+	echo_date "==================================================================="
+	echo_date "ℹ️通过本地 YAML 配置文件导入节点..."
+	mkdir -p "${DIR}"
+	rm -rf "${DIR}"/*
+
+	if [ -L "${yaml_file}" ]; then
+		echo_date "❌拒绝读取符号链接文件：${yaml_file}"
+		rm -f "${yaml_file}" >/dev/null 2>&1 || true
+		echo_date "==================================================================="
+		return 1
+	fi
+	if [ ! -f "${yaml_file}" ]; then
+		echo_date "❌未找到上传的 YAML 文件！"
+		echo_date "请确保文件已正确上传。"
+		echo_date "==================================================================="
+		return 1
+	fi
+
+	echo_date "📁找到上传的文件：${yaml_file}"
+
+	file_size=$(wc -c < "${yaml_file}" 2>/dev/null | tr -d ' ')
+	if [ -z "${file_size}" ] || ! printf '%s' "${file_size}" | grep -Eq '^[0-9]+$' || [ "${file_size}" -lt 10 ]; then
+		echo_date "❌文件内容为空或过小，无法解析。"
+		rm -f "${yaml_file}" >/dev/null 2>&1 || true
+		echo_date "==================================================================="
+		return 1
+	fi
+	if [ "${file_size}" -gt 4194304 ]; then
+		echo_date "❌文件过大（${file_size} 字节，超过 4MB 上限），拒绝解析。"
+		rm -f "${yaml_file}" >/dev/null 2>&1 || true
+		echo_date "==================================================================="
+		return 1
+	fi
+
+	echo_date "📊文件大小：${file_size} 字节"
+
+	import_profile_id="$(subprof_create_local_import_profile "${profile_name}" 2>/dev/null)" || import_profile_id=""
+	if [ -z "${import_profile_id}" ]; then
+		echo_date "⚠️创建订阅配置失败，节点将作为独立导入写入..."
+	else
+		echo_date "📋已创建订阅配置：${profile_name} (${import_profile_id})"
+	fi
+
+	SUB_ACTIVE_PROFILE_ID="${import_profile_id}"
+	sub_tool="$(pick_sub_tool 2>/dev/null)" || sub_tool=""
+	jq_bin="$(subprof_jq_bin 2>/dev/null)" || jq_bin="jq"
+
+	if [ -n "${sub_tool}" ]; then
+		echo_date "🔧使用 sub-tool 检测文件格式..."
+		if "${sub_tool}" inspect --input "${yaml_file}" > "${inspect_file}" 2>/dev/null; then
+			payload_kind="$("${jq_bin}" -r '.kind // ""' "${inspect_file}" 2>/dev/null)"
+			echo_date "📋文件格式检测：${payload_kind}"
+		fi
+		rm -f "${inspect_file}" >/dev/null 2>&1 || true
+	fi
+
+	pkg_type="$(dbus get ss_basic_pkg_type)"
+	[ -n "${pkg_type}" ] || pkg_type="full"
+
+	case "${payload_kind}" in
+	clash-yaml)
+		echo_date "✅检测到 Clash/Mihomo YAML 配置文件"
+		echo_date "🔍开始解析 Clash YAML 中的代理节点..."
+		sub_try_parse_uri_lines_with_tool "${yaml_file}" "${parsed_file}" "${default_group}" "yaml_import" "${pkg_type}" || rm -f "${parsed_file}" >/dev/null 2>&1
+		;;
+	uri-lines|base64-uri-lines)
+		echo_date "✅检测到 URI 列表格式"
+		sub_try_parse_uri_lines_with_tool "${yaml_file}" "${parsed_file}" "${default_group}" "yaml_import" "${pkg_type}" || rm -f "${parsed_file}" >/dev/null 2>&1
+		;;
+	*)
+		echo_date "⚠️未识别的文件格式：${payload_kind}"
+		echo_date "📋尝试作为 URI 列表解析..."
+		sub_try_parse_uri_lines_with_tool "${yaml_file}" "${parsed_file}" "${default_group}" "yaml_import" "${pkg_type}" || rm -f "${parsed_file}" >/dev/null 2>&1
+		;;
+	esac
+
+	echo_date "-------------------------------------------------------------------"
+	if [ -f "${parsed_file}" ] && [ -s "${parsed_file}" ]; then
+		node_count=$(wc -l < "${parsed_file}" 2>/dev/null | tr -d ' ')
+		echo_date "📊共解析出 ${node_count} 个节点"
+
+		sub_filter_offline_duplicate_nodes "${parsed_file}"
+		[ -f "${parsed_file}" ] && echo_date "ℹ️YAML 文件解析完毕，开始写入节点..."
+		SUB_FAST_APPEND=1
+		SUB_FAST_APPEND_REUSE=0
+		if [ -f "${parsed_file}" ] && json2skipd "yaml_parsed_nodes"; then
+			sub_after_nodes_written "${parsed_file}"
+			if [ -n "${import_profile_id}" ]; then
+				subprof_mark_state_success "${import_profile_id}" "local" "${default_group}" "upload" "local" "fixed" "default" >/dev/null 2>&1 || true
+				echo_date "📋节点已关联到订阅配置：${profile_name}"
+				echo_date "💡您可以在「订阅配置管理」中编辑此配置，设置订阅链接并启用自动更新。"
+			fi
+			echo_date "✅本地 YAML 文件节点导入成功！"
+		else
+			echo_date "❌节点写入失败！"
+			rc=1
+			if [ -n "${import_profile_id}" ]; then
+				subprof_remove_profile "${import_profile_id}" >/dev/null 2>&1 || true
+				echo_date "🧹已清理空的订阅配置。"
+			fi
+		fi
+	else
+		echo_date "❌YAML 文件解析失败，未找到可用的代理节点。"
+		echo_date "ℹ️请确保 YAML 文件包含标准的 Clash/Mihomo 代理配置（proxies 字段）。"
+		echo_date "ℹ️支持的格式："
+		echo_date "  - Clash/Mihomo YAML 配置文件（包含 proxies 字段）"
+		echo_date "  - URI 列表文件（每行一个 ss://、vmess:// 等链接）"
+		echo_date "  - Base64 编码的 URI 列表"
+		rc=1
+		if [ -n "${import_profile_id}" ]; then
+			subprof_remove_profile "${import_profile_id}" >/dev/null 2>&1 || true
+			echo_date "🧹已清理空的订阅配置。"
+		fi
+	fi
+
+	SUB_ACTIVE_PROFILE_ID="${prev_profile_id}"
+	rm -f "${yaml_file}" >/dev/null 2>&1 || true
+	echo_date "==================================================================="
+	return "${rc}"
+}
+
 SUB_SELECTED_PROFILE_ID=""
 if [ "$1" = "3" ] && [ -n "$2" ]; then
 	SUB_SELECTED_PROFILE_ID="$2"
@@ -8174,6 +8375,16 @@ case $SH_ARG in
 	true > $LOG_FILE
 	[ "${WEB_ACTION}" == "1" ] && http_response "$1"
 	start_offline_update | tee -a $LOG_FILE
+	echo XU6J03M6 | tee -a $LOG_FILE
+	unset_lock
+	;;
+5)
+	# 上传本地 YAML 配置文件导入节点
+	set_lock
+	true > $LOG_FILE
+	[ "${WEB_ACTION}" == "1" ] && http_response "$1"
+	start_yaml_file_import | tee -a $LOG_FILE
+	rm -f /tmp/upload/ss_yaml_upload.yaml >/dev/null 2>&1 || true
 	echo XU6J03M6 | tee -a $LOG_FILE
 	unset_lock
 	;;

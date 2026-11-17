@@ -708,7 +708,7 @@ platform_test(){
 						echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_ipq32"
 						exit_install 1
 						;;
-					"TUF_6500")
+					"TUF_6500"|"TUF-BE6500"|"TUF_BE6500")
 						echo_date "建议使用fancyss_ipq64_full或者fancyss_ipq64_lite！"		
 						echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_ipq64"
 						exit_install 1
@@ -772,7 +772,7 @@ platform_test(){
 						echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_ipq32"
 						exit_install 1
 						;;
-					"TUF_6500")
+					"TUF_6500"|"TUF-BE6500"|"TUF_BE6500")
 						echo_date "建议使用fancyss_ipq64_full或者fancyss_ipq64_lite！"		
 						echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_ipq64"
 						exit_install 1
@@ -833,7 +833,7 @@ platform_test(){
 						echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_ipq32"
 						exit_install 1
 						;;
-					"TUF_6500")
+					"TUF_6500"|"TUF-BE6500"|"TUF_BE6500")
 						echo_date "建议使用fancyss_ipq64_full或者fancyss_ipq64_lite！"		
 						echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_ipq64"
 						exit_install 1
@@ -892,7 +892,7 @@ platform_test(){
 						echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_ipq32"
 						exit_install 1
 						;;
-					"TUF_6500")
+					"TUF_6500"|"TUF-BE6500"|"TUF_BE6500")
 						echo_date "建议使用fancyss_ipq64_full或者fancyss_ipq64_lite！"
 						echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_ipq64"
 						exit_install 1
@@ -925,7 +925,7 @@ platform_test(){
 						echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_ipq32"
 						exit_install 1
 						;;
-					"TUF_6500")
+					"TUF_6500"|"TUF-BE6500"|"TUF_BE6500")
 						echo_date "建议使用fancyss_ipq64_full或者fancyss_ipq64_lite！"		
 						echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_ipq64"
 						exit_install 1
@@ -982,7 +982,7 @@ platform_test(){
 					"ZenWiFi_BD4")
 						echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，安装fancyss_${PKG_ARCH}_${PKG_TYPE}！"
 						;;
-					"TUF_6500")
+					"TUF_6500"|"TUF-BE6500"|"TUF_BE6500")
 						echo_date "建议使用fancyss_ipq64_full或者fancyss_ipq64_lite！"		
 						echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_ipq64"
 						exit_install 1
@@ -1043,7 +1043,7 @@ platform_test(){
 						echo_date "下载地址：https://github.com/hq450/fancyss_history_package/tree/master/fancyss_ipq32"
 						exit_install 1
 						;;
-					"TUF_6500")
+					"TUF_6500"|"TUF-BE6500"|"TUF_BE6500")
 						echo_date "内核：${KEL_VERS}，架构：${ROT_ARCH}，安装fancyss_${PKG_ARCH}_${PKG_TYPE}！"
 						;;
 					"TX-AX6000"|"TUF-AX4200Q"|"RT-AX57_Go"|"GS7"|"ZenWiFi_BT8P"|"GS7_Air"|"GS-BE7200X")
@@ -1760,7 +1760,7 @@ install_now(){
 		echo_date "检测/data分区剩余空间..."
 		local SPACE_DATA_AVAL1=$(df -Pk | awk '$NF == "/data" {print $4; exit}')
 		echo_date "/data分区剩余空间为：${SPACE_DATA_AVAL1}KB"
-		local _BINS="xray v2ray hysteria2 naive anytls-zig sslocal rss-local rss-tunnel rss-redir"
+		local _BINS="xray v2ray hysteria2 naive tuic-client anytls-zig sslocal rss-local rss-tunnel rss-redir"
 		for _BIN in ${_BINS}
 		do
 			if [ -f "/tmp/shadowsocks/bin/${_BIN}" ];then
@@ -1865,6 +1865,7 @@ install_now(){
 	[ ! -L "/koolshare/bin/rss-tunnel" ] && ln -sf /koolshare/bin/rss-local /koolshare/bin/rss-tunnel
 	[ ! -L "/koolshare/init.d/S99shadowsocks.sh" ] && ln -sf /koolshare/ss/ssconfig.sh /koolshare/init.d/S99shadowsocks.sh
 	[ ! -L "/koolshare/init.d/N99shadowsocks.sh" ] && ln -sf /koolshare/ss/ssconfig.sh /koolshare/init.d/N99shadowsocks.sh
+	[ ! -L "/koolshare/init.d/M99shadowsocks.sh" ] && ln -sf /koolshare/ss/ssconfig.sh /koolshare/init.d/M99shadowsocks.sh
 
 	# default values
 	eval $(dbus export ss)
