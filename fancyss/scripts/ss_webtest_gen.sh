@@ -22,7 +22,7 @@ wt_warn_xray_allow_insecure() {
 
 	if [ "${ai_val}" = "1" ] || [ "${ai_val}" = "true" ]; then
 		if [ -z "${pcs_val}" ]; then
-			msg="⚠️警告：节点#${node_id}(${proto_label})勾选了allowInsecure但未配置pinnedPeerCertSha256，Xray-core v26.6+已移除该字段，TLS握手将失败"
+			msg="⚠️警告：节点#${node_id}(${proto_label})勾选了allowInsecure但未配置pinnedPeerCertSha256，Xray-core v26.6+已移除该字段；自签名或无效证书会导致TLS握手失败。请配置证书指纹或有效证书。"
 			if type echo_date >/dev/null 2>&1; then
 				echo_date "${msg}" >&2
 			else

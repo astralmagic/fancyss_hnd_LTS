@@ -25,7 +25,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl file jq
+          sudo apt-get install -y curl file jq nodejs
 
       - name: Check shell entry points
         run: |
@@ -50,6 +50,7 @@ jobs:
         run: |
           python3 tests/test_p1_regressions.py -v
           python3 tests/test_p2_regressions.py -v
+          python3 tests/test_review_regressions.py -v
           python3 tests/test_anytls_integration.py -v
 
       - name: Check lazy node environment derivation

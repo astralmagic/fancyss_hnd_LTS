@@ -4930,6 +4930,9 @@ function upsert_subscription_profile_state(item) {
 function subscription_profile_is_enabled(item) {
 	return !item || item.enabled !== false;
 }
+function subscription_profile_can_sync(item) {
+	return !!item && subscription_profile_is_enabled(item) && /^https?:\/\//i.test(String(item.url || ""));
+}
 function parse_subscription_profile_record(raw) {
 	raw = $.trim(String(raw || ""));
 	if (!raw) {
@@ -5596,7 +5599,8 @@ function render_subscription_profiles_cards() {
 	for (var i = 0; i < subscribeProfilesState.length; i++) {
 		var item = subscribeProfilesState[i] || {};
 		var enabled = subscription_profile_is_enabled(item);
-		var host = get_subscription_profile_host(item.url || "");
+		var canSync = subscription_profile_can_sync(item);
+		var host = item.url ? get_subscription_profile_host(item.url) : "本地文件（填写订阅链接后可在线同步）";
 		var lastStatus = format_subscription_last_result(item);
 		var lastClass = item.last_error ? "warn" : (Number(item.last_ok_ts || 0) > 0 ? "ok" : "");
 		var scheduleText = item.schedule_enabled ? get_subscription_schedule_label(item) : "未启用";
@@ -5620,7 +5624,7 @@ function render_subscription_profiles_cards() {
 		}
 		html += '</div>';
 		html += '<div class="submgr-card-actions">';
-		html += '<a class="submgr-card-btn sync' + (enabled ? '' : ' disabled') + '" href="javascript:void(0);" onclick="event.stopPropagation();' + (enabled ? ('sync_subscription_profiles(\'' + htmlEscape(String(item.id || "")) + '\');') : '') + 'return false;">同步</a>';
+		html += '<a class="submgr-card-btn sync' + (canSync ? '' : ' disabled') + '" href="javascript:void(0);" onclick="event.stopPropagation();' + (canSync ? ('sync_subscription_profiles(\'' + htmlEscape(String(item.id || "")) + '\');') : '') + 'return false;">同步</a>';
 		html += '</div>';
 		html += '</div>';
 	}
@@ -6159,7 +6163,7 @@ function save_subscription_profile_from_editor(syncAfter) {
 		if (typeof layer != "undefined" && layer.msg) {
 			layer.msg("订阅配置已保存");
 		}
-		if (syncAfter && subscription_profile_is_enabled(optimisticProfile)) {
+		if (syncAfter && subscription_profile_can_sync(optimisticProfile)) {
 			sync_subscription_profiles(optimisticProfile.id);
 		}
 	};
@@ -6167,14 +6171,18 @@ function save_subscription_profile_from_editor(syncAfter) {
 		alert("请填写订阅别名。");
 		return false;
 	}
-	if (!payload.url || !/^https?:\/\//i.test(payload.url)) {
+	var isLocal = !!originalProfile && !originalProfile.url && !payload.url;
+	if (!isLocal && !/^https?:\/\//i.test(payload.url || "")) {
 		alert("请填写正确的 http(s) 订阅链接。");
 		return false;
 	}
 	if (!validate_subscription_custom_hours()) {
 		return false;
 	}
-	duplicated = find_subscription_profile_by_url(payload.url, payload.id);
+	if (isLocal) {
+		payload.schedule_enabled = false;
+	}
+	duplicated = payload.url ? find_subscription_profile_by_url(payload.url, payload.id) : null;
 	if (duplicated) {
 		alert("检测到相同订阅链接已添加：" + (duplicated.name || duplicated.id || "该订阅"));
 		return false;
@@ -6224,6 +6232,10 @@ function delete_subscription_profile(profileId) {
 	return false;
 }
 function sync_subscription_profiles(profileId) {
+	if (profileId && !subscription_profile_can_sync(subscribeProfileMap[profileId])) {
+		layer.msg("请先启用配置并填写 http(s) 订阅链接。");
+		return false;
+	}
 	var dbus_post = {};
 	db_ss["ss_basic_action"] = "13";
 	if (profileId) {

@@ -5214,6 +5214,31 @@ nodes_stats(){
 	echo_date "-----------------------------------"
 }
 
+sub_preserve_unsynced_profile_sources() {
+	local profile_id="" protected_ids="" file="" count="" source_tag="" label="" ret=0
+	[ -s "${LOCAL_SPLIT_META}" ] || return 0
+	for profile_id in $(subprof_list_profile_ids); do
+		if [ -z "$(subprof_profile_exec_tsv "${profile_id}")" ]; then
+			protected_ids="${protected_ids},${profile_id}"
+		fi
+	done
+	[ -n "${protected_ids}" ] || return 0
+	# 本地文件与已禁用配置没有参加在线同步，其节点仍属于有效配置。
+	while IFS='	' read -r file count source_tag label; do
+		[ -n "${file}" ] || continue
+		jq -s -e --arg ids "${protected_ids}," \
+			'any(.[]; (._profile_id // "") as $id | $id != "" and ($ids | contains("," + $id + ",")))' \
+			"${file}" >/dev/null 2>&1
+		ret=$?
+		case "${ret}" in
+		0) sub_mark_active_source_tag "${source_tag}" || return 1 ;;
+		1) ;; # 此来源没有受保护的配置节点。
+		*) return 1 ;; # 读取失败时不执行来源清理。
+		esac
+	done < "${LOCAL_SPLIT_META}"
+	return 0
+}
+
 remove_null(){
 	if [ "${SEQ_NU}" == "0" ];then
 		# 没有节点，不进行检查
@@ -7808,6 +7833,11 @@ start_node_subscribe(){
 		use_profiles=1
 		online_url_nu="${enabled_profile_count}"
 		echo_date "ℹ️检测到启用中的订阅配置：${online_url_nu} 个"
+	elif subprof_has_profiles; then
+		# 配置存在但没有在线任务时，不能回退旧版的空链接清理逻辑。
+		echo_date "ℹ️当前没有可同步的在线配置，保留本地文件和已禁用配置的节点。"
+		[ -z "${selected_profile_id}" ] || return 1
+		return 0
 	else
 		online_urls=$(sub_get_online_urls)
 		online_url_nu=$(printf '%s\n' "${online_urls}" | sed '/^$/d' | wc -l)
@@ -7962,8 +7992,12 @@ start_node_subscribe(){
 			echo_date "ℹ️当前为单订阅配置同步，跳过其它订阅来源的清理与缓存裁剪。"
 		else
 			echo_date "ℹ️订阅来源处理完毕，开始整理本次变更并清理失效来源..."
-			remove_null
-			sub_prune_source_identity "${ACTIVE_SOURCE_TAGS}"
+			if sub_preserve_unsynced_profile_sources; then
+				remove_null
+				sub_prune_source_identity "${ACTIVE_SOURCE_TAGS}"
+			else
+				echo_date "⚠️无法确认未同步配置的节点来源，跳过来源清理并保留现有节点。"
+			fi
 		fi
 	fi
 
@@ -8110,7 +8144,7 @@ start_offline_update() {
 	echo_date "==================================================================="
 }
 
-# 创建本地导入的订阅配置 profile（enabled=false，避免全部同步误拉取空 URL）
+# 本地配置启用节点；空 URL 由同步/计划任务入口排除。
 subprof_create_local_import_profile() {
 	local profile_name="$1"
 	local profile_id=""
@@ -8133,7 +8167,7 @@ subprof_create_local_import_profile() {
 			id: $id,
 			name: $name,
 			url: "",
-			enabled: false,
+			enabled: true,
 			subscribe_mode: "2",
 			download: { policy: "auto" },
 			ua: { mode: "fixed", preset: "default", custom: "" },

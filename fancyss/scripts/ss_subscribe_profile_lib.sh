@@ -396,12 +396,17 @@ subprof_write_profile_json() {
 
 	normalized="$(subprof_normalize_payload "${payload_json}")" || return 1
 	profile_url="$(printf '%s' "${normalized}" | "$(subprof_jq_bin)" -r '.url // empty' 2>/dev/null)"
-	[ -n "${profile_url}" ] || return 1
-	printf '%s' "${profile_url}" | grep -Eq '^https?://' || return 1
-
 	profile_id="$(printf '%s' "${normalized}" | "$(subprof_jq_bin)" -r '.id // empty' 2>/dev/null)"
 	[ -n "${profile_id}" ] || profile_id="$(subprof_generate_profile_id 2>/dev/null)"
 	subprof_valid_profile_id "${profile_id}" || return 1
+	if [ -z "${profile_url}" ]; then
+		# 仅允许编辑已存在的本地导入配置，包括旧版创建的禁用配置。
+		existing_json="$(subprof_dbus_get_json_by_key "$(subprof_profile_key "${profile_id}")" 2>/dev/null)" || return 1
+		printf '%s' "${existing_json}" | "$(subprof_jq_bin)" -e 'type == "object" and .url == ""' >/dev/null 2>&1 || return 1
+		normalized="$(printf '%s' "${normalized}" | "$(subprof_jq_bin)" -c '.schedule.enabled = false')" || return 1
+	else
+		printf '%s' "${profile_url}" | grep -Eqi '^https?://' || return 1
+	fi
 	for existing_id in $(subprof_list_profile_ids)
 	do
 		[ -n "${existing_id}" ] || continue
@@ -698,7 +703,7 @@ subprof_collect_enabled_profiles_tsv() {
 		[ -n "${row}" ] || continue
 		enabled="$(printf '%s' "${row}" | "$(subprof_jq_bin)" -r '.enabled // false' 2>/dev/null)"
 		[ "${enabled}" = "true" ] || continue
-		printf '%s' "${row}" | "$(subprof_jq_bin)" -r '[
+		printf '%s' "${row}" | "$(subprof_jq_bin)" -r 'select((.url // "") | test("^https?://"; "i")) | [
 			.id,
 			.name,
 			.url,
@@ -739,7 +744,7 @@ subprof_profile_exec_tsv() {
 	profile_json="$(subprof_dbus_get_json_by_key "${profile_key}" 2>/dev/null)" || return 1
 	[ -n "${profile_json}" ] || return 1
 	printf '%s' "${profile_json}" | "$(subprof_jq_bin)" -r '
-		if ((.enabled // true) == true) then
+		if (.enabled != false and ((.url // "") | test("^https?://"; "i"))) then
 			[
 				(.id // ""),
 				(.name // ""),
@@ -863,7 +868,7 @@ subprof_profile_schedule_tsv() {
 	profile_key="$(subprof_profile_key "${profile_id}")" || return 1
 	profile_json="$(subprof_dbus_get_json_by_key "${profile_key}" 2>/dev/null)" || return 1
 	[ -n "${profile_json}" ] || return 1
-	printf '%s' "${profile_json}" | "$(subprof_jq_bin)" -r '[
+	printf '%s' "${profile_json}" | "$(subprof_jq_bin)" -r 'select((.url // "") | test("^https?://"; "i")) | [
 		(if .enabled == null then true else .enabled end),
 		(if .schedule.enabled == null then true else .schedule.enabled end),
 		(.schedule.type // "1"),

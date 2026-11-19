@@ -926,6 +926,7 @@ wt_warn_xray_allow_insecure "7" "Trojan" "1" "" 2>&1
             "insert_if_not_exists",
             "get_shunt_ingress_mode",
             "init_shunt_chain_v4",
+            "start_ipv6_proxy_rules",
             "_start_iptables",
         )
         with tempfile.TemporaryDirectory() as tmp:
@@ -1191,14 +1192,14 @@ sub_after_nodes_written() {{ :; }}
             self.assertIn("超过 4MB", res_big.stdout)
             self.assertFalse(self.test_upload.exists())
 
-            # 4. Valid YAML import creates disabled profile + sets last_ok_ts + deletes upload
+            # 4. Valid YAML import creates enabled local profile + sets last_ok_ts + deletes upload
             self.test_upload.write_text("proxies:\n  - {name: testnode, type: ss}\n")
             res_ok = run_shell("bash", common_prefix + "\nstart_yaml_file_import\n", PATH=f"{bin_dir}:{os.environ['PATH']}")
             self.assertEqual(res_ok.returncode, 0, res_ok.stdout + res_ok.stderr)
             self.assertFalse(self.test_upload.exists())
             db_txt = db_file.read_text()
             self.assertIn("ss_subprof_ids=", db_txt)
-            # Check profile enabled == false and last_ok_ts > 0
+            # Check profile enabled == true and last_ok_ts > 0
             state_lines = [l for l in db_txt.splitlines() if l.startswith("ss_subprof_") and "_state=" in l]
             prof_lines = [l for l in db_txt.splitlines() if l.startswith("ss_subprof_") and not l.startswith("ss_subprof_ids=") and "_state=" not in l and "=" in l]
             self.assertEqual(len(prof_lines), 1)
@@ -1206,7 +1207,7 @@ sub_after_nodes_written() {{ :; }}
             import base64
             prof_json = json.loads(base64.b64decode(prof_lines[0].split("=", 1)[1]).decode())
             state_json = json.loads(base64.b64decode(state_lines[0].split("=", 1)[1]).decode())
-            self.assertFalse(prof_json["enabled"])
+            self.assertTrue(prof_json["enabled"])
             self.assertFalse(prof_json["schedule"]["enabled"])
             self.assertGreater(state_json["last_ok_ts"], 0)
 
