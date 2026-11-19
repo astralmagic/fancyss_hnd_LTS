@@ -20,6 +20,7 @@ WS_PIDFILE=/var/run/fancyss-websocketd.pid
 DNSC_PORT=53
 ISP_DNS1=""
 ISP_DNS2=""
+WAN_IPADDR=""
 lan_ipaddr=""
 ip_prefix_hex=""
 WAN_ACTION=""
@@ -42,15 +43,66 @@ unset_lock() {
 }
 
 refresh_runtime_context() {
+	local local_ver=""
 	[ -n "${THREAD}" ] || THREAD=$(grep -c '^processor' /proc/cpuinfo)
-	dbus set ss_basic_version_local=$(cat /koolshare/ss/version)
-	ISP_DNS1=$(nvram get wan0_dns | sed 's/ /\n/g' | grep -v 0.0.0.0 | grep -v 127.0.0.1 | sed -n 1p | grep -E "([0-9]{1,3}[\.]){3}[0-9]{1,3}|:")
-	ISP_DNS2=$(nvram get wan0_dns | sed 's/ /\n/g' | grep -v 0.0.0.0 | grep -v 127.0.0.1 | sed -n 2p | grep -E "([0-9]{1,3}[\.]){3}[0-9]{1,3}|:")
+	local_ver="$(cat /koolshare/ss/version 2>/dev/null)"
+	if [ -n "${local_ver}" ] && [ "${ss_basic_version_local}" != "${local_ver}" ]; then
+		dbus set ss_basic_version_local="${local_ver}"
+		ss_basic_version_local="${local_ver}"
+	fi
+	ISP_DNS1=$(nvram get wan0_dns | tr ' ' '\n' | grep -v 0.0.0.0 | grep -v 127.0.0.1 | sed -n 1p | grep -E "([0-9]{1,3}[\.]){3}[0-9]{1,3}|:")
+	ISP_DNS2=$(nvram get wan0_dns | tr ' ' '\n' | grep -v 0.0.0.0 | grep -v 127.0.0.1 | sed -n 2p | grep -E "([0-9]{1,3}[\.]){3}[0-9]{1,3}|:")
+	WAN_IPADDR=$(nvram get wan0_ipaddr 2>/dev/null)
 	lan_ipaddr=$(nvram get lan_ipaddr)
 	ip_prefix_hex=$(nvram get lan_ipaddr | awk -F "." '{printf ("0x%02x", $1)} {printf ("%02x", $2)} {printf ("%02x", $3)} {printf ("00/0xffffff00\n")}')
 	WAN_ACTION=$(ps | grep /jffs/scripts/wan-start | grep -v grep)
 	NAT_ACTION=$(ps | grep /jffs/scripts/nat-start | grep -v grep)
 	WEB_ACTION=$(ps | grep "ss_config.sh" | grep -v grep)
+}
+
+add_wan_bypass_ips_to_ignlist() {
+	local _ip=""
+	for _ip in ${ISP_DNS1} ${ISP_DNS2}; do
+		[ -n "${_ip}" ] || continue
+		case "${_ip}" in
+		*:*)
+			ipset -! add ignlist6 "${_ip}" >/dev/null 2>&1 || true
+			;;
+		*)
+			if printf '%s' "${_ip}" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+				if ! ipset -q test router "${_ip}" >/dev/null 2>&1; then
+					ipset -! add ignlist "${_ip}" >/dev/null 2>&1 || true
+				fi
+			fi
+			;;
+		esac
+	done
+	if [ -n "${WAN_IPADDR}" ]; then
+		case "${WAN_IPADDR}" in
+		*:*)
+			ipset -! add ignlist6 "${WAN_IPADDR}" >/dev/null 2>&1 || true
+			;;
+		*)
+			if printf '%s' "${WAN_IPADDR}" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+				ipset -! add ignlist "${WAN_IPADDR}" >/dev/null 2>&1 || true
+			fi
+			;;
+		esac
+	fi
+}
+
+warn_xray_allow_insecure_removed() {
+	local proto_label="$1"
+	local ai_val="$2"
+	local pcs_val="$3"
+	if [ "${ai_val}" = "1" ] || [ "${ai_val}" = "true" ]; then
+		if [ -z "${pcs_val}" ]; then
+			echo_date "⚠️警告：当前${proto_label}节点勾选了跳过证书验证(allowInsecure)，但未配置pinnedPeerCertSha256！"
+			echo_date "⚠️Xray-core v26.6+ 已彻底移除 allowInsecure，自签/过期证书连接将直接握手失败；请改用有效证书或填写 pinnedPeerCertSha256 / verifyPeerCertByName。"
+		else
+			echo_date "ℹ️提示：当前${proto_label}节点已配置 pinnedPeerCertSha256，新版 Xray 将忽略 allowInsecure 并按证书指纹校验。"
+		fi
+	fi
 }
 
 normalize_ss2022_password() {
@@ -761,11 +813,15 @@ prepare_system() {
 	# 2. from merlin fw 386.4, jitterentropy-rngd was replaced by haveged, so havege form fancyss should not be used
 	# 3. newer asus fw or asus_ks_mod fw like GT-AX6000 use jitterentropy-rngd, so havege form fancyss should not be used
 	# 4. older merlin or asus_ks_mod fw do not have jitterentropy-rngd or haveged, so havege form fancyss should be used
-	if [ -z "$(pidof jitterentropy-rngd)" -a -z "$(pidof haveged)" -a -f "/koolshare/bin/haveged" ];then
-		# run haveged form fancyss when there are not entropy software running
-		echo_date "启动haveged，为系统提供更多的可用熵！"
-		run /koolshare/bin/haveged -w 1024 >/dev/null 2>&1
-	fi
+	case "${LINUX_VER}" in
+	26|41)
+		if [ -z "$(pidof jitterentropy-rngd)" -a -z "$(pidof haveged)" -a -f "/koolshare/bin/haveged" ];then
+			# run haveged form fancyss when there are not entropy software running
+			echo_date "启动haveged，为系统提供更多的可用熵！"
+			run /koolshare/bin/haveged -w 1024 >/dev/null 2>&1
+		fi
+		;;
+	esac
 
 	# 9. 用户自定义的dns不需要，新固件这里已经不管用了
 	if [ -n "$(nvram get dhcp_dns1_x)" ]; then
@@ -1297,7 +1353,7 @@ kill_process() {
 	local haveged_pid=$(ps |grep "/koolshare/bin/haveged"|grep -v grep|awk '{print $1}')
 	if [ -n "${haveged_pid}" ]; then
 		echo_date "关闭haveged进程..."
-		killall -9 ${haveged_pid} >/dev/null 2>&1
+		kill -9 ${haveged_pid} >/dev/null 2>&1
 	fi
 
 	local SOCAT_PID=$(ps | grep -E "socat" | grep -E "2055|2056" | awk '{print $1}')
@@ -1335,7 +1391,9 @@ kill_process() {
 		echo_date "关闭obfs-local进程..."
 		killall obfs-local
 	fi
-	rm -f /koolshare/ss/start-obfs.sh >/dev/null 2>&1
+	if [ "${ACTION}" = "stop" ] || [ "${ss_basic_enable}" != "1" ] || [ "${ss_basic_mode}" = "7" ] || [ "${ss_basic_type}" != "0" ] || [ "${ss_basic_ss_obfs}" != "tls" ]; then
+		rm -f /koolshare/ss/start-obfs.sh >/dev/null 2>&1
+	fi
 	
 	# close tcp_fastopen
 	if [ "${LINUX_VER}" != "26" ]; then
@@ -3232,6 +3290,7 @@ add_white_black() {
 
 	ipset -! add ignlist6 ::1/128 >/dev/null 2>&1
 	ipset -! add ignlist6 fe80::/10 >/dev/null 2>&1
+	add_wan_bypass_ips_to_ignlist
 	
 	# {black_list}, telegram ip
 	if [ "${ss_basic_mode}" != "6" ]; then
@@ -3290,7 +3349,7 @@ add_white_black() {
 
 	# {white_list}, white ip
 	[ -n "${ISP_DNS1}" ] && ISP_DNS_a="${ISP_DNS1}" || ISP_DNS_a=""
-	[ -n "${IFIP_DNS2}" ] && ISP_DNS_b="${ISP_DNS2}" || ISP_DNS_b=""
+	[ -n "${ISP_DNS2}" ] && ISP_DNS_b="${ISP_DNS2}" || ISP_DNS_b=""
 	local ALL_NODE_DOMAINS=$(dbus list ssconf|grep _server_|awk -F"=" '{print $NF}'|sort -u|grep -E "([0-9]{1,3}[\.]){3}[0-9]{1,3}")
 	ss_wan_white_ip=$(echo ${ss_wan_white_ip} | base64_decode | sed '/\#/d')
 	echo_date "应用IP/CIDR白名单"
@@ -3352,6 +3411,7 @@ create_dnsmasq_conf() {
 auto_start() {
 	[ ! -L "/koolshare/init.d/S99shadowsocks.sh" ] && ln -sf /koolshare/ss/ssconfig.sh /koolshare/init.d/S99shadowsocks.sh
 	[ ! -L "/koolshare/init.d/N99shadowsocks.sh" ] && ln -sf /koolshare/ss/ssconfig.sh /koolshare/init.d/N99shadowsocks.sh
+	[ ! -L "/koolshare/init.d/M99shadowsocks.sh" ] && ln -sf /koolshare/ss/ssconfig.sh /koolshare/init.d/M99shadowsocks.sh
 }
 
 start_ssr_redir() {
@@ -3683,8 +3743,8 @@ append_hy2_finalmask(){
 }
 
 creat_vmess_json() {
-	if [ -z "{WEB_ACTION}" ]; then
-		if [ -n "${WAN_ACTION}" ]; then
+	if [ -z "${WEB_ACTION}" ]; then
+		if [ -n "${WAN_ACTION}" ] && [ -s "${VMESS_CONFIG_FILE}" ]; then
 			echo_date "检测到网络拨号/开机触发启动，不创建vmess配置文件，使用上次的配置文件！"
 			return 0
 		fi
@@ -3759,6 +3819,7 @@ creat_vmess_json() {
 		fi
 
 		if [ "${ss_basic_v2ray_network_security}" == "tls" ];then
+			warn_xray_allow_insecure_removed "VMess" "${ss_basic_v2ray_network_security_ai}" ""
 			local tls="{
 					\"alpn\": ${apln}
 					,\"serverName\": $(get_value_null $ss_basic_v2ray_network_security_sni)
@@ -3942,6 +4003,9 @@ creat_vmess_json() {
 	else
 		echo_date "使用自定义的${VCORE_NAME} json配置文件..."
 		echo "$ss_basic_v2ray_json" | base64_decode >"$VMESS_CONFIG_TEMP"
+		if grep -Eq '"allowInsecure"[[:space:]]*:[[:space:]]*true' "$VMESS_CONFIG_TEMP"; then
+			echo_date "⚠️警告：检测到自定义JSON配置包含 allowInsecure: true，新版 Xray-core 已移除该字段，可能导致配置测试或TLS握手失败，请改用 pinnedPeerCertSha256！"
+		fi
 		local OB=$(cat "$VMESS_CONFIG_TEMP" | run jq .outbound)
 		local OBS=$(cat "$VMESS_CONFIG_TEMP" | run jq .outbounds)
 
@@ -4049,13 +4113,13 @@ creat_vmess_json() {
 creat_xray_ss_json() {
 	if [ -z "${WEB_ACTION}" ]; then
 		# 非web提交
-		if [ -n "${WAN_ACTION}" ]; then
+		if [ -n "${WAN_ACTION}" ] && [ -s "${SS_CONFIG_FILE}" ] && { [ "${ss_basic_ss_obfs}" != "tls" ] || [ -x "/koolshare/ss/start-obfs.sh" ]; }; then
 			echo_date "检测到网络拨号/开机触发启动，不创建$(__get_type_abbr_name)配置文件，使用上次的配置文件！"
 			start_ss_obfs_helper
 			return 0
 		fi
 	else
-		echo_date "创建$(__get_type_abbr_name)节点配置文件到${VLESS_CONFIG_FILE}"
+		echo_date "创建$(__get_type_abbr_name)节点配置文件到${SS_CONFIG_FILE}"
 	fi
 	rm -f /koolshare/ss/start-obfs.sh >/dev/null 2>&1
 
@@ -4214,8 +4278,8 @@ creat_xray_ss_json() {
 }
 
 creat_vless_json() {
-	if [ -z "{WEB_ACTION}" ]; then
-		if [ -n "${WAN_ACTION}" ]; then
+	if [ -z "${WEB_ACTION}" ]; then
+		if [ -n "${WAN_ACTION}" ] && [ -s "${VLESS_CONFIG_FILE}" ]; then
 			echo_date "检测到网络拨号/开机触发启动，不创建$(__get_type_abbr_name)配置文件，使用上次的配置文件！"
 			return 0
 		fi
@@ -4294,6 +4358,7 @@ creat_vless_json() {
 		fi
 
 		if [ "${ss_basic_xray_network_security}" == "tls" ];then
+			warn_xray_allow_insecure_removed "Xray(${ss_basic_xray_prot})" "${ss_basic_xray_network_security_ai}" "${ss_basic_xray_pcs}"
 			if [ -z "${ss_basic_xray_fingerprint}" ];then
 				echo_date "fingerprint为空，默认使用chrome作为指纹"
 				ss_basic_xray_fingerprint="chrome"
@@ -4532,6 +4597,9 @@ ${xray_user_json}
 	else
 		echo_date "使用自定义的Xray json配置文件..."
 		echo "$ss_basic_xray_json" | base64_decode >"$VLESS_CONFIG_TEMP"
+		if grep -Eq '"allowInsecure"[[:space:]]*:[[:space:]]*true' "$VLESS_CONFIG_TEMP"; then
+			echo_date "⚠️警告：检测到自定义JSON配置包含 allowInsecure: true，新版 Xray-core 已移除该字段，可能导致配置测试或TLS握手失败，请改用 pinnedPeerCertSha256！"
+		fi
 		local OB=$(cat "$VLESS_CONFIG_TEMP" | run jq .outbound)
 		local OBS=$(cat "$VLESS_CONFIG_TEMP" | run jq .outbounds)
 
@@ -4710,7 +4778,7 @@ start_xray() {
 creat_trojan_json(){
 	# do not create json file on start
 	if [ -z "${WEB_ACTION}" ]; then
-		if [ -n "${WAN_ACTION}" ]; then
+		if [ -n "${WAN_ACTION}" ] && [ -s "${TROJAN_CONFIG_FILE}" ]; then
 			echo_date "检测到网络拨号/开机触发启动，不创建$(__get_type_abbr_name)配置文件，使用上次的配置文件！"
 			return 0
 		fi
@@ -4721,6 +4789,7 @@ creat_trojan_json(){
 	# trojan协议由xray来运行
 	rm -rf "${TROJAN_CONFIG_TEMP}"
 	rm -rf "${TROJAN_CONFIG_FILE}"
+	warn_xray_allow_insecure_removed "Trojan" "${ss_basic_trojan_ai}" "${ss_basic_trojan_pcs}"
 	# log area
 	cat >"${TROJAN_CONFIG_TEMP}" <<-EOF
 		{
@@ -4841,7 +4910,7 @@ start_trojan(){
 creat_hy2_json(){
 	# do not create json file on start
 	if [ -z "${WEB_ACTION}" ]; then
-		if [ -n "${WAN_ACTION}" ]; then
+		if [ -n "${WAN_ACTION}" ] && [ -s "${HY2_CONFIG_FILE}" ]; then
 			echo_date "检测到网络拨号/开机触发启动，不创建$(__get_type_abbr_name)配置文件，使用上次的配置文件！"
 			return 0
 		fi
@@ -4852,6 +4921,7 @@ creat_hy2_json(){
 	# hysteria2协议由xray来运行
 	rm -rf "${HY2_CONFIG_TEMP}"
 	rm -rf "${HY2_CONFIG_FILE}"
+	warn_xray_allow_insecure_removed "Hysteria2" "${ss_basic_hy2_ai}" "${ss_basic_hy2_pcs}"
 	
 	# log area
 	cat >"${HY2_CONFIG_TEMP}" <<-EOF
@@ -6004,6 +6074,9 @@ flush_iptables() {
 		export XTABLES_LIBDIR=/tmp/.xt
 	fi
 
+	# AnyTLS 与 merlin-box 同时运行时，先移除上一次启动留下的 TCP 旁路规则。
+	remove_anytls_merlinbox_compat
+
 	: > "${restore_v4}" || true
 	: > "${restore_v6}" || true
 	flush_iptables_restore_append iptables nat "SHADOWSOCKS|3333" "清除iptables nat规则..." "${restore_v4}" && need_v4="1"
@@ -6213,6 +6286,59 @@ append_if_not_exists_with_cmd() {
 	fi
 }
 
+remove_anytls_merlinbox_compat_one() {
+	local cmd="$1"
+	local proxy_chain="$2"
+	local bypass_chain="$3"
+
+	while "${cmd}" -t mangle -C "${proxy_chain}" -j "${bypass_chain}" >/dev/null 2>&1; do
+		"${cmd}" -t mangle -D "${proxy_chain}" -j "${bypass_chain}" >/dev/null 2>&1 || break
+	done
+	"${cmd}" -t mangle -F "${bypass_chain}" >/dev/null 2>&1
+	"${cmd}" -t mangle -X "${bypass_chain}" >/dev/null 2>&1
+}
+
+remove_anytls_merlinbox_compat() {
+	remove_anytls_merlinbox_compat_one iptables MERLINKBOX_PROXY FSS_ANYTLS_MB4
+	remove_anytls_merlinbox_compat_one ip6tables MERLINKBOX_PROXY_V6 FSS_ANYTLS_MB6
+}
+
+prepare_anytls_merlinbox_compat() {
+	local detected="0"
+
+	if [ "${ss_basic_type}" != "9" ]; then
+		remove_anytls_merlinbox_compat
+		return 0
+	fi
+
+	# merlin-box 在 mangle PREROUTING 中先于 fancyss 的 nat REDIRECT 执行 TPROXY。
+	# AnyTLS 只接管 TCP；UDP 仍交由 merlin-box 处理。
+	if iptables -t mangle -C PREROUTING -i br+ -j MERLINKBOX_PROXY >/dev/null 2>&1; then
+		ensure_chain_with_cmd iptables mangle FSS_ANYTLS_MB4 || return 1
+		iptables -t mangle -F FSS_ANYTLS_MB4 >/dev/null 2>&1 || return 1
+		iptables -t mangle -A FSS_ANYTLS_MB4 -p tcp -j ACCEPT >/dev/null 2>&1 || return 1
+		if ! iptables -t mangle -C MERLINKBOX_PROXY -j FSS_ANYTLS_MB4 >/dev/null 2>&1; then
+			iptables -t mangle -I MERLINKBOX_PROXY 1 -j FSS_ANYTLS_MB4 >/dev/null 2>&1 || return 1
+		fi
+		detected="1"
+	fi
+
+	if ip6tables -t mangle -C PREROUTING -i br+ -j MERLINKBOX_PROXY_V6 >/dev/null 2>&1; then
+		ensure_chain_with_cmd ip6tables mangle FSS_ANYTLS_MB6 || return 1
+		ip6tables -t mangle -F FSS_ANYTLS_MB6 >/dev/null 2>&1 || return 1
+		ip6tables -t mangle -A FSS_ANYTLS_MB6 -p tcp -j ACCEPT >/dev/null 2>&1 || return 1
+		if ! ip6tables -t mangle -C MERLINKBOX_PROXY_V6 -j FSS_ANYTLS_MB6 >/dev/null 2>&1; then
+			ip6tables -t mangle -I MERLINKBOX_PROXY_V6 1 -j FSS_ANYTLS_MB6 >/dev/null 2>&1 || return 1
+		fi
+		detected="1"
+	fi
+
+	if [ "${detected}" = "1" ]; then
+		echo_date "检测到 merlin-box TPROXY：AnyTLS 的 TCP 流量交由 fancyss 处理，UDP 仍由 merlin-box 处理。"
+	fi
+	return 0
+}
+
 insert_if_not_exists() {
 	table="$1"
 	shift
@@ -6255,8 +6381,10 @@ init_shunt_chain_v4() {
 	if [ "${ingress_mode}" = "5" ]; then
 		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set white_list dst -j RETURN
 		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -j REDIRECT --to-ports 3333
-		append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set white_list dst -j RETURN
-		append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		if [ "${mangle}" = "1" ]; then
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set white_list dst -j RETURN
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		fi
 		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set white_list dst -j RETURN
 		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -j REJECT --reject-with icmp-port-unreachable
 	else
@@ -6265,11 +6393,13 @@ init_shunt_chain_v4() {
 		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set chnroute dst -j RETURN
 		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set white_list dst -j RETURN
 		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -j REDIRECT --to-ports 3333
-		append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
-		append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set chnlist dst -j RETURN
-		append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set chnroute dst -j RETURN
-		append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set white_list dst -j RETURN
-		append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		if [ "${mangle}" = "1" ]; then
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set chnlist dst -j RETURN
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set chnroute dst -j RETURN
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set white_list dst -j RETURN
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		fi
 		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set black_list dst -j REJECT --reject-with icmp-port-unreachable
 		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set chnlist dst -j RETURN
 		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set chnroute dst -j RETURN
@@ -6288,8 +6418,10 @@ init_shunt_chain_v6() {
 	if [ "${ingress_mode}" = "5" ]; then
 		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -m set --match-set white_list6 dst -j RETURN || return 1
 		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -j REDIRECT --to-ports ${tproxy_port6} || return 1
-		append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set white_list6 dst -j RETURN || return 1
-		append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -j TPROXY --on-port ${tproxy_port6} --tproxy-mark 0x07 || return 1
+		if [ "${mangle}" = "1" ]; then
+			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set white_list6 dst -j RETURN || return 1
+			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -j TPROXY --on-port ${tproxy_port6} --tproxy-mark 0x07 || return 1
+		fi
 		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -m set --match-set white_list6 dst -j RETURN || return 1
 		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -j REJECT --reject-with icmp6-port-unreachable || return 1
 	else
@@ -6298,11 +6430,13 @@ init_shunt_chain_v6() {
 		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -m set --match-set chnroute6 dst -j RETURN || return 1
 		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -m set --match-set white_list6 dst -j RETURN || return 1
 		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -j REDIRECT --to-ports ${tproxy_port6} || return 1
-		append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set black_list6 dst -j TPROXY --on-port ${tproxy_port6} --tproxy-mark 0x07 || return 1
-		append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set chnlist6 dst -j RETURN || return 1
-		append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set chnroute6 dst -j RETURN || return 1
-		append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set white_list6 dst -j RETURN || return 1
-		append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -j TPROXY --on-port ${tproxy_port6} --tproxy-mark 0x07 || return 1
+		if [ "${mangle}" = "1" ]; then
+			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set black_list6 dst -j TPROXY --on-port ${tproxy_port6} --tproxy-mark 0x07 || return 1
+			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set chnlist6 dst -j RETURN || return 1
+			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set chnroute6 dst -j RETURN || return 1
+			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set white_list6 dst -j RETURN || return 1
+			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -j TPROXY --on-port ${tproxy_port6} --tproxy-mark 0x07 || return 1
+		fi
 		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -m set --match-set black_list6 dst -j REJECT --reject-with icmp6-port-unreachable || return 1
 		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -m set --match-set chnlist6 dst -j RETURN || return 1
 		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -m set --match-set chnroute6 dst -j RETURN || return 1
@@ -6312,6 +6446,11 @@ init_shunt_chain_v6() {
 }
 
 _start_iptables() {
+	if ! prepare_anytls_merlinbox_compat; then
+		echo_date "错误：配置 AnyTLS 与 merlin-box 的透明代理兼容规则失败。"
+		return 1
+	fi
+
 	#----------------------BASIC RULES---------------------
 	echo_date "写入iptables规则到nat表中..."
 	local VLAN_INDEXS=$(ifconfig | grep -E "^br" | awk '{print $1}' | sed 's/^br//g')
@@ -6393,13 +6532,15 @@ _start_iptables() {
 	append_if_not_exists nat -A SHADOWSOCKS_HOM -p tcp -m set --match-set white_list dst -j RETURN
 
 	#-----------------------FOR TPROXY---------------------
-	load_tproxy
-	if [ -z "$(ip rule show table 310 2>/dev/null)" ];then
-		ip rule add fwmark 0x07 table 310
-	fi
-	
-	if [ -z "$(ip route show table 310 2>/dev/null)" ];then
-		ip route add local 0.0.0.0/0 dev lo table 310
+	if [ "${mangle}" = "1" ]; then
+		load_tproxy
+		if [ -z "$(ip rule show table 310 2>/dev/null)" ];then
+			ip rule add fwmark 0x07 table 310
+		fi
+		
+		if [ -z "$(ip route show table 310 2>/dev/null)" ];then
+			ip route add local 0.0.0.0/0 dev lo table 310
+		fi
 	fi
 
 	# 创建游戏模式udp rule
@@ -6410,61 +6551,71 @@ _start_iptables() {
 
 	# 创建gfw模式udp rule
 	ensure_chain mangle SHADOWSOCKS_GFW
-	# {white_list} 直连
-	append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set white_list dst -j RETURN
-	# {black_list} 代理
-	append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
-	# {gfwlist} 代理
-	append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set gfwlist dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
-	# {rotlist} 代理
-	append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set router dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
+	if [ "${mangle}" = "1" ]; then
+		# {white_list} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set white_list dst -j RETURN
+		# {black_list} 代理
+		append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		# {gfwlist} 代理
+		append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set gfwlist dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		# {rotlist} 代理
+		append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set router dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
+	fi
 
 	# 创建白名单模式udp rule
 	ensure_chain mangle SHADOWSOCKS_CHN
-	# {black_list} 代理
-	append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
-	# {chnlist} 直连
-	append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set chnlist dst -j RETURN
-	# {chnroute} 直连
-	append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set chnroute dst -j RETURN
-	# {white_list} 直连
-	append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set white_list dst -j RETURN
-	# {剩余流量} 代理
-	append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+	if [ "${mangle}" = "1" ]; then
+		# {black_list} 代理
+		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		# {chnlist} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set chnlist dst -j RETURN
+		# {chnroute} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set chnroute dst -j RETURN
+		# {white_list} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set white_list dst -j RETURN
+		# {剩余流量} 代理
+		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+	fi
 
 	# 创建游戏模式udp rule
 	ensure_chain mangle SHADOWSOCKS_GAM
-	# {black_list} 代理
-	append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
-	# {chnlist} 直连
-	append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set chnlist dst -j RETURN
-	# {chnroute} 直连
-	append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set chnroute dst -j RETURN
-	# {white_list} 直连
-	append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set white_list dst -j RETURN
-	# {剩余流量} 代理
-	append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+	if [ "${mangle}" = "1" ]; then
+		# {black_list} 代理
+		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		# {chnlist} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set chnlist dst -j RETURN
+		# {chnroute} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set chnroute dst -j RETURN
+		# {white_list} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set white_list dst -j RETURN
+		# {剩余流量} 代理
+		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+	fi
 
 	# 创建glo模式udp rule
 	ensure_chain mangle SHADOWSOCKS_GLO
-	# {white_list} 直连
-	append_if_not_exists mangle -A SHADOWSOCKS_GLO -p udp -m set --match-set white_list dst -j RETURN
-	# {剩余流量} 代理
-	append_if_not_exists mangle -A SHADOWSOCKS_GLO -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+	if [ "${mangle}" = "1" ]; then
+		# {white_list} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_GLO -p udp -m set --match-set white_list dst -j RETURN
+		# {剩余流量} 代理
+		append_if_not_exists mangle -A SHADOWSOCKS_GLO -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+	fi
 
 	echo_date "创建xray分流模式专用链，入口策略：$( [ "$(get_shunt_ingress_mode)" = "5" ] && echo 全量引流 || echo 大陆白名单引流 )"
 	init_shunt_chain_v4
 
 	# 创建回国模式udp rule
 	ensure_chain mangle SHADOWSOCKS_HOM
-	# {black_list} 代理
-	append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
-	# {gfwlist} 直连
-	append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -m set --match-set gfwlist dst -j RETURN
-	# {white_list} 直连
-	append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -m set --match-set white_list dst -j RETURN
-	# {剩余流量} 代理
-	append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+	if [ "${mangle}" = "1" ]; then
+		# {black_list} 代理
+		append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		# {gfwlist} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -m set --match-set gfwlist dst -j RETURN
+		# {white_list} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -m set --match-set white_list dst -j RETURN
+		# {剩余流量} 代理
+		append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+	fi
 	
 	#-----------------------FOR FILTER UDP443---------------------
 	# 创建过滤 udp rule
@@ -6534,8 +6685,9 @@ _start_iptables() {
 		append_if_not_exists nat -A OUTPUT -p tcp -m set --match-set router dst -j REDIRECT --to-ports 3333
 
 		# make sure these match go proxy inside router
-		# append_if_not_exists mangle -A OUTPUT -p udp -m set --match-set router dst -j MARK --set-mark 0x07
-		append_if_not_exists mangle -A OUTPUT -p udp -m set --match-set router dst -m udp --dport 53 -j MARK --set-mark 0x7/0xffffffff
+		if [ "${mangle}" = "1" ]; then
+			append_if_not_exists mangle -A OUTPUT -p udp -m set --match-set router dst -m udp --dport 53 -j MARK --set-mark 0x7/0xffffffff
+		fi
 	fi
 	append_if_not_exists nat -A OUTPUT -p tcp -m mark --mark "$ip_prefix_hex" -j SHADOWSOCKS_EXT
 
@@ -6653,46 +6805,58 @@ _start_ipv6_iptables() {
 	append_if_not_exists6 nat -A SHADOWSOCKS6_HOM -p tcp -m set --match-set white_list6 dst -j RETURN || return 1
 
 	#-----------------------FOR TPROXY UDP---------------------
-	load_tproxy
-	if [ -z "$(ip -6 rule show table 310 2>/dev/null | grep "fwmark 0x7")" ];then
-		ip -6 rule add fwmark 0x07 table 310 >/dev/null 2>&1 || return 1
-	fi
-	if [ -z "$(ip -6 route show table 310 2>/dev/null | grep "^local ::/0 dev lo")" ];then
-		ip -6 route add local ::/0 dev lo table 310 >/dev/null 2>&1 || return 1
+	if [ "${mangle}" = "1" ]; then
+		load_tproxy
+		if [ -z "$(ip -6 rule show table 310 2>/dev/null | grep "fwmark 0x7")" ];then
+			ip -6 rule add fwmark 0x07 table 310 >/dev/null 2>&1 || return 1
+		fi
+		if [ -z "$(ip -6 route show table 310 2>/dev/null | grep "^local ::/0 dev lo")" ];then
+			ip -6 route add local ::/0 dev lo table 310 >/dev/null 2>&1 || return 1
+		fi
 	fi
 
 	ensure_chain6 mangle SHADOWSOCKS6 || return 1
 	append_if_not_exists6 mangle -A SHADOWSOCKS6 -p udp -m set --match-set ignlist6 dst -j RETURN || return 1
 
 	ensure_chain6 mangle SHADOWSOCKS6_GFW || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_GFW -p udp -m set --match-set white_list6 dst -j RETURN || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_GFW -p udp -m set --match-set black_list6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_GFW -p udp -m set --match-set gfwlist6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_GFW -p udp -m set --match-set router6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+	if [ "${mangle}" = "1" ]; then
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GFW -p udp -m set --match-set white_list6 dst -j RETURN || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GFW -p udp -m set --match-set black_list6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GFW -p udp -m set --match-set gfwlist6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GFW -p udp -m set --match-set router6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+	fi
 
 	ensure_chain6 mangle SHADOWSOCKS6_CHN || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -m set --match-set black_list6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -m set --match-set chnlist6 dst -j RETURN || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -m set --match-set chnroute6 dst -j RETURN || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -m set --match-set white_list6 dst -j RETURN || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+	if [ "${mangle}" = "1" ]; then
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -m set --match-set black_list6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -m set --match-set chnlist6 dst -j RETURN || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -m set --match-set chnroute6 dst -j RETURN || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -m set --match-set white_list6 dst -j RETURN || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+	fi
 
 	ensure_chain6 mangle SHADOWSOCKS6_GAM || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -m set --match-set black_list6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -m set --match-set chnlist6 dst -j RETURN || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -m set --match-set chnroute6 dst -j RETURN || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -m set --match-set white_list6 dst -j RETURN || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+	if [ "${mangle}" = "1" ]; then
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -m set --match-set black_list6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -m set --match-set chnlist6 dst -j RETURN || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -m set --match-set chnroute6 dst -j RETURN || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -m set --match-set white_list6 dst -j RETURN || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+	fi
 
 	ensure_chain6 mangle SHADOWSOCKS6_GLO || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_GLO -p udp -m set --match-set white_list6 dst -j RETURN || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_GLO -p udp -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+	if [ "${mangle}" = "1" ]; then
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GLO -p udp -m set --match-set white_list6 dst -j RETURN || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GLO -p udp -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+	fi
 
 	ensure_chain6 mangle SHADOWSOCKS6_HOM || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_HOM -p udp -m set --match-set black_list6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_HOM -p udp -m set --match-set gfwlist6 dst -j RETURN || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_HOM -p udp -m set --match-set white_list6 dst -j RETURN || return 1
-	append_if_not_exists6 mangle -A SHADOWSOCKS6_HOM -p udp -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+	if [ "${mangle}" = "1" ]; then
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_HOM -p udp -m set --match-set black_list6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_HOM -p udp -m set --match-set gfwlist6 dst -j RETURN || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_HOM -p udp -m set --match-set white_list6 dst -j RETURN || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_HOM -p udp -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
+	fi
 
 	#-----------------------FOR FILTER UDP443---------------------
 	ensure_chain6 filter SHADOWSOCKS6 || return 1
@@ -6780,7 +6944,9 @@ _start_ipv6_iptables() {
 
 	if [ "${ss_basic_mode}" != "6" ];then
 		append_if_not_exists6 nat -A OUTPUT -p tcp -m set --match-set router6 dst -j REDIRECT --to-ports $(get_tproxy_port6) || return 1
-		append_if_not_exists6 mangle -A OUTPUT -p udp -m set --match-set router6 dst -m udp --dport 53 -j MARK --set-mark 0x7/0xffffffff || return 1
+		if [ "${mangle}" = "1" ]; then
+			append_if_not_exists6 mangle -A OUTPUT -p udp -m set --match-set router6 dst -m udp --dport 53 -j MARK --set-mark 0x7/0xffffffff || return 1
+		fi
 	fi
 
 	if [ "${mangle}" != "0" ];then
@@ -7196,6 +7362,7 @@ apply_ss() {
 
 	echo_date ======================= 梅林固件 - 【科学上网】 ========================
 	echo_date
+	refresh_runtime_context
 	if [ "${ss_basic_status}" == "1" ];then
 		if shunt_hot_restart_eligible; then
 			shunt_prev_xray_json="/tmp/fss_shunt_prev_xray.json.$$"
@@ -7339,6 +7506,12 @@ apply_ss_by_nat() {
 	echo_date ======================= 梅林固件 - 【科学上网】 ========================
 	echo_date
 	echo_date "restart by nat!"
+	fss_base_load_current_node_env
+	refresh_runtime_context
+	add_wan_bypass_ips_to_ignlist
+	if [ "${ss_basic_mode}" != "7" ] && [ "${ss_basic_type}" = "0" ] && [ "${ss_basic_ss_obfs}" = "tls" ] && [ -z "$(pidof obfs-local)" ] && [ -x "/koolshare/ss/start-obfs.sh" ]; then
+		start_ss_obfs_helper
+	fi
 	flush_iptables
 	load_iptables
 	echo_date
@@ -7433,10 +7606,23 @@ stop_ws(){
 
 case $ACTION in
 start)
-	# start on wan-start
+	# start on wan-start or post-mount (USB2JFFS)
 	set_lock
-	if [ "$ss_basic_enable" == "1" ]; then
-		logger "[软件中心]: wan-start启动科学上网插件！"
+	if [ "$ss_basic_enable" = "1" ]; then
+		case "$0" in
+		*M99shadowsocks.sh)
+			post_mount_socks5=$(fss_socks5_open_bin 2>/dev/null)
+			if [ -n "${post_mount_socks5}" ]; then
+				logger "[软件中心]: post-mount检测到科学上网已运行(${post_mount_socks5})，跳过重复启动！"
+				unset_lock
+				exit 0
+			fi
+			logger "[软件中心]: post-mount补启动科学上网插件！"
+			;;
+		*)
+			logger "[软件中心]: wan-start启动科学上网插件！"
+			;;
+		esac
 		start_ws
 		apply_ss 2>&1 | tee -a "$LOG_FILE" | tee -a "/tmp/upload/ss_wan_log.txt"
 		echo XU6J03M6 | tee -a "$LOG_FILE"
@@ -7479,7 +7665,7 @@ start_nat)
 		return 0
 	fi
 	set_lock
-	if [ "$ss_basic_enable" == "1" ]; then
+	if [ "$ss_basic_enable" = "1" ]; then
 		logger "[软件中心]: nat-start触发fancyss重启！"
 		true >"$LOG_FILE"
 		apply_ss_by_nat 2>&1 | tee -a "$LOG_FILE" | tee -a "/tmp/upload/ss_nat_log.txt"

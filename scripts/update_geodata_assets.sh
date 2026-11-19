@@ -68,8 +68,16 @@ fetch_url() {
 }
 
 pick_host_geotool() {
+	local geotool_ver=""
+	if [ -f "${REPO_ROOT}/tool/geotool/VERSION" ]; then
+		geotool_ver="$(tr -d '\r\n' < "${REPO_ROOT}/tool/geotool/VERSION")"
+	fi
 	if [ -x "${REPO_ROOT}/tool/geotool/zig-out/bin/geotool" ] && "${REPO_ROOT}/tool/geotool/zig-out/bin/geotool" --help >/dev/null 2>&1; then
 		printf '%s\n' "${REPO_ROOT}/tool/geotool/zig-out/bin/geotool"
+		return 0
+	fi
+	if [ -n "${geotool_ver}" ] && [ -x "${REPO_ROOT}/binaries/geotool/geotool-v${geotool_ver}-linux-x86_64" ] && "${REPO_ROOT}/binaries/geotool/geotool-v${geotool_ver}-linux-x86_64" --help >/dev/null 2>&1; then
+		printf '%s\n' "${REPO_ROOT}/binaries/geotool/geotool-v${geotool_ver}-linux-x86_64"
 		return 0
 	fi
 	if [ -x "${REPO_ROOT}/binaries/geotool/geotool-v1.2-linux-x86_64" ] && "${REPO_ROOT}/binaries/geotool/geotool-v1.2-linux-x86_64" --help >/dev/null 2>&1; then

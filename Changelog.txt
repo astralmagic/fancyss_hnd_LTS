@@ -15,6 +15,11 @@ fancyss Changelog
    - fix	无进程名 `netstat` 固件上的启动、状态、订阅更新与 NAT 重载统一改用监听 socket 和目标进程 PID 的严格归属检测，避免端口被无关进程占用时误判成功。
    - update	刷新传统规则与 geosite/geoip 资产；规则在线更新改为受控 HTTPS 源、整批下载校验和失败回滚，不再向路由器在线下发大包广告规则。
    - add	提供 `ANYTLS_BACKEND=go` 实验构建选项，包含有界连接、默认证书校验、SNI 和资源回收；稳定包仍默认使用 Zig，实机与 24 小时验证前不改变后端。
+   - update	升级并固定 `tuic-client` 至已验证的稳定版 `v1.8.11`、`SmartDNS` 至 `v48.4`（`Release48.4`），构建脚本改为过滤 `prerelease`/`RC`/`dev` 标签并校验资产 SHA256；全量重建 8 个 Zig 工具（`geotool`/`xapi-tool`/`sub-tool`/`node-tool`/`anytls-zig`/`websocketd`/`status-tool`/`webtest-tool`）至 Linux `4.1.0`/`2.6.36` 兼容基线。
+   - fix	完整修复订阅自定义 User-Agent 含空格、括号或通配符时 `curl`/`wget` 参数拆分与 `local` 变量报错问题，修正 `/tmp/curl-subscribe` 软链接检测、HTTPS 选项判断与 `wget` 退出码覆盖问题。
+   - fix	修复 `nat-start`（`apply_ss_by_nat`）未重载当前节点与运行上下文导致 Naïve/AnyTLS 误判 `mangle` 及 `ip_prefix_hex`/WAN 旁路列表失效的问题；修复 `obfs-local`（`start-obfs.sh`）在 `wan-start` 重拨后被清理且跳过重构的问题；新增 `M99shadowsocks.sh` post-mount 幂等自启钩子修复 USB2JFFS 启动竞态。
+   - fix	修复 `ss_base.sh` 在 `FSS_BASE_SKIP_DBUS_EXPORT=1` 下误删 ACL 规则的问题，并降低 `resolve_acl_mac`、`ss_status.sh`/`ss_proc_status.sh`/`dnsmasq.postconf` 对 `skipd` `ksdb/log` 的无效写入；对齐 `ss_node_common.sh` 通用字段解析、`jq` 布尔/转义回退和 AnyTLS 端点提取；为 Xray 移除 `allowInsecure` 补充运行/测速/前端显式告警并取消勾选时对 `pinnedPeerCertSha256`/`verifyPeerCertByName` 的隐藏；针对 BE86U/AC86U 增加 `haveged` 仅老内核启用、`mangle=0` 不加载 `xt_TPROXY`/`table 310` 及 `/data` 卸载 `tuic-client` 等缓解措施。
+   - update	扩展 `install.sh` 中全部 7 处 `TUF_6500` 模型判断以兼容 `TUF-BE6500`/`TUF_BE6500`；吸纳 `AnyTLS` 与 `merlin-box` TPROXY 共存规则及带路径/体积上限/状态回写加固的订阅管理器本地 YAML/URI 文件上传导入功能。
 
 3.5.30（20260601）
    - update	Xray-core 升级到自编译 `v26.6.1-94ffd50`。

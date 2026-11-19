@@ -2,7 +2,9 @@
 
 # fancyss script for asuswrt/merlin based router with software center
 
+FSS_BASE_READONLY_ACL=1
 source /koolshare/scripts/ss_base.sh
+unset FSS_BASE_READONLY_ACL
 [ -f /koolshare/scripts/ss_subscribe_profile_lib.sh ] && source /koolshare/scripts/ss_subscribe_profile_lib.sh
 
 run(){

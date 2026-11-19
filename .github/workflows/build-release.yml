@@ -33,18 +33,23 @@ jobs:
           sh -n build.sh
           sh -n scripts/update_geodata_assets.sh
           sh -n fancyss/scripts/ss_base.sh
+          sh -n fancyss/scripts/ss_node_common.sh
+          sh -n fancyss/scripts/ss_node_subscribe.sh
+          sh -n fancyss/scripts/ss_webtest_gen.sh
           sh -n fancyss/scripts/ss_update.sh
           sh -n fancyss/scripts/ss_xray.sh
           sh -n fancyss/scripts/ss_rule_update.sh
           sh -n fancyss/ss/ssconfig.sh
           sh -n fancyss/install.sh
           bash -n binaries/zig-linux-compat.sh
+          bash -n binaries/tuic-client/get_latest.sh
           bash -n binaries/smartdns/get_smartdns.sh
-          make -n -C binaries update_xray update_v2ray_plugin update_vray-plugin update_anytls_zig update_smartdns update_chinadns_ng update_sub_tool update_node_tool >/dev/null
+          make -n -C binaries update_xray update_v2ray_plugin update_vray-plugin update_tuic_client update_anytls_zig update_smartdns update_chinadns_ng update_geotool update_xapi_tool update_sub_tool update_node_tool update_websocketd update_status_tool update_webtest_tool >/dev/null
 
-      - name: Run P1 regression and AnyTLS integration tests
+      - name: Run P1/P2 regression and AnyTLS integration tests
         run: |
           python3 tests/test_p1_regressions.py -v
+          python3 tests/test_p2_regressions.py -v
           python3 tests/test_anytls_integration.py -v
 
       - name: Check lazy node environment derivation
@@ -248,12 +253,22 @@ jobs:
       - name: Verify packaged binaries
         run: |
           set -euo pipefail
-          xray_version="$(cat binaries/xray/latest_2.txt)"
-          naive_version="$(cat binaries/naive/latest.txt)"
-          sub_tool_version="$(cat tool/sub-tool/VERSION)"
-          node_tool_version="$(cat tool/node-tool/VERSION)"
+          xray_version="$(tr -d '\r\n' < binaries/xray/latest_2.txt)"
+          naive_version="$(tr -d '\r\n' < binaries/naive/latest.txt)"
+          tuic_version="$(tr -d '\r\n' < binaries/tuic-client/latest.txt)"
+          smartdns_version="$(tr -d '\r\n' < binaries/smartdns/latest.txt)"
+          geotool_version="$(tr -d '\r\n' < tool/geotool/VERSION)"
+          xapi_tool_version="$(tr -d '\r\n' < tool/xapi-tool/VERSION)"
+          sub_tool_version="$(tr -d '\r\n' < tool/sub-tool/VERSION)"
+          node_tool_version="$(tr -d '\r\n' < tool/node-tool/VERSION)"
+          anytls_zig_version="$(tr -d '\r\n' < tool/anytls-zig/VERSION)"
+          ws_tool_version="$(tr -d '\r\n' < tool/ws-tool/VERSION)"
+          status_tool_version="$(tr -d '\r\n' < tool/status-tool/VERSION)"
+          webtest_tool_version="$(tr -d '\r\n' < tool/webtest-tool/VERSION)"
           test -n "$xray_version"
           test -n "$naive_version"
+          test -n "$tuic_version"
+          test -n "$smartdns_version"
           for platform in hnd hnd_v8; do
             if [ "$platform" = "hnd" ]; then
               core_arch=armv7
@@ -265,14 +280,26 @@ jobs:
             for package_type in full lite; do
               package="packages/fancyss_${platform}_${package_type}.tar.gz"
               tar -xOf "$package" shadowsocks/bin/xray | cmp - "binaries/xray/${xray_version}/xray_${core_arch}"
+              tar -xOf "$package" shadowsocks/bin/smartdns | cmp - "binaries/smartdns/${smartdns_version}/smartdns_${core_arch}"
+              tar -xOf "$package" shadowsocks/bin/geotool | cmp - "binaries/geotool/geotool-v${geotool_version}-linux-${zig_arch}"
+              tar -xOf "$package" shadowsocks/bin/xapi-tool | cmp - "binaries/xapi-tool/xapi-tool-v${xapi_tool_version}-linux-${zig_arch}"
               tar -xOf "$package" shadowsocks/bin/sub-tool | cmp - "binaries/sub-tool/sub-tool-v${sub_tool_version}-linux-${zig_arch}"
               tar -xOf "$package" shadowsocks/bin/node-tool | cmp - "binaries/node-tool/node-tool-v${node_tool_version}-linux-${zig_arch}"
+              tar -xOf "$package" shadowsocks/bin/websocketd | cmp - "binaries/websocketd/websocketd-v${ws_tool_version}-linux-${zig_arch}"
+              tar -xOf "$package" shadowsocks/bin/status-tool | cmp - "binaries/status-tool/status-tool-v${status_tool_version}-linux-${zig_arch}"
+              tar -xOf "$package" shadowsocks/bin/statusctl | cmp - "binaries/status-tool/statusctl-v${status_tool_version}-linux-${zig_arch}"
+              tar -xOf "$package" shadowsocks/bin/webtest-tool | cmp - "binaries/webtest-tool/webtest-tool-v${webtest_tool_version}-linux-${zig_arch}"
+              tar -xOf "$package" shadowsocks/bin/webtestctl | cmp - "binaries/webtest-tool/webtestctl-v${webtest_tool_version}-linux-${zig_arch}"
             done
             tar -xOf "packages/fancyss_${platform}_full.tar.gz" shadowsocks/bin/naive | cmp - "binaries/naive/${naive_version}/naive_${core_arch}"
-            if tar -tzf "packages/fancyss_${platform}_lite.tar.gz" | grep -q 'shadowsocks/bin/naive$'; then
-              echo "unexpected NaïveProxy in ${platform} lite package" >&2
-              exit 1
-            fi
+            tar -xOf "packages/fancyss_${platform}_full.tar.gz" shadowsocks/bin/tuic-client | cmp - "binaries/tuic-client/${tuic_version}/tuic-client_${core_arch}"
+            tar -xOf "packages/fancyss_${platform}_full.tar.gz" shadowsocks/bin/anytls-zig | cmp - "binaries/anytls-zig/anytls-zig-v${anytls_zig_version}-linux-${zig_arch}"
+            for lite_excluded in naive tuic-client anytls-zig; do
+              if tar -tzf "packages/fancyss_${platform}_lite.tar.gz" | grep -q "shadowsocks/bin/${lite_excluded}$"; then
+                echo "unexpected ${lite_excluded} in ${platform} lite package" >&2
+                exit 1
+              fi
+            done
           done
 
       - name: Upload HND packages
