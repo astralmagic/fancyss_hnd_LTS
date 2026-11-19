@@ -313,7 +313,11 @@ jobs:
                   python3 "$RUNNER_TEMP/verify/run_linux41_seccomp.py" "${prefix[@]}" "$bin" stat -i fancyss/ss/rules_ng2/dat/geosite.dat -c google \
                     >"$work/stat.tsv"
                 fi
-                grep -Eq '^google[[:space:]]+[0-9]+' "$work/stat.tsv"
+                if ! grep -Eiq '^google[[:space:]]+[0-9]+' "$work/stat.tsv"; then
+                  echo "Unexpected geotool stat output:" >&2
+                  cat "$work/stat.tsv" >&2
+                  exit 1
+                fi
                 ;;
               xapi)
                 if [ -n "$strace_log" ]; then
@@ -451,10 +455,12 @@ jobs:
                   upx-4.2.4 -d "$qbin" >/dev/null
                 fi
                 if [ "$arch" = "arm64" ]; then
-                  qemu-aarch64 "$qbin" -V | grep -Eq "${tuic_ver#v}"
+                  tuic_out="$(qemu-aarch64 "$qbin" -V 2>&1)"
                 else
-                  qemu-arm "$qbin" -V | grep -Eq "${tuic_ver#v}"
+                  tuic_out="$(qemu-arm "$qbin" -V 2>&1)"
                 fi
+                echo "tuic-client (${arch}): ${tuic_out}"
+                printf '%s\n' "${tuic_out}" | grep -Fq "${tuic_ver#v}"
               done
               ;;
           esac
@@ -481,10 +487,12 @@ jobs:
                   upx-4.2.4 -d "$qbin" >/dev/null
                 fi
                 if [ "$arch" = "arm64" ]; then
-                  qemu-aarch64 "$qbin" -v | grep -Eiq "smartdns"
+                  sd_out="$(qemu-aarch64 "$qbin" -v 2>&1)"
                 else
-                  qemu-arm "$qbin" -v | grep -Eiq "smartdns"
+                  sd_out="$(qemu-arm "$qbin" -v 2>&1)"
                 fi
+                echo "smartdns (${arch}): ${sd_out}"
+                printf '%s\n' "${sd_out}" | grep -iq "smartdns"
               done
               ;;
           esac
