@@ -1,0 +1,3 @@
+05fb27947403e9c8768dbcede94655bb  smartdns_arm64
+5f5e972924126389828835fcdeb0372f  smartdns_armv7
+acbe7af911e27929b50cd3754ac09eb1  smartdns_armv5
