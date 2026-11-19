@@ -7608,7 +7608,7 @@ case $ACTION in
 start)
 	# start on wan-start or post-mount (USB2JFFS)
 	set_lock
-	if [ "$ss_basic_enable" == "1" ]; then
+	if [ "$ss_basic_enable" = "1" ]; then
 		case "$0" in
 		*M99shadowsocks.sh)
 			post_mount_socks5=$(fss_socks5_open_bin 2>/dev/null)
@@ -7665,7 +7665,7 @@ start_nat)
 		return 0
 	fi
 	set_lock
-	if [ "$ss_basic_enable" == "1" ]; then
+	if [ "$ss_basic_enable" = "1" ]; then
 		logger "[软件中心]: nat-start触发fancyss重启！"
 		true >"$LOG_FILE"
 		apply_ss_by_nat 2>&1 | tee -a "$LOG_FILE" | tee -a "/tmp/upload/ss_nat_log.txt"

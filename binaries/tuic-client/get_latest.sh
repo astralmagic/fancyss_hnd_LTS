@@ -42,15 +42,24 @@ if [ "${DRY_RUN_RESOLVE}" != "1" ]; then
 	require_cmd "${UPX4}"
 fi
 
+TMP_DIR="$(mktemp -d)"
+cleanup() { rm -rf "${TMP_DIR}"; }
+trap cleanup EXIT
+
 echo "fetching tuic release info ..." >&2
 if [ -n "${RELEASE_JSON_FILE}" ]; then
-	JSON="$(cat "${RELEASE_JSON_FILE}")"
+	JSON_FILE="${RELEASE_JSON_FILE}"
 else
-	JSON="$(curl -fsSL --retry 3 --retry-delay 1 "${RELEASES_API_URL}")"
+	CURL_API_ARGS=(-fsSL --retry 3 --retry-delay 1 -H "Accept: application/vnd.github+json")
+	if [ -n "${GITHUB_TOKEN:-}" ]; then
+		CURL_API_ARGS+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+	fi
+	curl "${CURL_API_ARGS[@]}" -o "${TMP_DIR}/releases.json" "${RELEASES_API_URL}"
+	JSON_FILE="${TMP_DIR}/releases.json"
 fi
 
 META_LINES="$(
-	JSON_PAYLOAD="${JSON}" \
+	JSON_FILE="${JSON_FILE}" \
 	TARGET_TAG="${TARGET_TAG}" \
 	ALLOW_UNSTABLE_TUIC="${ALLOW_UNSTABLE_TUIC}" \
 	ALLOW_TUIC_V2="${ALLOW_TUIC_V2}" \
@@ -60,7 +69,8 @@ import os
 import re
 import sys
 
-raw = json.loads(os.environ["JSON_PAYLOAD"])
+with open(os.environ["JSON_FILE"], "r", encoding="utf-8") as fh:
+    raw = json.load(fh)
 releases = raw if isinstance(raw, list) else [raw]
 target_tag = os.environ.get("TARGET_TAG", "").strip()
 allow_unstable = os.environ.get("ALLOW_UNSTABLE_TUIC", "0") == "1"
@@ -176,10 +186,6 @@ if [ -d "${OUT_DIR}" ] && [ "${FORCE_REDOWNLOAD}" != "1" ]; then
 	echo -n "${OUT_DIR}" > latest.txt
 	exit 0
 fi
-
-TMP_DIR="$(mktemp -d)"
-cleanup() { rm -rf "${TMP_DIR}"; }
-trap cleanup EXIT
 
 echo "selected tuic release: ${TAG}"
 echo "downloading ${ASSET_ARM64} ..."

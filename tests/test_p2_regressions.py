@@ -394,7 +394,10 @@ if rc == 0:
 sys.exit(rc)
 ''',
             )
-            for shell in ("/bin/sh", "bash"):
+            shells = ["/bin/sh", "bash"]
+            if Path("/bin/dash").exists():
+                shells.append("/bin/dash")
+            for shell in shells:
                 argv_log.unlink(missing_ok=True)
                 proxy_rule_log.unlink(missing_ok=True)
                 for p in (self.curl_link, self.update_link):
@@ -744,6 +747,16 @@ fss_socks5_open_bin() {{ printf '%s' "${{MOCK_SOCKS5:-}}"; }}
             self.assertNotIn("CALLED:apply_ss", already.stdout)
             self.assertIn("跳过重复启动", already.stdout)
 
+            if Path("/bin/dash").exists():
+                already_dash = subprocess.run(
+                    ["/bin/dash", str(m99)],
+                    env=dict(os.environ, MOCK_SOCKS5="xray"),
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(already_dash.returncode, 0, already_dash.stderr)
+                self.assertIn("跳过重复启动", already_dash.stdout)
+
             cold = subprocess.run([str(m99)], env=dict(os.environ, MOCK_SOCKS5=""), capture_output=True, text=True)
             self.assertEqual(cold.returncode, 0, cold.stderr)
             self.assertIn("CALLED:apply_ss", cold.stdout)
@@ -801,11 +814,10 @@ class NodeCommonAndStabilityTests(unittest.TestCase):
             db_file.write_text(f"fss_data_schema=2\nfss_node_order=1\nfss_node_1={node_b64}\n")
             create_mock_dbus(bin_dir, db_file)
 
-            common_src = (ROOT / "fancyss/scripts/ss_node_common.sh").read_text()
             # Force jq fallback by disabling node-tool discovery inside subshell
             script = f'''
 set -e
-{common_src}
+source "{ROOT / 'fancyss/scripts/ss_node_common.sh'}"
 fss_pick_node_tool() {{ return 1; }}
 fss_pick_jq_bin() {{ command -v jq; }}
 

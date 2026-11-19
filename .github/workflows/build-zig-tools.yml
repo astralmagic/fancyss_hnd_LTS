@@ -72,6 +72,7 @@ jobs:
             sudo install -m 0755 "$RUNNER_TEMP/upx-${ver}-amd64_linux/upx" "/usr/local/bin/upx-${ver}"
             rm -rf "$RUNNER_TEMP/${arc}" "$RUNNER_TEMP/upx-${ver}-amd64_linux"
           done
+          sudo ln -sf /usr/local/bin/upx-5.0.2 /usr/local/bin/upx
           test "$(upx-4.2.4 --version | sed -n '1s/^upx //p')" = "4.2.4"
           test "$(upx-5.0.2 --version | sed -n '1s/^upx //p')" = "5.0.2"
 
@@ -128,6 +129,8 @@ jobs:
           esac
 
       - name: Build release binaries via Makefile
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           targets="${{ inputs.tools || 'update_sub_tool update_node_tool' }}"
@@ -370,7 +373,11 @@ jobs:
           pat = re.compile(r"\$0x146\b")
           with open(asm_path, "r", errors="replace") as f:
               lines = f.readlines()
-          hit_indices = [i for i, line in enumerate(lines) if pat.search(line)]
+          hit_indices = [
+              i
+              for i, line in enumerate(lines)
+              if pat.search(line) and any("syscall" in l for l in lines[i : min(len(lines), i + 6)])
+          ]
           if tool == "sub-tool":
               if hit_indices:
                   for i in hit_indices:

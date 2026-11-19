@@ -7285,7 +7285,8 @@ get_ua(){
 
 download_by_curl(){
 	local url_encode="$1"
-	local header_file="$(sub_header_file_path "${SUB_LINK_HASH:0:4}")"
+	local sub_hash4="$(printf '%s' "${SUB_LINK_HASH}" | cut -c1-4)"
+	local header_file="$(sub_header_file_path "${sub_hash4}")"
 	
 	echo_date "⬇️使用curl下载订阅..."
 	local UA=""
@@ -7310,7 +7311,7 @@ download_by_curl(){
 		SUB_LAST_DOWNLOAD_MODE="direct"
 		echo_date "➡️通过本地网络直连下载订阅..."
 		rm -f "${header_file}" >/dev/null 2>&1
-		run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt"
+		run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${sub_hash4}.txt"
 		if [ "$?" = "0" ]; then
 			return 0
 		fi
@@ -7322,7 +7323,7 @@ download_by_curl(){
 			SUB_LAST_DOWNLOAD_MODE="proxy"
 			echo_date "✈️使用当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点：[$(sub_get_node_field_plain "${CURR_NODE}" name)]提供的网络下载..."
 			rm -f "${header_file}" >/dev/null 2>&1
-			run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 -x socks5h://127.0.0.1:23456 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt"
+			run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 -x socks5h://127.0.0.1:23456 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${sub_hash4}.txt"
 			return $?
 		else
 			echo_date "⚠️当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点工作异常，结束curl订阅下载！"
@@ -7335,7 +7336,7 @@ download_by_curl(){
 			SUB_LAST_DOWNLOAD_MODE="proxy"
 			echo_date "✈️使用当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点：[$(sub_get_node_field_plain "${CURR_NODE}" name)]提供的网络下载..."
 			rm -f "${header_file}" >/dev/null 2>&1
-			run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 -x socks5h://127.0.0.1:23456 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt"
+			run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 -x socks5h://127.0.0.1:23456 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${sub_hash4}.txt"
 			return $?
 		else
 			echo_date "⚠️当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点工作异常，改用常规网络下载..."
@@ -7346,14 +7347,15 @@ download_by_curl(){
 		SUB_LAST_DOWNLOAD_MODE="direct"
 		echo_date "⬇️使用常规网络下载..."
 		rm -f "${header_file}" >/dev/null 2>&1
-		run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt"
+		run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${sub_hash4}.txt"
 		return $?
 	fi
 }
 
 download_by_wget(){
 	local url_encode="$1"
-	local header_file="$(sub_header_file_path "${SUB_LINK_HASH:0:4}")"
+	local sub_hash4="$(printf '%s' "${SUB_LINK_HASH}" | cut -c1-4)"
+	local header_file="$(sub_header_file_path "${sub_hash4}")"
 	local wget_rc=0
 	#local url_encode="${url_encode}&flag=shadowrocket"
 	echo_date "⬇️使用wget下载订阅..."
@@ -7386,7 +7388,7 @@ download_by_wget(){
 		SUB_LAST_DOWNLOAD_MODE="direct"
 		echo_date "➡️通过本地网络直连下载订阅..."
 		rm -f "${header_file}" >/dev/null 2>&1
-		run5 wget -S -t 3 "$@" -q "${url_encode}" -O "${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt" 2>"${header_file}"
+		run5 wget -S -t 3 "$@" -q "${url_encode}" -O "${DIR}/sub_file_encode_${sub_hash4}.txt" 2>"${header_file}"
 		if [ "$?" = "0" ]; then
 			return 0
 		fi
@@ -7399,7 +7401,7 @@ download_by_wget(){
 			echo_date "✈️使用当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点：[$(sub_get_node_field_plain "${CURR_NODE}" name)]提供的网络下载..."
 			rm -f "${header_file}" >/dev/null 2>&1
 			wget_rc=0
-			run5 wget -S -t 3 "$@" -q "${url_encode}" -O "${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt" 2>"${header_file}" || wget_rc=$?
+			run5 wget -S -t 3 "$@" -q "${url_encode}" -O "${DIR}/sub_file_encode_${sub_hash4}.txt" 2>"${header_file}" || wget_rc=$?
 			proxy_rule del "${DOMAIN_NAME}"
 			return "${wget_rc}"
 		else
@@ -7414,7 +7416,7 @@ download_by_wget(){
 			echo_date "✈️使用当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点：[$(sub_get_node_field_plain "${CURR_NODE}" name)]提供的网络下载..."
 			rm -f "${header_file}" >/dev/null 2>&1
 			wget_rc=0
-			run5 wget -S -t 3 "$@" -q "${url_encode}" -O "${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt" 2>"${header_file}" || wget_rc=$?
+			run5 wget -S -t 3 "$@" -q "${url_encode}" -O "${DIR}/sub_file_encode_${sub_hash4}.txt" 2>"${header_file}" || wget_rc=$?
 			proxy_rule del "${DOMAIN_NAME}"
 			return "${wget_rc}"
 		else
@@ -7426,7 +7428,7 @@ download_by_wget(){
 		SUB_LAST_DOWNLOAD_MODE="direct"
 		echo_date "⬇️使用常规网络下载..."
 		rm -f "${header_file}" >/dev/null 2>&1
-		run5 wget -S -t 3 "$@" -q "${url_encode}" -O "${DIR}/sub_file_encode_${SUB_LINK_HASH:0:4}.txt" 2>"${header_file}"
+		run5 wget -S -t 3 "$@" -q "${url_encode}" -O "${DIR}/sub_file_encode_${sub_hash4}.txt" 2>"${header_file}"
 		return $?
 	fi
 }
