@@ -6138,6 +6138,7 @@ flush_ip6tables() {
 	if [ -d "/tmp/.xt" ];then
 		export XTABLES_LIBDIR=/tmp/.xt
 	fi
+	remove_anytls_merlinbox_compat_one ip6tables MERLINKBOX_PROXY_V6 FSS_ANYTLS_MB6
 
 	local NAT6_RULES=$(ip6tables -t nat -S 2>/dev/null | grep -E "SHADOWSOCKS6|3333|3334" | sort)
 	if [ -n "${NAT6_RULES}" ];then
@@ -6305,6 +6306,8 @@ remove_anytls_merlinbox_compat() {
 
 prepare_anytls_merlinbox_compat() {
 	local detected="0"
+	# 清除旧的 IPv6 绕行规则；仅在 IPv6 接管成功后重新安装。
+	remove_anytls_merlinbox_compat_one ip6tables MERLINKBOX_PROXY_V6 FSS_ANYTLS_MB6
 
 	if [ "${ss_basic_type}" != "9" ]; then
 		remove_anytls_merlinbox_compat
@@ -6323,6 +6326,14 @@ prepare_anytls_merlinbox_compat() {
 		detected="1"
 	fi
 
+	if [ "${detected}" = "1" ]; then
+		echo_date "检测到 merlin-box TPROXY：AnyTLS 的 IPv4 TCP 流量交由 fancyss 处理，UDP 仍由 merlin-box 处理。"
+	fi
+	return 0
+}
+
+prepare_anytls_merlinbox_compat6() {
+	[ "${ss_basic_type}" = "9" ] && ipv6_proxy_enabled || return 0
 	if ip6tables -t mangle -C PREROUTING -i br+ -j MERLINKBOX_PROXY_V6 >/dev/null 2>&1; then
 		ensure_chain_with_cmd ip6tables mangle FSS_ANYTLS_MB6 || return 1
 		ip6tables -t mangle -F FSS_ANYTLS_MB6 >/dev/null 2>&1 || return 1
@@ -6330,11 +6341,16 @@ prepare_anytls_merlinbox_compat() {
 		if ! ip6tables -t mangle -C MERLINKBOX_PROXY_V6 -j FSS_ANYTLS_MB6 >/dev/null 2>&1; then
 			ip6tables -t mangle -I MERLINKBOX_PROXY_V6 1 -j FSS_ANYTLS_MB6 >/dev/null 2>&1 || return 1
 		fi
-		detected="1"
+		echo_date "检测到 merlin-box TPROXY：AnyTLS 的 IPv6 TCP 流量交由 fancyss 处理，UDP 仍由 merlin-box 处理。"
 	fi
+	return 0
+}
 
-	if [ "${detected}" = "1" ]; then
-		echo_date "检测到 merlin-box TPROXY：AnyTLS 的 TCP 流量交由 fancyss 处理，UDP 仍由 merlin-box 处理。"
+start_ipv6_proxy_rules() {
+	if ipv6_proxy_enabled; then
+		if ! _start_ipv6_iptables || ! prepare_anytls_merlinbox_compat6; then
+			fallback_ipv6_proxy_to_ipv4 || return 1
+		fi
 	fi
 	return 0
 }
@@ -6736,11 +6752,7 @@ _start_iptables() {
 		iptables -t mangle -I QOSO0 -m mark --mark "$ip_prefix_hex" -j RETURN
 	fi
 
-	if ipv6_proxy_enabled; then
-		if ! _start_ipv6_iptables; then
-			fallback_ipv6_proxy_to_ipv4 || return 1
-		fi
-	fi
+	start_ipv6_proxy_rules
 }
 
 _start_ipv6_iptables() {

@@ -2798,6 +2798,36 @@ wt_cleanup_xray_group_runtime() {
 	rm -rf ${TMP2}/wt-obfs
 }
 
+wt_warn_xray_nodes_before_test() {
+	local ids_file="$1"
+	local node_id="" node_type="" prefix="" ai_field="" pcs_field="" security=""
+	[ -f "${ids_file}" ] || return 0
+	# 在实际测速入口检查，覆盖 native、shell 和已有缓存；日志不依赖调用方的 stdout/stderr。
+	while IFS= read -r node_id; do
+		case "${node_id}" in ""|*[!0-9]*) continue ;; esac
+		node_type=$(wt_node_get_plain type "${node_id}")
+		prefix=""; ai_field=""; pcs_field=""
+		case "${node_type}" in
+		3|4)
+			if [ "${node_type}" = "3" ]; then prefix=v2ray; else prefix=xray; fi
+			[ "$(wt_node_get_plain "${prefix}_use_json" "${node_id}")" != "1" ] || continue
+			security=$(wt_node_get_plain "${prefix}_network_security" "${node_id}")
+			case "${security}" in tls|xtls) ;; *) continue ;; esac
+			ai_field="${prefix}_network_security_ai"
+			[ "${prefix}" != "xray" ] || pcs_field=xray_pcs
+			;;
+		5) prefix=trojan; ai_field=trojan_ai; pcs_field=trojan_pcs ;;
+		8) prefix=hy2; ai_field=hy2_ai; pcs_field=hy2_pcs ;;
+		*) continue ;;
+		esac
+		wt_warn_xray_allow_insecure "${node_id}" "${prefix}" \
+			"$(wt_node_get_plain "${ai_field}" "${node_id}")" \
+			"$([ -z "${pcs_field}" ] || wt_node_get_plain "${pcs_field}" "${node_id}")" \
+			2>> "${WT_DIAGNOSTIC_LOG:-/tmp/upload/ss_log.txt}"
+	done < "${ids_file}"
+	return 0
+}
+
 wt_prepare_xray_group_runtime() {
 	local file_path="$1"
 	local mark="$2"
@@ -2814,6 +2844,7 @@ wt_prepare_xray_group_runtime() {
 	rm -rf "${json_dir}"/* "${logs_dir}"/*
 	rm -f "${materialized_file}" "${outbound_list}" "${valid_nodes_file}" "${valid_pairs_file}"
 
+	wt_warn_xray_nodes_before_test "${file_path}"
 	if ! wt_ensure_webtest_cache_ready; then
 		wt_mark_failed_from_nodes_file "${file_path}"
 		return 1
