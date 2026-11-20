@@ -6962,6 +6962,12 @@ function conf2obj(obj, action) {
 	if (E("ss_basic_status_mode") && typeof obj["ss_basic_status_mode"] == "undefined") {
 		E("ss_basic_status_mode").value = "serve";
 	}
+	if (E("ss_basic_block_webrtc_ports") && typeof obj["ss_basic_block_webrtc_ports"] == "undefined") {
+		E("ss_basic_block_webrtc_ports").value = "common";
+	}
+	if (E("ss_basic_block_webrtc_ipv6") && typeof obj["ss_basic_block_webrtc_ipv6"] == "undefined") {
+		E("ss_basic_block_webrtc_ipv6").checked = true;
+	}
 }
 function ssconf_node2obj(node_sel) {
 	obj_node = {};
@@ -7248,7 +7254,8 @@ function save() {
 	  "ss_basic_hy2_dl_speed",
 	  "ss_basic_hy2_tfo_switch",
 	  "ss_basic_hy2_cg_opt",
-	  "ss_basic_shunt_ingress_mode"
+	  "ss_basic_shunt_ingress_mode",
+	  "ss_basic_block_webrtc_ports"
 	];
 	var params_check = [
 	  "ss_failover_enable",
@@ -7285,6 +7292,8 @@ function save() {
 	  "ss_basic_dns_serverx",
 	  "ss_basic_proxy_newb",
 	  "ss_basic_proxy_ipv6",
+	  "ss_basic_block_webrtc",
+	  "ss_basic_block_webrtc_ipv6",
 	  "ss_basic_udpoff",
 	  "ss_basic_udpall",
 	  "ss_basic_block_quic",
@@ -8998,6 +9007,9 @@ function update_visibility() {
 	}
 	sync_chinadns_ipv6_drop_proxy_ui();
 	showhide("ss_dnsmasq_cus", E("ss_basic_dns_serverx").checked == false);
+	var webrtcBlock = E("ss_basic_block_webrtc") && E("ss_basic_block_webrtc").checked;
+	showhide("ss_basic_block_webrtc_ports_row", webrtcBlock);
+	showhide("ss_basic_block_webrtc_ipv6_row", webrtcBlock);
 }
 
 function Add_profile() { //点击节点页面内添加节点动作
@@ -16498,6 +16510,10 @@ function toggleKeyMask(o, show){
 									["once", "once 按次启动"],
 									["", "兼容模式"]
 								];
+								var option_webrtc_ports = [
+									["common", "常见端口（3478-3481,5349,19302-19309）"],
+									["all", "所有端口（保留DNS/DHCP/NTP）"]
+								];
 									$('#table_test').forms([
 										{ title: '延迟测试设置', thead:'1'},
 										{ title: '<a onmouseover="mOver(this, 147)" onmouseout="RunmOut(this)" class="hintstyle" style="color:#03a9f4;" href="javascript:void(0);">web延迟测试网址 - 国外</a>', id:'ss_basic_furl', type:'select', style:'width:auto', options:furl, value:''},
@@ -17663,6 +17679,9 @@ function toggleKeyMask(o, show){
 															{ td: '<tr><td class="smth" style="font-weight: bold;" colspan="2">代理行为</td></tr>'},
 															{ title: '开启ipv6代理', id:'ss_basic_proxy_ipv6', hint:'146', type:'checkbox', func:'u', value:false},
 															{ title: 'New Bing模式', id:'ss_basic_proxy_newb', hint:'149', type:'checkbox', value:true},
+															{ title: '开启WebRTC防泄漏', id:'ss_basic_block_webrtc', hint:'157', type:'checkbox', func:'u', value:false},
+															{ title: 'WebRTC拦截端口范围', rid:'ss_basic_block_webrtc_ports_row', hint:'157', id:'ss_basic_block_webrtc_ports', type:'select', style:'width:auto', options:option_webrtc_ports, value:'common'},
+															{ title: 'WebRTC防泄漏同时处理IPv6', rid:'ss_basic_block_webrtc_ipv6_row', hint:'157', id:'ss_basic_block_webrtc_ipv6', type:'checkbox', value:true},
 															{ td: '<tr><td class="smth" style="font-weight: bold;" colspan="2">性能优化</td></tr>'},
 															{ title: 'ssr开启多核心支持', id:'ss_basic_mcore', hint:'108', type:'checkbox', value:true},										//fancyss-hnd
 															{ title: 'ss/v2ray/xray开启tcp fast open', id:'ss_basic_tfo', type:'checkbox', value:false},										//fancyss-hnd

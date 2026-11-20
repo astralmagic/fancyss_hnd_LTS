@@ -964,6 +964,8 @@ load_tproxy() {{ echo "load_tproxy" >> "{calls}"; }}
 ipv6_proxy_enabled() {{ return 1; }}
 lan_access_control() {{ :; }}
 apply_quic_block() {{ :; }}
+apply_webrtc_block4() {{ :; }}
+apply_webrtc_block6() {{ :; }}
 dns_hijack_control() {{ :; }}
 resolve_acl_default_mode() {{ echo "1"; }}
 resolve_acl_ports() {{ echo "all"; }}

@@ -370,6 +370,22 @@ GET_SWITCH_NAME(){
 	fi
 }
 
+GET_WEBRTC_BLOCK_DESC(){
+	if [ "${ss_basic_block_webrtc}" != "1" ];then
+		echo "关闭"
+		return 0
+	fi
+	local ports_desc="常见端口"
+	if [ "${ss_basic_block_webrtc_ports}" = "all" ];then
+		ports_desc="所有端口"
+	fi
+	local v6_desc="仅IPv4"
+	if [ "${ss_basic_block_webrtc_ipv6:-1}" = "1" ];then
+		v6_desc="IPv4+IPv6"
+	fi
+	echo "开启（${ports_desc} / ${v6_desc}）"
+}
+
 chain_exists() {
 	local tool="$1"
 	local table="$2"
@@ -420,11 +436,11 @@ print_table_dump() {
 }
 
 has_filter_table4() {
-	chain_exists iptables filter SHADOWSOCKS
+	chain_exists iptables filter SHADOWSOCKS || chain_exists iptables filter SHADOWSOCKS_WEBRTC
 }
 
 has_filter_table6() {
-	chain_exists ip6tables filter SHADOWSOCKS6
+	chain_exists ip6tables filter SHADOWSOCKS6 || chain_exists ip6tables filter SHADOWSOCKS6_WEBRTC
 }
 
 GET_VM_RSS(){
@@ -890,9 +906,11 @@ ECHO_IPTABLES(){
 ECHO_IP6TABLES(){
 	echo
 	echo "4️⃣检测ip6tables工作状态："
-	print_table_dump ip6tables nat SHADOWSOCKS6 "PREROUTING OUTPUT"
-	if [ "${mangle}" = "1" ];then
-		print_table_dump ip6tables mangle SHADOWSOCKS6 "PREROUTING OUTPUT"
+	if [ "${ss_basic_proxy_ipv6}" = "1" ];then
+		print_table_dump ip6tables nat SHADOWSOCKS6 "PREROUTING OUTPUT"
+		if [ "${mangle}" = "1" ];then
+			print_table_dump ip6tables mangle SHADOWSOCKS6 "PREROUTING OUTPUT"
+		fi
 	fi
 	if has_filter_table6;then
 		print_table_dump ip6tables filter SHADOWSOCKS6 "FORWARD"
@@ -936,6 +954,7 @@ check_status() {
 	echo "🟠 DNS劫持：$(GET_SWITCH_NAME "${ss_basic_dns_hijack}")"
 	echo "🟠 UDP透明代理：$(GET_SWITCH_NAME "${mangle}")"
 	echo "🟠 IPv6代理：$(GET_SWITCH_NAME "${ss_basic_proxy_ipv6}")"
+	echo "🟠 WebRTC防泄漏：$(GET_WEBRTC_BLOCK_DESC)"
 	echo "🟠 黑名单数：域名 ${CURR_BAKD}条，IP/CIDR ${CURR_BAKI}条"
 	echo "🟠 白名单数：域名 ${CURR_WHTD}条，IP/CIDR ${CURR_WHTI}条"
 	echo "🟠 订阅数量：${CURR_SUBS}"
@@ -952,7 +971,7 @@ check_status() {
 
 	ECHO_IPTABLES
 
-	if [ "${ss_basic_proxy_ipv6}" = "1" ];then
+	if [ "${ss_basic_proxy_ipv6}" = "1" ] || { [ "${ss_basic_block_webrtc}" = "1" ] && [ "${ss_basic_block_webrtc_ipv6:-1}" = "1" ]; };then
 		ECHO_IP6TABLES
 	fi
 

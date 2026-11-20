@@ -719,6 +719,9 @@ prepare_system() {
 	# Default enabled in UI: block QUIC to avoid HTTP/3 direct-connect bypassing TCP-only proxy.
 	set_default "ss_basic_block_quic" "1"
 	set_default "ss_basic_proxy_ipv6" "0"
+	set_default "ss_basic_block_webrtc" "0"
+	set_default "ss_basic_block_webrtc_ports" "common"
+	set_default "ss_basic_block_webrtc_ipv6" "1"
 	normalize_server_resolv_mode
 	
 	# 0. set skin, 不管是否能启动成功，都检测下皮肤是否正确，如果不对，则设置下皮肤
@@ -6031,6 +6034,74 @@ apply_quic_block() {
 	fi
 }
 
+get_webrtc_block_ports_mode() {
+	case "${ss_basic_block_webrtc_ports}" in
+	all)
+		echo "all"
+		;;
+	*)
+		echo "common"
+		;;
+	esac
+}
+
+apply_webrtc_block4() {
+	[ "${ss_basic_block_webrtc}" = "1" ] || return 0
+	local ports_mode="$(get_webrtc_block_ports_mode)"
+	local common_ports="3478:3481,5349,19302:19309"
+
+	ensure_chain filter SHADOWSOCKS_WEBRTC || return 1
+	iptables -t filter -F SHADOWSOCKS_WEBRTC >/dev/null 2>&1 || return 1
+	append_if_not_exists filter -A SHADOWSOCKS_WEBRTC -p udp -m set --match-set ignlist dst -j RETURN || return 1
+	if [ "${ports_mode}" = "all" ]; then
+		echo_date "WebRTC防泄漏（IPv4）：拦截所有出站直连UDP端口（保留DNS/DHCP/NTP）。"
+		append_if_not_exists filter -A SHADOWSOCKS_WEBRTC -p udp -m multiport --dport 53,67:68,123 -j RETURN || return 1
+		append_if_not_exists filter -A SHADOWSOCKS_WEBRTC -p udp -j REJECT --reject-with icmp-port-unreachable || return 1
+	else
+		echo_date "WebRTC防泄漏（IPv4）：拦截常见STUN/TURN UDP端口（${common_ports}）。"
+		append_if_not_exists filter -A SHADOWSOCKS_WEBRTC -p udp -m multiport --dport "${common_ports}" -j REJECT --reject-with icmp-port-unreachable || return 1
+	fi
+	if ! iptables -t filter -C FORWARD -i br+ -p udp -j SHADOWSOCKS_WEBRTC >/dev/null 2>&1; then
+		iptables -t filter -I FORWARD 1 -i br+ -p udp -j SHADOWSOCKS_WEBRTC >/dev/null 2>&1 || return 1
+	fi
+	return 0
+}
+
+apply_webrtc_block6() {
+	[ "${ss_basic_block_webrtc}" = "1" ] || return 0
+	[ "${ss_basic_block_webrtc_ipv6}" = "1" ] || return 0
+	if ! ip6tables -t filter -L FORWARD >/dev/null 2>&1; then
+		echo_date "⚠️当前系统不支持ip6tables filter表，跳过IPv6 WebRTC防泄漏规则。"
+		return 0
+	fi
+	local ports_mode="$(get_webrtc_block_ports_mode)"
+	local common_ports="3478:3481,5349,19302:19309"
+
+	if ! ensure_chain6 filter SHADOWSOCKS6_WEBRTC; then
+		echo_date "⚠️创建ip6tables SHADOWSOCKS6_WEBRTC链失败，跳过IPv6 WebRTC防泄漏规则。"
+		return 0
+	fi
+	ip6tables -t filter -F SHADOWSOCKS6_WEBRTC >/dev/null 2>&1 || true
+	if ! append_if_not_exists6 filter -A SHADOWSOCKS6_WEBRTC -p udp -m set --match-set ignlist6 dst -j RETURN; then
+		echo_date "⚠️写入IPv6 WebRTC防泄漏规则失败，已跳过。"
+		return 0
+	fi
+	append_if_not_exists6 filter -A SHADOWSOCKS6_WEBRTC -p udp -d fc00::/7 -j RETURN || true
+	append_if_not_exists6 filter -A SHADOWSOCKS6_WEBRTC -p udp -d ff00::/8 -j RETURN || true
+	if [ "${ports_mode}" = "all" ]; then
+		echo_date "WebRTC防泄漏（IPv6）：拦截所有出站直连UDP端口（保留DNS/DHCPv6/NTP）。"
+		append_if_not_exists6 filter -A SHADOWSOCKS6_WEBRTC -p udp -m multiport --dport 53,123,546:547 -j RETURN || return 0
+		append_if_not_exists6 filter -A SHADOWSOCKS6_WEBRTC -p udp -j REJECT --reject-with icmp6-port-unreachable || return 0
+	else
+		echo_date "WebRTC防泄漏（IPv6）：拦截常见STUN/TURN UDP端口（${common_ports}）。"
+		append_if_not_exists6 filter -A SHADOWSOCKS6_WEBRTC -p udp -m multiport --dport "${common_ports}" -j REJECT --reject-with icmp6-port-unreachable || return 0
+	fi
+	if ! ip6tables -t filter -C FORWARD -i br+ -p udp -j SHADOWSOCKS6_WEBRTC >/dev/null 2>&1; then
+		ip6tables -t filter -I FORWARD 1 -i br+ -p udp -j SHADOWSOCKS6_WEBRTC >/dev/null 2>&1 || true
+	fi
+	return 0
+}
+
 lan_access_control() {
 	# lan access control
 	local default_mode=""
@@ -6812,6 +6883,7 @@ _start_iptables() {
 
 	# FOR FILTER
 	insert_if_not_exists filter -I FORWARD 1 -p udp --dport 443 -j SHADOWSOCKS
+	apply_webrtc_block4 || return 1
 
 	if [ "$ss_basic_dns_hijack" == "1" ]; then
 		echo_date "开启DNS劫持功能功能，防止DNS污染..."
@@ -6835,6 +6907,7 @@ _start_iptables() {
 	fi
 
 	start_ipv6_proxy_rules
+	apply_webrtc_block6
 }
 
 _start_ipv6_iptables() {
