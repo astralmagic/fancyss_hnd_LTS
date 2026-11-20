@@ -3424,8 +3424,17 @@ test_11_nv(){
 		pid_file="${TMP2}/pids/naive_${nu}.pid"
 		start_script="${hooks_dir}/${nu}.start.sh"
 		stop_script="${hooks_dir}/${nu}.stop.sh"
-		proxy_uri="$(wt_node_get naive_prot ${nu})://$(wt_node_get naive_user ${nu}):$(wt_node_get naive_pass ${nu} | base64_decode)@$(wt_node_get naive_server ${nu}):$(wt_node_get naive_port ${nu})"
-		wt_write_pid_hook_scripts "${start_script}" "${stop_script}" "${pid_file}" "\"${TMP2}/wt-naive\" --listen=socks://127.0.0.1:${socks5_port} --proxy='${proxy_uri}'" || continue
+		naive_prot="$(wt_node_get naive_prot ${nu})"
+		naive_port="$(wt_node_get naive_port ${nu})"
+		case "${naive_prot}" in
+		https|quic) ;;
+		*) continue ;;
+		esac
+		case "${naive_port}" in
+		''|*[!0-9]*) continue ;;
+		esac
+		proxy_uri="${naive_prot}://$(wt_node_get naive_user ${nu}):$(wt_node_get naive_pass ${nu} | base64_decode)@$(wt_node_get naive_server ${nu}):${naive_port}"
+		wt_write_pid_hook_scripts "${start_script}" "${stop_script}" "${pid_file}" "$(wt_shell_quote "${TMP2}/wt-naive") --listen=socks://127.0.0.1:${socks5_port} --proxy=$(wt_shell_quote "${proxy_uri}")" || continue
 		wt_append_protocol_target_row "${targets_file}" "${valid_nodes_file}" "${nu}" "${socks5_port}" "${start_script}" "${stop_script}" "${socks5_port}" "5000" || continue
 	done < "${file_path}"
 	[ -s "${targets_file}" ] || return 0
@@ -4304,6 +4313,16 @@ set_latency_job() {
 		echo_date "定时测试节点延迟未开启!"
 		sed -i '/sslatencyjob/d' /var/spool/cron/crontabs/* >/dev/null 2>&1
 	elif [ "${ss_basic_lt_cru_opts}" == "1" ]; then
+		case "${ss_basic_lt_cru_time}" in
+		''|*[!0-9]*)
+			echo_date "定时测试间隔参数非法，跳过设置定时任务。"
+			return 1
+			;;
+		esac
+		if [ "${ss_basic_lt_cru_time}" -lt 1 ] || [ "${ss_basic_lt_cru_time}" -gt 59 ]; then
+			echo_date "定时测试间隔超出范围（1-59），跳过设置定时任务。"
+			return 1
+		fi
 		echo_date "设置每隔${ss_basic_lt_cru_time}分钟对所有节点进行web延迟检测..."
 		sed -i '/sslatencyjob/d' /var/spool/cron/crontabs/* >/dev/null 2>&1
 		cru a sslatencyjob "*/${ss_basic_lt_cru_time} * * * * /koolshare/scripts/ss_webtest.sh 2"

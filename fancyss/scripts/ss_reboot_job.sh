@@ -16,33 +16,64 @@ remove_ss_reboot_job(){
 	fi
 }
 
+is_cron_int_in_range() {
+	local val="$1" min="$2" max="$3"
+	case "${val}" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	[ "${val}" -ge "${min}" ] && [ "${val}" -le "${max}" ]
+}
+
+is_cron_hour_list() {
+	local raw="$1" item="" old_ifs="${IFS}"
+	[ -n "${raw}" ] || return 1
+	case "${raw}" in
+	*[!0-9,]*|,*|*,|*,,*) return 1 ;;
+	esac
+	IFS=','
+	for item in ${raw}; do
+		IFS="${old_ifs}"
+		is_cron_int_in_range "${item}" 0 23 || return 1
+		IFS=','
+	done
+	IFS="${old_ifs}"
+	return 0
+}
+
 set_ss_reboot_job(){
 	if [[ "${ss_reboot_check}" == "0" ]]; then
 		remove_ss_reboot_job
 	elif [[ "${ss_reboot_check}" == "1" ]]; then
+		is_cron_int_in_range "${ss_basic_time_min}" 0 59 && is_cron_int_in_range "${ss_basic_time_hour}" 0 23 || { echo_date "【科学上网】：定时重启时间参数非法，跳过设置。"; return 1; }
 		echo_date "【科学上网】：设置每天${ss_basic_time_hour}时${ss_basic_time_min}分重启插件..."
-		cru a ss_reboot ${ss_basic_time_min} ${ss_basic_time_hour}" * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
+		cru a ss_reboot "${ss_basic_time_min} ${ss_basic_time_hour} * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
 	elif [[ "${ss_reboot_check}" == "2" ]]; then
+		is_cron_int_in_range "${ss_basic_time_min}" 0 59 && is_cron_int_in_range "${ss_basic_time_hour}" 0 23 && is_cron_int_in_range "${ss_basic_week}" 0 7 || { echo_date "【科学上网】：定时重启周计划参数非法，跳过设置。"; return 1; }
 		echo_date "【科学上网】：设置每周${ss_basic_week}的${ss_basic_time_hour}时${ss_basic_time_min}分重启插件..."
-		cru a ss_reboot ${ss_basic_time_min} ${ss_basic_time_hour}" * * "${ss_basic_week}" /bin/sh /koolshare/ss/ssconfig.sh restart"
+		cru a ss_reboot "${ss_basic_time_min} ${ss_basic_time_hour} * * ${ss_basic_week} /bin/sh /koolshare/ss/ssconfig.sh restart"
 	elif [[ "${ss_reboot_check}" == "3" ]]; then
+		is_cron_int_in_range "${ss_basic_time_min}" 0 59 && is_cron_int_in_range "${ss_basic_time_hour}" 0 23 && is_cron_int_in_range "${ss_basic_day}" 1 31 || { echo_date "【科学上网】：定时重启月计划参数非法，跳过设置。"; return 1; }
 		echo_date "【科学上网】：设置每月${ss_basic_day}日${ss_basic_time_hour}时${ss_basic_time_min}分重启插件..."
-		cru a ss_reboot ${ss_basic_time_min} ${ss_basic_time_hour} ${ss_basic_day}" * * /bin/sh /koolshare/ss/ssconfig.sh restart"
+		cru a ss_reboot "${ss_basic_time_min} ${ss_basic_time_hour} ${ss_basic_day} * * /bin/sh /koolshare/ss/ssconfig.sh restart"
 	elif [[ "${ss_reboot_check}" == "4" ]]; then
 		if [[ "${ss_basic_inter_pre}" == "1" ]]; then
+			is_cron_int_in_range "${ss_basic_inter_min}" 1 59 || { echo_date "【科学上网】：定时重启间隔分钟非法，跳过设置。"; return 1; }
 			echo_date "【科学上网】：设置每隔${ss_basic_inter_min}分钟重启插件..."
-			cru a ss_reboot "*/"${ss_basic_inter_min}" * * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
+			cru a ss_reboot "*/${ss_basic_inter_min} * * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
 		elif [[ "${ss_basic_inter_pre}" == "2" ]]; then
+			is_cron_int_in_range "${ss_basic_inter_hour}" 1 23 || { echo_date "【科学上网】：定时重启间隔小时非法，跳过设置。"; return 1; }
 			echo_date "【科学上网】：设置每隔${ss_basic_inter_hour}小时重启插件..."
-			cru a ss_reboot "0 */"${ss_basic_inter_hour}" * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
+			cru a ss_reboot "0 */${ss_basic_inter_hour} * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
 		elif [[ "${ss_basic_inter_pre}" == "3" ]]; then
+			is_cron_int_in_range "${ss_basic_time_min}" 0 59 && is_cron_int_in_range "${ss_basic_time_hour}" 0 23 && is_cron_int_in_range "${ss_basic_inter_day}" 1 31 || { echo_date "【科学上网】：定时重启间隔天参数非法，跳过设置。"; return 1; }
 			echo_date "【科学上网】：设置每隔${ss_basic_inter_day}天${ss_basic_inter_hour}小时${ss_basic_time_min}分钟重启插件..."
-			cru a ss_reboot ${ss_basic_time_min} ${ss_basic_time_hour}" */"${ss_basic_inter_day} " * * /bin/sh /koolshare/ss/ssconfig.sh restart"
+			cru a ss_reboot "${ss_basic_time_min} ${ss_basic_time_hour} */${ss_basic_inter_day} * * /bin/sh /koolshare/ss/ssconfig.sh restart"
 		fi
 	elif [[ "${ss_reboot_check}" == "5" ]]; then
-		check_custom_time=`dbus get ss_basic_custom | base64_decode`
+		check_custom_time=$(dbus get ss_basic_custom | base64_decode)
+		is_cron_int_in_range "${ss_basic_time_min}" 0 59 && is_cron_hour_list "${check_custom_time}" || { echo_date "【科学上网】：自定义定时重启时间参数非法，跳过设置。"; return 1; }
 		echo_date "【科学上网】：设置每天${check_custom_time}时的${ss_basic_time_min}分重启插件..."
-		cru a ss_reboot ${ss_basic_time_min} ${check_custom_time}" * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
+		cru a ss_reboot "${ss_basic_time_min} ${check_custom_time} * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
 	fi
 }
 

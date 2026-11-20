@@ -33,7 +33,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
 
@@ -76,10 +76,34 @@ jobs:
           test "$(upx-4.2.4 --version | sed -n '1s/^upx //p')" = "4.2.4"
           test "$(upx-5.0.2 --version | sed -n '1s/^upx //p')" = "5.0.2"
 
+      - name: Validate requested build targets
+        env:
+          TOOLS_INPUT: ${{ inputs.tools }}
+        run: |
+          set -euo pipefail
+          raw_targets="${TOOLS_INPUT:-update_sub_tool update_node_tool}"
+          validated=()
+          for tok in ${raw_targets}; do
+            case "${tok}" in
+              update_geotool|update_xapi_tool|update_sub_tool|update_node_tool|update_anytls_zig|update_websocketd|update_status_tool|update_webtest_tool|update_tuic_client|update_smartdns)
+                validated+=("${tok}")
+                ;;
+              *)
+                echo "Disallowed Makefile target: ${tok}" >&2
+                exit 1
+                ;;
+            esac
+          done
+          if [ "${#validated[@]}" -eq 0 ]; then
+            echo "No valid Makefile targets requested" >&2
+            exit 1
+          fi
+          echo "VALIDATED_TARGETS=${validated[*]}" >> "$GITHUB_ENV"
+
       - name: Run Zig unit tests
         run: |
           set -euo pipefail
-          targets="${{ inputs.tools || 'update_sub_tool update_node_tool' }}"
+          targets="${VALIDATED_TARGETS}"
           case " ${targets} " in
             *" update_sub_tool "*) (cd tool/sub-tool && /opt/zig-0.15.2/zig build test) ;;
           esac
@@ -133,7 +157,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          targets="${{ inputs.tools || 'update_sub_tool update_node_tool' }}"
+          targets="${VALIDATED_TARGETS}"
           ZIG_COMPAT_VERBOSE=1 REAL_ZIG=/opt/zig-0.15.2/zig make -C binaries ${targets} 2>&1 | tee "$RUNNER_TEMP/zig-build.log"
           min_41_hits=0
           min_26_hits=0

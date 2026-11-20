@@ -1841,7 +1841,7 @@ function normalize_fss_node_for_ui(nodeId, raw) {
 	return build_node_derived_info(obj);
 }
 function htmlEscape(value) {
-	return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+	return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 function init_shunt_preset_map() {
 	shuntPresetMap = {};
@@ -5605,8 +5605,9 @@ function render_subscription_profiles_cards() {
 		var lastClass = item.last_error ? "warn" : (Number(item.last_ok_ts || 0) > 0 ? "ok" : "");
 		var scheduleText = item.schedule_enabled ? get_subscription_schedule_label(item) : "未启用";
 		var nodeCountText = String(item.node_count || "0");
-		html += '<div class="submgr-card' + (enabled ? '' : ' is-disabled') + '" onclick="open_subscription_profile_editor(\'' + htmlEscape(String(item.id || "")) + '\')" title="点击编辑订阅">';
-		html += '<a href="javascript:void(0);" class="submgr-card-delete" onclick="event.stopPropagation();delete_subscription_profile(\'' + htmlEscape(String(item.id || "")) + '\');return false;" title="删除订阅">&times;</a>';
+		var escapedProfileId = htmlEscape(String(item.id || ""));
+		html += '<div class="submgr-card' + (enabled ? '' : ' is-disabled') + '" data-profile-id="' + escapedProfileId + '" onclick="open_subscription_profile_editor(this.getAttribute(\'data-profile-id\'))" title="点击编辑订阅">';
+		html += '<a href="javascript:void(0);" class="submgr-card-delete" data-profile-id="' + escapedProfileId + '" onclick="event.stopPropagation();delete_subscription_profile(this.getAttribute(\'data-profile-id\'));return false;" title="删除订阅">&times;</a>';
 		html += '<div class="submgr-card-head"><div><div class="submgr-card-title">' + htmlEscape(item.name || "未命名订阅") + '</div><div class="submgr-card-subtitle">' + htmlEscape(host || item.url || "") + '</div></div></div>';
 		html += '<div class="submgr-chip-row">';
 		html += render_subscription_chip("状态", enabled ? "启用" : "未启用", enabled ? "ok" : "warn");
@@ -5624,7 +5625,7 @@ function render_subscription_profiles_cards() {
 		}
 		html += '</div>';
 		html += '<div class="submgr-card-actions">';
-		html += '<a class="submgr-card-btn sync' + (canSync ? '' : ' disabled') + '" href="javascript:void(0);" onclick="event.stopPropagation();' + (canSync ? ('sync_subscription_profiles(\'' + htmlEscape(String(item.id || "")) + '\');') : '') + 'return false;">同步</a>';
+		html += '<a class="submgr-card-btn sync' + (canSync ? '' : ' disabled') + '" href="javascript:void(0);" data-profile-id="' + escapedProfileId + '" onclick="event.stopPropagation();' + (canSync ? 'sync_subscription_profiles(this.getAttribute(\'data-profile-id\'));' : '') + 'return false;">同步</a>';
 		html += '</div>';
 		html += '</div>';
 	}
@@ -7030,7 +7031,10 @@ function refresh_options() {
 	for (var i = 0; i < ss_nodes.length; i++) {
 		var field = ss_nodes[i];
 		var c = confs[field];
-		option3.append('<option value="' + field + '">' + c["name"] + '</option>');
+		option3.append($("<option>", {
+			value: field,
+			text: c["name"] || ""
+		}));
 		if (c.group) {
 			var real_group = c.group.split("_")[0];
 			var group_tag = real_group + " - ";
@@ -11415,71 +11419,78 @@ function refresh_html() {
 		var serverDragable = !qrcodeEnabled && E("ss_basic_dragable").checked;
 	//for (var field in confs) {
 		//var c = confs[field];
-		html += '<tr id="node_' + c["node"] + '">';
+		var safeNodeId = htmlEscape(c["node"]);
+		var safeGroup = htmlEscape(c["group"] || "");
+		var safeName = htmlEscape(c["name"] || "");
+		html += '<tr id="node_' + safeNodeId + '">';
 		//序号
 		html +='<td style="width:' + width[1] + ';" id="node_order_' + (i + 1) + '" class="dragHandle">' + (i + 1) + '</td>';
 		//节点名称
-		//html += '<td style="width:' + width[2] + ';" class="dragHandle node_name" title="' + c["group"] + '&#10;' + c["name"] + '" id="ss_node_name_' + c["node"] + '" onMouseOver="show_info(this)">'
-		html += '<td style="width:' + width[2] + ';" class="dragHandle node_name" title="' + c["group"] + '&#10;' + c["name"] + '" id="ss_node_name_' + c["node"] + '">'
+		//html += '<td style="width:' + width[2] + ';" class="dragHandle node_name" title="' + safeGroup + '&#10;' + safeName + '" id="ss_node_name_' + safeNodeId + '" onMouseOver="show_info(this)">'
+		html += '<td style="width:' + width[2] + ';" class="dragHandle node_name" title="' + safeGroup + '&#10;' + safeName + '" id="ss_node_name_' + safeNodeId + '">'
 		html += '<div class="shadow1" style="display: none;"></div>'
-		html += '<div class="nickname">' + c["name"] + '</div>';
+		html += '<div class="nickname">' + safeName + '</div>';
 		html += '</td>';
 		if(noserver != "1"){
 			//server
 			if(c["type"] == 8)
 			{
+				var safeHy2Server = htmlEscape(c["hy2_server"] || "");
 				if(qrcodeEnabled){
-					html += '<td style="width:' + width[3] + ';cursor:pointer" class="node_server" id="server_' + c["node"] + '" title="' + c["hy2_server"] + '" onclick="makeQRcode(this)">';
+					html += '<td style="width:' + width[3] + ';cursor:pointer" class="node_server" id="server_' + safeNodeId + '" title="' + safeHy2Server + '" onclick="makeQRcode(this)">';
 				}else if(serverDragable){
-					html += '<td style="width:' + width[3] + ';cursor:move" class="dragHandle node_server" id="server_' + c["node"] + '" title="' + c["hy2_server"] + '&#10;拖拽此处可移动节点">';
+					html += '<td style="width:' + width[3] + ';cursor:move" class="dragHandle node_server" id="server_' + safeNodeId + '" title="' + safeHy2Server + '&#10;拖拽此处可移动节点">';
 				}else{
-					html += '<td style="width:' + width[3] + ';" class="node_server" id="server_' + c["node"] + '">';
+					html += '<td style="width:' + width[3] + ';" class="node_server" id="server_' + safeNodeId + '">';
 				}
 				html += '<div style="display: none;" class="shadow2"></div>';
-				html += '<div class="server">' + c["hy2_server"] + '</div>';
+				html += '<div class="server">' + safeHy2Server + '</div>';
 				html += '</td>';
 			}
 			//fancyss_naive_1
 				else if(c["type"] == 6)																					//fancyss-full
 				{																										//fancyss-full
+					var safeNaiveServer = htmlEscape(c["naive_server"] || "");											//fancyss-full
 					if(qrcodeEnabled){
-						html += '<td style="width:' + width[3] + ';cursor:pointer" class="node_server" id="server_' + c["node"] + '" title="' + c["naive_server"] + '" onclick="makeQRcode(this)">';	//fancyss-full
+						html += '<td style="width:' + width[3] + ';cursor:pointer" class="node_server" id="server_' + safeNodeId + '" title="' + safeNaiveServer + '" onclick="makeQRcode(this)">';	//fancyss-full
 				}else if(serverDragable){
-					html += '<td style="width:' + width[3] + ';cursor:move" class="dragHandle node_server" id="server_' + c["node"] + '" title="' + c["naive_server"] + '&#10;拖拽此处可移动节点">';	//fancyss-full
+					html += '<td style="width:' + width[3] + ';cursor:move" class="dragHandle node_server" id="server_' + safeNodeId + '" title="' + safeNaiveServer + '&#10;拖拽此处可移动节点">';	//fancyss-full
 				}else{
-					html += '<td style="width:' + width[3] + ';" class="node_server" id="server_' + c["node"] + '">';	//fancyss-full
+					html += '<td style="width:' + width[3] + ';" class="node_server" id="server_' + safeNodeId + '">';	//fancyss-full
 				}
 				html += '<div style="display: none;" class="shadow2"></div>';										//fancyss-full
-				html += '<div class="server">' + c["naive_server"] + '</div>';										//fancyss-full
+				html += '<div class="server">' + safeNaiveServer + '</div>';										//fancyss-full
 					html += '</td>';																					//fancyss-full
 				}																										//fancyss-full
 				//fancyss_naive_2
 				//fancyss_anytls_1
 				else if(c["type"] == 9)																					//fancyss-full
 				{																										//fancyss-full
+					var safeAnytlsServer = htmlEscape(c["anytls_server"] || "");										//fancyss-full
 					if(qrcodeEnabled){
-						html += '<td style="width:' + width[3] + ';cursor:pointer" class="node_server" id="server_' + c["node"] + '" title="' + c["anytls_server"] + '" onclick="makeQRcode(this)">';	//fancyss-full
+						html += '<td style="width:' + width[3] + ';cursor:pointer" class="node_server" id="server_' + safeNodeId + '" title="' + safeAnytlsServer + '" onclick="makeQRcode(this)">';	//fancyss-full
 					}else if(serverDragable){
-						html += '<td style="width:' + width[3] + ';cursor:move" class="dragHandle node_server" id="server_' + c["node"] + '" title="' + c["anytls_server"] + '&#10;拖拽此处可移动节点">';	//fancyss-full
+						html += '<td style="width:' + width[3] + ';cursor:move" class="dragHandle node_server" id="server_' + safeNodeId + '" title="' + safeAnytlsServer + '&#10;拖拽此处可移动节点">';	//fancyss-full
 					}else{
-						html += '<td style="width:' + width[3] + ';" class="node_server" id="server_' + c["node"] + '">';	//fancyss-full
+						html += '<td style="width:' + width[3] + ';" class="node_server" id="server_' + safeNodeId + '">';	//fancyss-full
 					}
 					html += '<div style="display: none;" class="shadow2"></div>';										//fancyss-full
-					html += '<div class="server">' + c["anytls_server"] + '</div>';										//fancyss-full
+					html += '<div class="server">' + safeAnytlsServer + '</div>';										//fancyss-full
 					html += '</td>';																					//fancyss-full
 				}																										//fancyss-full
 				//fancyss_anytls_2
 				else
 			{
+				var safeServer = htmlEscape(c["server"] || "");
 				if(qrcodeEnabled){
-					html += '<td style="width:' + width[3] + ';cursor:pointer" class="node_server" id="server_' + c["node"] + '" title="' + c["server"] + '" onclick="makeQRcode(this)">';
+					html += '<td style="width:' + width[3] + ';cursor:pointer" class="node_server" id="server_' + safeNodeId + '" title="' + safeServer + '" onclick="makeQRcode(this)">';
 				}else if(serverDragable){
-					html += '<td style="width:' + width[3] + ';cursor:move" class="dragHandle node_server" id="server_' + c["node"] + '" title="' + c["server"] + '&#10;拖拽此处可移动节点">';
+					html += '<td style="width:' + width[3] + ';cursor:move" class="dragHandle node_server" id="server_' + safeNodeId + '" title="' + safeServer + '&#10;拖拽此处可移动节点">';
 				}else{
-					html += '<td style="width:' + width[3] + ';" class="node_server" id="server_' + c["node"] + '">';
+					html += '<td style="width:' + width[3] + ';" class="node_server" id="server_' + safeNodeId + '">';
 				}
 				html += '<div style="display: none;" class="shadow2"></div>';
-				html += '<div class="server">' + c["server"] + '</div>';
+				html += '<div class="server">' + safeServer + '</div>';
 				html += '</td>';
 			}
 		}
@@ -11499,16 +11510,16 @@ function refresh_html() {
 				break;
 			case '3' :
 				if(c["protoc"]){
-					html += c["protoc"];
+					html += htmlEscape(c["protoc"]);
 				}else{
 					html += 'vmess';
 				}
 				break;
 			case '4' :
 				if(c["protoc"]){
-					html += c["protoc"];
+					html += htmlEscape(c["protoc"]);
 				}else{
-					html += c["xray_prot"];
+					html += htmlEscape(c["xray_prot"] || "");
 				}
 				break;
 			case '5' :
@@ -14942,7 +14953,7 @@ function lookup_status_log(s) {
 		var elem_h_offset = (page_h - elem_h) / 2;
 		var elem_w_offset = (page_w - elem_w) / 2 + 90;
 		if(elem_h_offset < 0) elem_h_offset = 10;
-		$("#ssf_test_url").html(E("ss_basic_furl").value)
+		$("#ssf_test_url").text(E("ss_basic_furl").value)
 		E("ssf_status_div").style.visibility = "visible";
 		$('#ssf_status_div').offset({top: elem_h_offset, left: elem_w_offset});
 		get_status_log(1);
@@ -14952,7 +14963,7 @@ function lookup_status_log(s) {
 		var elem_h_offset = (page_h - elem_h) / 2;
 		var elem_w_offset = (page_w - elem_w) / 2 + 90;
 		if(elem_h_offset < 0) elem_h_offset = 10;
-		$("#ssc_test_url").html(E("ss_basic_curl").value)
+		$("#ssc_test_url").text(E("ss_basic_curl").value)
 		E("ssc_status_div").style.visibility = "visible";
 		$('#ssc_status_div').offset({top: elem_h_offset, left: elem_w_offset});
 		get_status_log(2);
@@ -15238,7 +15249,9 @@ function escape_acl_html(str) {
 	return String(str || "")
 		.replace(/&/g, "&amp;")
 		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;");
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");
 }
 
 function escape_acl_attr(str) {

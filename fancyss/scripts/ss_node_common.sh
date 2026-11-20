@@ -2098,15 +2098,38 @@ fss_capture_legacy_backup_sh() {
 	[ -n "${output_file}" ] || return 1
 	: > "${output_file}"
 
-	(
-		_FSS_RESTORE_CAPTURE_OUT="${output_file}"
-		dbus() {
-			[ "$1" = "set" ] || return 0
-			[ -n "$2" ] || return 0
-			printf '%s\n' "$2" >> "${_FSS_RESTORE_CAPTURE_OUT}"
+	# Parse legacy backup purely as data; never execute or source uploaded .sh files.
+	awk '
+	{
+		line = $0
+		sub(/\r$/, "", line)
+		sub(/^[ \t]+/, "", line)
+		if (line == "" || substr(line, 1, 1) == "#") next
+		if (line !~ /^dbus[ \t]+set[ \t]+/) next
+		rest = line
+		sub(/^dbus[ \t]+set[ \t]+/, "", rest)
+		eq = index(rest, "=")
+		if (eq <= 1) next
+		key = substr(rest, 1, eq - 1)
+		if (key !~ /^(ss|ssconf|fss)_[A-Za-z0-9_]+$/) next
+		val = substr(rest, eq + 1)
+		sub(/[ \t]+$/, "", val)
+		n = length(val)
+		if (n >= 2) {
+			first = substr(val, 1, 1)
+			last = substr(val, n, 1)
+			if (first == "\"" && last == "\"") {
+				val = substr(val, 2, n - 2)
+				gsub(/\\"/, "\"", val)
+				gsub(/\\\\/, "\\", val)
+			} else if (first == "\x27" && last == "\x27") {
+				val = substr(val, 2, n - 2)
+				gsub(/\x27\\\x27\x27/, "\x27", val)
+			}
 		}
-		. "${script_file}"
-	) >/dev/null 2>&1
+		printf "%s=%s\n", key, val
+	}
+	' "${script_file}" > "${output_file}"
 }
 
 fss_legacy_node_dump_to_v2_tsv() {

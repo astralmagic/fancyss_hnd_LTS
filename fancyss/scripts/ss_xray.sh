@@ -100,7 +100,7 @@ update_now(){
 	mkdir -p /tmp/xray && cd /tmp/xray
 
 	echo_date "开始下载校验文件：md5sum.txt"
-	wget -4 --no-check-certificate --timeout=20 -qO - ${url_main}/$1/md5sum.txt > /tmp/xray/md5sum.txt
+	wget -4 --timeout=20 -qO - "${url_main}/$1/md5sum.txt" > /tmp/xray/md5sum.txt
 	if [ "$?" != "0" ];then
 		echo_date "md5sum.txt下载失败！"
 		md5sum_ok=0
@@ -111,7 +111,7 @@ update_now(){
 	
 	echo_date "开始下载xray程序"
 	echo_date "下载地址：${url_main}/$1/xray_${ARCH}"
-	wget -4 --no-check-certificate --timeout=20 --tries=1 ${url_main}/$1/xray_${ARCH}
+	wget -4 --timeout=20 --tries=1 "${url_main}/$1/xray_${ARCH}"
 	#curl -L -H "Cache-Control: no-cache" -o /tmp/xray/xray $url_main/$1/xray
 	if [ "$?" != "0" ];then
 		echo_date "xray下载失败！"
