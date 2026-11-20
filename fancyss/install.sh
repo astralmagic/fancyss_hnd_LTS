@@ -1870,6 +1870,9 @@ install_now(){
 
 	[ -z "$(dbus get ss_basic_proxy_newb)" ] && dbus set ss_basic_proxy_newb=1
 	[ -z "$(dbus get ss_basic_proxy_ipv6)" ] && dbus set ss_basic_proxy_ipv6=0
+	[ -z "$(dbus get ss_basic_block_webrtc)" ] && dbus set ss_basic_block_webrtc=0
+	[ -z "$(dbus get ss_basic_block_webrtc_ports)" ] && dbus set ss_basic_block_webrtc_ports=common
+	[ -z "$(dbus get ss_basic_block_webrtc_ipv6)" ] && dbus set ss_basic_block_webrtc_ipv6=1
 	[ -z "${ss_basic_udpoff}" ] && { ss_basic_udpoff=1; dbus set ss_basic_udpoff=1; }
 	[ -z "${ss_basic_udpall}" ] && { ss_basic_udpall=0; dbus set ss_basic_udpall=0; }
 	# 兼容，仅chatgpt删除掉了（3.4.13），ss_basic_udpoff和ss_basic_udpall必须有一个等于1

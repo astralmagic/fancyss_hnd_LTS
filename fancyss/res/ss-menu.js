@@ -1061,6 +1061,17 @@ function openssHint(itemNum, flag) {
 		statusmenu += "2. 在设定分钟内再次访问节点列表，会直接复用现有测速结果；超过设定分钟后访问，页面会自动触发一次批量测速刷新。<br /><br />";
 		statusmenu += "3. 自动触发时会显示 waiting / loading / booting 等中间状态，不会再静默刷新。";
 		_caption = "说明：";
+	} else if (itemNum == 157) {
+		width = "700px";
+		statusmenu = "<div style='padding-left:16px;padding-right:16px;line-height:1.6'>";
+		statusmenu += "<b>WebRTC 防泄漏（全局防火墙拦截）：</b><br /><br />";
+		statusmenu += "1. 浏览器通过 WebRTC（UDP STUN/TURN）探测公网 IP 时，若 UDP 未走代理或命中直连规则，会直接从路由器 WAN 口发包并暴露真实公网 IP。<br /><br />";
+		statusmenu += "2. 本开关在路由器 <b>filter FORWARD</b> 链中拦截局域网（br+）发往公网的直连 UDP 流量；<b>已通过 TPROXY 走代理的 UDP 不受影响</b>，且自动放行内网/保留地址（ignlist/ignlist6）。<br /><br />";
+		statusmenu += "3. <b>常见端口</b>：拦截常见 STUN/TURN UDP 端口（3478-3481、5349、19302-19309），对普通游戏和日常 UDP 业务影响较小。<br />";
+		statusmenu += "4. <b>所有端口</b>：拦截除基础网络端口（IPv4: 53/67-68/123；IPv6: 53/123/546-547）外的所有出站直连 UDP，可防止非常规高端口 STUN 泄漏，但会阻断未走代理的 UDP 语音/视频通话、游戏和 P2P。<br /><br />";
+		statusmenu += "5. <b>同时处理 IPv6</b>：即使未开启「IPv6 代理」，也会同步在 ip6tables 中拦截出站直连 IPv6 UDP，防止原生 IPv6 环境下 WebRTC 泄漏公网 IPv6 地址。";
+		statusmenu += "</div>";
+		_caption = "说明：";
 	}
 	return overlib(statusmenu, OFFSETX, 30, OFFSETY, 10, RIGHT, STICKY, WIDTH, 'width', CAPTION, _caption, CLOSETITLE, '');
 
