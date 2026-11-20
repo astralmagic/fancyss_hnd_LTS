@@ -7,6 +7,10 @@
         {
           "type": "remote_domain_list_custom",
           "url": "https://raw.githubusercontent.com/DustinWin/domain-list-custom/domains/ai.list"
+        },
+        {
+          "type": "local_site_tokens",
+          "path": "rules_ng2/extra/ai.txt"
         }
       ]
     },

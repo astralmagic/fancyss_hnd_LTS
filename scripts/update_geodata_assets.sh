@@ -486,6 +486,10 @@ emit_source() {
 		path=$(printf '%s' "$source_json" | jq -r '.path')
 		cat "${REPO_ROOT}/${path}" | normalize_site_plain_suffix
 		;;
+	site:local_site_tokens)
+		path=$(printf '%s' "$source_json" | jq -r '.path')
+		cat "${REPO_ROOT}/${path}" | normalize_site_tokens
+		;;
 	ip:remote_666os_ip)
 		normalize_ip_plain < "${remote_tmp}"
 		;;
