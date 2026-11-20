@@ -7327,6 +7327,10 @@ download_by_curl(){
 		set --
 	fi
 
+	if [ "${ss_basic_sub_insecure:-0}" = "1" ] || [ "${SUB_INSECURE_TLS:-0}" = "1" ]; then
+		set -- "$@" -k
+	fi
+
 	if [ ! -L "/tmp/curl-subscribe" ];then
 		ln -sf /koolshare/bin/curl-fancyss /tmp/curl-subscribe
 	fi
@@ -7336,7 +7340,7 @@ download_by_curl(){
 		SUB_LAST_DOWNLOAD_MODE="direct"
 		echo_date "➡️通过本地网络直连下载订阅..."
 		rm -f "${header_file}" >/dev/null 2>&1
-		run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${sub_hash4}.txt"
+		run /tmp/curl-subscribe -sS -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${sub_hash4}.txt"
 		if [ "$?" = "0" ]; then
 			return 0
 		fi
@@ -7348,7 +7352,7 @@ download_by_curl(){
 			SUB_LAST_DOWNLOAD_MODE="proxy"
 			echo_date "✈️使用当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点：[$(sub_get_node_field_plain "${CURR_NODE}" name)]提供的网络下载..."
 			rm -f "${header_file}" >/dev/null 2>&1
-			run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 -x socks5h://127.0.0.1:23456 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${sub_hash4}.txt"
+			run /tmp/curl-subscribe -sS -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 -x socks5h://127.0.0.1:23456 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${sub_hash4}.txt"
 			return $?
 		else
 			echo_date "⚠️当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点工作异常，结束curl订阅下载！"
@@ -7361,7 +7365,7 @@ download_by_curl(){
 			SUB_LAST_DOWNLOAD_MODE="proxy"
 			echo_date "✈️使用当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点：[$(sub_get_node_field_plain "${CURR_NODE}" name)]提供的网络下载..."
 			rm -f "${header_file}" >/dev/null 2>&1
-			run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 -x socks5h://127.0.0.1:23456 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${sub_hash4}.txt"
+			run /tmp/curl-subscribe -sS -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 -x socks5h://127.0.0.1:23456 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${sub_hash4}.txt"
 			return $?
 		else
 			echo_date "⚠️当前$(get_type_name "$(sub_get_node_field_plain "${CURR_NODE}" type)")节点工作异常，改用常规网络下载..."
@@ -7372,7 +7376,7 @@ download_by_curl(){
 		SUB_LAST_DOWNLOAD_MODE="direct"
 		echo_date "⬇️使用常规网络下载..."
 		rm -f "${header_file}" >/dev/null 2>&1
-		run /tmp/curl-subscribe -sSk -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${sub_hash4}.txt"
+		run /tmp/curl-subscribe -sS -L "$@" -D "${header_file}" --connect-timeout 5 -m 5 --retry 3 --retry-delay 1 "${url_encode}" 2>/dev/null >"${DIR}/sub_file_encode_${sub_hash4}.txt"
 		return $?
 	fi
 }
@@ -7399,7 +7403,9 @@ download_by_wget(){
 
 	case "${url_encode}" in
 	https://*)
-		set -- "$@" --no-check-certificate
+		if [ "${ss_basic_sub_insecure:-0}" = "1" ] || [ "${SUB_INSECURE_TLS:-0}" = "1" ]; then
+			set -- "$@" --no-check-certificate
+		fi
 		;;
 	esac
 	
@@ -8381,12 +8387,24 @@ case $SH_ARG in
 	echo_date "当前节点列表内已经订阅了 $local_groups 组..." | tee -a $LOG_FILE
 	sed -i '/ssnodeupdate/d' /var/spool/cron/crontabs/* >/dev/null 2>&1
 	if [ "$(dbus get ss_basic_node_update)" = "1" ]; then
-		if [ "$(dbus get ss_basic_node_update_day)" = "7" ]; then
-			cru a ssnodeupdate "0 $(dbus get ss_basic_node_update_hr) * * * /koolshare/scripts/ss_node_subscribe.sh fancyss 3"
-			echo_date "设置自动更新订阅服务在每天 $(dbus get ss_basic_node_update_hr) 点。" | tee -a $LOG_FILE
+		_sub_hr="$(dbus get ss_basic_node_update_hr)"
+		_sub_day="$(dbus get ss_basic_node_update_day)"
+		case "${_sub_hr}" in
+		''|*[!0-9]*) _sub_hr="" ;;
+		esac
+		case "${_sub_day}" in
+		''|*[!0-9]*) _sub_day="" ;;
+		esac
+		if [ -n "${_sub_hr}" ] && [ "${_sub_hr}" -ge 0 ] && [ "${_sub_hr}" -le 23 ] && [ -n "${_sub_day}" ] && [ "${_sub_day}" -ge 0 ] && [ "${_sub_day}" -le 7 ]; then
+			if [ "${_sub_day}" = "7" ]; then
+				cru a ssnodeupdate "0 ${_sub_hr} * * * /koolshare/scripts/ss_node_subscribe.sh fancyss 3"
+				echo_date "设置自动更新订阅服务在每天 ${_sub_hr} 点。" | tee -a $LOG_FILE
+			else
+				cru a ssnodeupdate "0 ${_sub_hr} * * ${_sub_day} /koolshare/scripts/ss_node_subscribe.sh fancyss 3"
+				echo_date "设置自动更新订阅服务在星期 ${_sub_day} 的 ${_sub_hr} 点。" | tee -a $LOG_FILE
+			fi
 		else
-			cru a ssnodeupdate "0 $(dbus get ss_basic_node_update_hr) * * $(dbus get ss_basic_node_update_day) /koolshare/scripts/ss_node_subscribe.sh fancyss 3"
-			echo_date "设置自动更新订阅服务在星期 $(dbus get ss_basic_node_update_day) 的 $(dbus get ss_basic_node_update_hr) 点。" | tee -a $LOG_FILE
+			echo_date "自动更新订阅时间参数非法，跳过设置计划任务。" | tee -a $LOG_FILE
 		fi
 	else
 		echo_date "关闭自动更新订阅服务！" | tee -a $LOG_FILE

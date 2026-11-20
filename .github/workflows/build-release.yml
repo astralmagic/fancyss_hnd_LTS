@@ -18,7 +18,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
 
@@ -51,6 +51,7 @@ jobs:
           python3 tests/test_p1_regressions.py -v
           python3 tests/test_p2_regressions.py -v
           python3 tests/test_review_regressions.py -v
+          python3 tests/test_security_fixes.py -v
           python3 tests/test_anytls_integration.py -v
 
       - name: Check lazy node environment derivation

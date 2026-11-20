@@ -322,6 +322,16 @@ change_cru(){
 	echo ==================================================================================================
 	sed -i '/ssupdate/d' /var/spool/cron/crontabs/* >/dev/null 2>&1
 	if [ "1" == "${ss_basic_rule_update}" ]; then
+		case "${ss_basic_rule_update_time}" in
+		''|*[!0-9]*)
+			echo_date "fancyss规则定时更新时间参数非法，跳过设置！"
+			return 1
+			;;
+		esac
+		if [ "${ss_basic_rule_update_time}" -lt 0 ] || [ "${ss_basic_rule_update_time}" -gt 23 ]; then
+			echo_date "fancyss规则定时更新时间超出范围（0-23），跳过设置！"
+			return 1
+		fi
 		echo_date "应用fancyss规则定时更新任务：每天${ss_basic_rule_update_time}:00自动检测更新规则."
 		cru a ssupdate "0 ${ss_basic_rule_update_time} * * * /bin/sh /koolshare/scripts/ss_rule_update.sh"
 	else

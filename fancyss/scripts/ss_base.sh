@@ -357,6 +357,9 @@ resolve_acl_mac() {
 	local acl_ip=""
 	local orig_mac=""
 	local acl_mac=""
+	case "${acl}" in
+	''|*[!0-9]*) return 1 ;;
+	esac
 	eval acl_ip=\$ss_acl_ip_${acl}
 	eval orig_mac=\$ss_acl_mac_${acl}
 	acl_mac="${orig_mac}"
@@ -463,6 +466,9 @@ is_acl_rule_complete() {
 	local acl_ip=""
 	local acl_mode=""
 	local acl_port=""
+	case "${acl}" in
+	''|*[!0-9]*) return 1 ;;
+	esac
 	eval acl_ip=\$ss_acl_ip_${acl}
 	eval acl_mode=\$ss_acl_mode_${acl}
 	eval acl_port=\$ss_acl_port_${acl}
@@ -476,7 +482,7 @@ is_acl_rule_complete() {
 }
 
 get_acl_rule_indexes() {
-	local all_acl_nu=$(dbus list ss_acl_mode_ | cut -d "=" -f 1 | cut -d "_" -f 4 | sort -n)
+	local all_acl_nu=$(dbus list ss_acl_mode_ | cut -d "=" -f 1 | cut -d "_" -f 4 | grep -E '^[0-9]+$' | sort -n)
 	local valid_acl_nu=""
 	local acl=""
 	for acl in ${all_acl_nu}

@@ -1392,25 +1392,21 @@ lite2full(){
 		rm -rf /koolshare/configs/fanyss/fancyss_kv.json
 		return
 	fi
-	local file_name=fancyss_nodes_restore
-	cat > /tmp/${file_name}.sh <<-EOF
-		#!/bin/sh
-		source /koolshare/scripts/base.sh
-		#------------------------
-	EOF
 	NODE_INDEX=$(dbus list ssconf_basic_name_ | sed -n 's/^.*_\([0-9]\+\)=.*/\1/p' | sort -rn | sed -n '1p')
 	[ -z "${NODE_INDEX}" ] && NODE_INDEX="0"
-	local count=$(($NODE_INDEX + 1))
-	while read nodes; do
-		echo ${nodes} | sed 's/\",\"/\"\n\"/g;s/^{//;s/}$//' | sed 's/^\"/dbus set ssconf_basic_/g' | sed "s/\":/_${count}=/g" >>/tmp/${file_name}.sh
-		let count+=1
+	local count=$((NODE_INDEX + 1))
+	local jq_bin="/koolshare/bin/jq"
+	[ -x "${jq_bin}" ] || jq_bin="jq"
+	while IFS= read -r nodes; do
+		[ -n "${nodes}" ] || continue
+		printf '%s\n' "${nodes}" | "${jq_bin}" -r 'to_entries[] | select(.key | test("^[A-Za-z0-9_]+$")) | "\(.key)\t\(.value | tostring)"' 2>/dev/null | while IFS='	' read -r _k _v; do
+			[ -n "${_k}" ] || continue
+			dbus set "ssconf_basic_${_k}_${count}=${_v}"
+		done
+		count=$((count + 1))
 	done < /koolshare/configs/fanyss/fancyss_kv.json
-	chmod +x /tmp/${file_name}.sh
-	sh /tmp/${file_name}.sh
 	echo_date "节点恢复成功！"
 	sync
-	rm -rf /tmp/${file_name}.sh
-	rm -rf /tmp/${file_name}.txt
 	rm -rf /koolshare/configs/fanyss/fancyss_kv.json
 }
 
@@ -1867,14 +1863,15 @@ install_now(){
 	[ ! -L "/koolshare/init.d/N99shadowsocks.sh" ] && ln -sf /koolshare/ss/ssconfig.sh /koolshare/init.d/N99shadowsocks.sh
 	[ ! -L "/koolshare/init.d/M99shadowsocks.sh" ] && ln -sf /koolshare/ss/ssconfig.sh /koolshare/init.d/M99shadowsocks.sh
 
-	# default values
-	eval $(dbus export ss)
+	# default values (avoid eval $(dbus export ss))
 	local PKG_TYPE=$(cat /koolshare/webs/Module_shadowsocks.asp | tr -d '\r' | grep -Eo "PKG_TYPE=.+"|awk -F "=" '{print $2}'|sed 's/"//g')
+	local ss_basic_udpoff="$(dbus get ss_basic_udpoff)"
+	local ss_basic_udpall="$(dbus get ss_basic_udpall)"
 
-	[ -z "${ss_basic_proxy_newb}" ] && dbus set ss_basic_proxy_newb=1
-	[ -z "${ss_basic_proxy_ipv6}" ] && dbus set ss_basic_proxy_ipv6=0
-	[ -z "${ss_basic_udpoff}" ] && dbus set ss_basic_udpoff=1
-	[ -z "${ss_basic_udpall}" ] && dbus set ss_basic_udpall=0
+	[ -z "$(dbus get ss_basic_proxy_newb)" ] && dbus set ss_basic_proxy_newb=1
+	[ -z "$(dbus get ss_basic_proxy_ipv6)" ] && dbus set ss_basic_proxy_ipv6=0
+	[ -z "${ss_basic_udpoff}" ] && { ss_basic_udpoff=1; dbus set ss_basic_udpoff=1; }
+	[ -z "${ss_basic_udpall}" ] && { ss_basic_udpall=0; dbus set ss_basic_udpall=0; }
 	# 兼容，仅chatgpt删除掉了（3.4.13），ss_basic_udpoff和ss_basic_udpall必须有一个等于1
 	if [ "${ss_basic_udpoff}" != "1" -a "${ss_basic_udpall}" != "1" ];then
 		ss_basic_udpoff=1
@@ -1882,17 +1879,17 @@ install_now(){
 		dbus set ss_basic_udpoff=1
 		dbus set ss_basic_udpall=0
 	fi
-	[ -z "${ss_basic_nonetcheck}" ] && dbus set ss_basic_nonetcheck=1
-	[ -z "${ss_basic_notimecheck}" ] && dbus set ss_basic_notimecheck=1
-	[ -z "${ss_basic_nocdnscheck}" ] && dbus set ss_basic_nocdnscheck=1
-	[ -z "${ss_basic_nofdnscheck}" ] && dbus set ss_basic_nofdnscheck=1
-	[ -z "${ss_basic_noruncheck}" ] && dbus set ss_basic_noruncheck=1
-	[ -z "${ss_basic_qrcode}" ] && dbus set ss_basic_qrcode=1
-	[ -z "${ss_basic_node_cards}" ] && dbus set ss_basic_node_cards=1
+	[ -z "$(dbus get ss_basic_nonetcheck)" ] && dbus set ss_basic_nonetcheck=1
+	[ -z "$(dbus get ss_basic_notimecheck)" ] && dbus set ss_basic_notimecheck=1
+	[ -z "$(dbus get ss_basic_nocdnscheck)" ] && dbus set ss_basic_nocdnscheck=1
+	[ -z "$(dbus get ss_basic_nofdnscheck)" ] && dbus set ss_basic_nofdnscheck=1
+	[ -z "$(dbus get ss_basic_noruncheck)" ] && dbus set ss_basic_noruncheck=1
+	[ -z "$(dbus get ss_basic_qrcode)" ] && dbus set ss_basic_qrcode=1
+	[ -z "$(dbus get ss_basic_node_cards)" ] && dbus set ss_basic_node_cards=1
 
-	[ -z "${ss_basic_chng_xact}" ] && dbus set ss_basic_chng_xact=0
-	[ -z "${ss_basic_chng_xgt}" ] && dbus set ss_basic_chng_xgt=1
-	[ -z "${ss_basic_chng_xmc}" ] && dbus set ss_basic_chng_xmc=0
+	[ -z "$(dbus get ss_basic_chng_xact)" ] && dbus set ss_basic_chng_xact=0
+	[ -z "$(dbus get ss_basic_chng_xgt)" ] && dbus set ss_basic_chng_xgt=1
+	[ -z "$(dbus get ss_basic_chng_xmc)" ] && dbus set ss_basic_chng_xmc=0
 	
 	# others
 	fss_cleanup_acl_default_port_keys >/dev/null 2>&1
@@ -1911,7 +1908,7 @@ install_now(){
 	dbus set ss_basic_latency_batch="1"
 
 	# 因版本变化导致一些值没有了，更改一下
-	if [ "${ss_basic_chng_china_2_tcp}" == "5" ];then
+	if [ "$(dbus get ss_basic_chng_china_2_tcp)" == "5" ];then
 		dbus set ss_basic_chng_china_2_tcp="6"
 	fi
 

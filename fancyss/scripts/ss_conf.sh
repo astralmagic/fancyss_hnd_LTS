@@ -294,19 +294,11 @@ restore_sh(){
 	echo_date "检测到科学上网备份文件..."
 	echo_date "开始恢复配置..."
 	echo_date "兼容SH备份恢复耗时可能较长，请耐心等待..."
-	chmod +x /tmp/upload/ssconf_backup.sh
 	if fss_restore_legacy_backup_sh_fast /tmp/upload/ssconf_backup.sh; then
-		echo_date "兼容SH备份快速恢复完成！"
+		echo_date "兼容SH备份安全恢复完成！"
 	else
-		echo_date "快速恢复失败，回退到兼容恢复模式..."
-		echo_date "开始执行备份脚本..."
-		sh /tmp/upload/ssconf_backup.sh
-		echo_date "备份脚本执行完成，开始迁移节点数据..."
-		if fss_auto_migrate_if_needed 1 >/dev/null 2>&1; then
-			echo_date "节点数据迁移完成！"
-		else
-			echo_date "节点数据迁移未执行或无需迁移，继续..."
-		fi
+		echo_date "兼容SH备份格式校验或解析失败，已拒绝直接执行上传脚本。"
+		return 1
 	fi
 	dbus set ss_basic_enable="0"
 	dbus set ss_basic_version_local=$(cat /koolshare/ss/version) 
@@ -458,8 +450,14 @@ download_resv_log(){
 	mkdir -p /tmp/files
 	ln -sf /tmp/files /koolshare/webs/files
 	local FILE_NAME=$(dbus get ss_basic_logname)
-	local TIME_NOW=$(date -R +%Y%m%d_%H%M%S)
-	cp -rf /tmp/upload/${FILE_NAME}.txt /tmp/files/${FILE_NAME}.txt
+	case "${FILE_NAME}" in
+	''|*[!A-Za-z0-9_-]*)
+		echo_date "非法日志文件名，已拒绝导出。"
+		return 1
+		;;
+	esac
+	[ -f "/tmp/upload/${FILE_NAME}.txt" ] || return 1
+	cp -f -- "/tmp/upload/${FILE_NAME}.txt" "/tmp/files/${FILE_NAME}.txt"
 }
 
 download_dig_log(){

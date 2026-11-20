@@ -448,15 +448,17 @@ download_by_wget "http://plain.example.test/sub"
 
                 calls = [json.loads(line) for line in argv_log.read_text().splitlines()]
                 self.assertEqual(len(calls), 4)
-                # curl with complex UA
+                # curl with complex UA (TLS verified by default)
                 c0 = calls[0]["argv"]
                 ua_idx = c0.index("--user-agent")
                 self.assertEqual(c0[ua_idx + 1], complex_ua)
-                # wget https with complex UA -> has --user-agent <UA> and --no-check-certificate
+                self.assertNotIn("-k", c0)
+                self.assertNotIn("-sSk", c0)
+                # wget https with complex UA -> has --user-agent <UA> and verifies TLS by default
                 w0 = calls[1]["argv"]
                 w_idx = w0.index("--user-agent")
                 self.assertEqual(w0[w_idx + 1], complex_ua)
-                self.assertIn("--no-check-certificate", w0)
+                self.assertNotIn("--no-check-certificate", w0)
                 # empty UA + http -> neither --user-agent nor --no-check-certificate
                 self.assertNotIn("--user-agent", calls[2]["argv"])
                 self.assertNotIn("--user-agent", calls[3]["argv"])

@@ -457,16 +457,28 @@ wt_gen_ss_outbound() {
 		_tcp_settings="$(wt_get_xray_ss_http_obfs_tcp_settings "${ss_obfs_host}")"
 		_tcp_settings_line=',"tcpSettings": '"${_tcp_settings}"
 	elif [ "${ss_obfs}" = "tls" ]; then
+		case "${ss_port}" in
+		''|*[!0-9]*) return 1 ;;
+		esac
 		local obfs_port="${WT_PRESET_START_PORT}"
 		[ -n "${obfs_port}" ] || obfs_port=$(wt_get_reserved_port)
+		case "${obfs_port}" in
+		''|*[!0-9]*) return 1 ;;
+		esac
 		WT_LAST_START_PORT="${obfs_port}"
 		_server_ip_tmp="127.0.0.1"
 		_server_port_tmp="${obfs_port}"
+		local q_server_ip="" q_ss_port="" q_local_port="" q_ss_obfs="" q_ss_obfs_host=""
+		q_server_ip="$(wt_shell_quote "${_server_ip}")"
+		q_ss_port="$(wt_shell_quote "${ss_port}")"
+		q_local_port="$(wt_shell_quote "${_server_port_tmp}")"
+		q_ss_obfs="$(wt_shell_quote "${ss_obfs}")"
+		q_ss_obfs_host="$(wt_shell_quote "${ss_obfs_host}")"
 		if [ -n "${ss_obfs_host}" ]; then
 			cat >"${start_file}" <<-EOF
 				#!/bin/sh
 				_wt_root=\${WT_RUNTIME_ROOT:-\$(cd "\$(dirname "\$0")/.." && pwd)}
-				"\${_wt_root}/wt-obfs" -s ${_server_ip} -p ${ss_port} -l ${_server_port_tmp} --obfs ${ss_obfs} --obfs-host ${ss_obfs_host} ${OBFS_ARG} >/dev/null 2>&1 &
+				"\${_wt_root}/wt-obfs" -s ${q_server_ip} -p ${q_ss_port} -l ${q_local_port} --obfs ${q_ss_obfs} --obfs-host ${q_ss_obfs_host} ${OBFS_ARG} >/dev/null 2>&1 &
 				_i=20
 				while [ \${_i} -gt 0 ]; do
 					netstat -nl 2>/dev/null | awk '{print \$4}' | grep -E "[:\\\\.]${_server_port_tmp}\$" >/dev/null 2>&1 && break
@@ -478,7 +490,7 @@ wt_gen_ss_outbound() {
 			cat >"${start_file}" <<-EOF
 				#!/bin/sh
 				_wt_root=\${WT_RUNTIME_ROOT:-\$(cd "\$(dirname "\$0")/.." && pwd)}
-				"\${_wt_root}/wt-obfs" -s ${_server_ip} -p ${ss_port} -l ${_server_port_tmp} --obfs ${ss_obfs} ${OBFS_ARG} >/dev/null 2>&1 &
+				"\${_wt_root}/wt-obfs" -s ${q_server_ip} -p ${q_ss_port} -l ${q_local_port} --obfs ${q_ss_obfs} ${OBFS_ARG} >/dev/null 2>&1 &
 				_i=20
 				while [ \${_i} -gt 0 ]; do
 					netstat -nl 2>/dev/null | awk '{print \$4}' | grep -E "[:\\\\.]${_server_port_tmp}\$" >/dev/null 2>&1 && break
@@ -489,7 +501,7 @@ wt_gen_ss_outbound() {
 		fi
 		cat >"${stop_file}" <<-EOF
 			#!/bin/sh
-			_pid=\$(ps -w | grep "wt-obfs" | grep -w "${_server_ip}" | grep -w "${ss_port}" | grep -w "${_server_port_tmp}" | awk '{print \$1}' | sed -n '1p')
+			_pid=\$(ps -w | grep "wt-obfs" | grep -Fw -- ${q_server_ip} | grep -Fw -- ${q_ss_port} | grep -Fw -- ${q_local_port} | awk '{print \$1}' | sed -n '1p')
 			if [ -n "\${_pid}" ];then
 			    kill -9 \${_pid}
 			fi

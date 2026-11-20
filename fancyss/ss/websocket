@@ -6,69 +6,94 @@ LOGFILE=/koolshare/logs/remote_access_record.txt
 
 mkdir -p /koolshare/logs
 
-cmd() {
-	local bin="$1"
+clean_log() {
+	[ -f "${LOGFILE}" ] || return
+	[ $(wc -l < "${LOGFILE}" 2>/dev/null || echo 0) -le "10000" ] && return
+	local logdata=$(tail -n 2000 "${LOGFILE}")
+	echo "$logdata" > "${LOGFILE}" 2> /dev/null
+	unset logdata
+}
+
+is_lan_remote_addr() {
+	local remote="${1:-}"
+	local ip_cidr="" lan_ip="" lan_prefix=""
+	[ -n "${remote}" ] || return 0
+	case "${remote}" in
+	127.0.0.1|::1|::ffff:127.0.0.1) return 0 ;;
+	::ffff:*) remote="${remote#::ffff:}" ;;
+	esac
+	ip_cidr=$(ip addr show br0 2>/dev/null | grep -E "inet " | awk 'NR==1{print $2}')
+	lan_ip="${ip_cidr%/*}"
+	[ -n "${lan_ip}" ] || return 0
+	lan_prefix="${lan_ip%.*}."
+	case "${remote}" in
+	"${lan_prefix}"*) return 0 ;;
+	esac
+	return 1
+}
+
+run_allowed_script() {
+	local script_name="$1"
 	shift
-	if ! command -v "${bin}" >/dev/null 2>&1; then
-		case "${bin}" in
+	local script_path="/koolshare/scripts/${script_name}"
+	if ! [ -f "${script_path}" ]; then
+		case "${script_name}" in
 		ss_node_subscribe.sh|ss_online_update.sh)
-			echo "订阅脚本缺失：${bin}"
+			echo "订阅脚本缺失：${script_name}"
 			echo "可能原因：固件安全组件或其它程序删除了该脚本。"
 			echo "建议处理：重新安装 fancyss，并尽量升级到较新的无 ASD 固件。"
 			return 127
 			;;
+		*)
+			echo "不允许命令：${script_name}"
+			return 127
+			;;
 		esac
 	fi
-	"${bin}" "$@" 2>&1
-	# ${@%%[[:space:]]*} ${@#*[[:space:]]} 2>&1
-	# start-stop-daemon -S -b -x ${@%%[[:space:]]*} -- ${@#*[[:space:]]}
-	# start-stop-daemon -S -x ss_config.sh -- start
+	sh "${script_path}" "$@" 2>&1
 }
 
-clean_log() {
-	[ $(wc -l "${LOGFILE}" | awk '{print $1}') -le "10000" ] && return
-	local logdata=$(tail -n 2000 "${LOGFILE}")
-	echo "$logdata" > ${LOGFILE} 2> /dev/null
-	unset logdata
-}
-
-while read MSG;
+while IFS= read -r MSG;
 do
-	IP_CIDR=$(ip addr show br0 2>/dev/null | grep -E "inet " | awk '{print $2}')
-	IP_ADDR=${IP_CIDR%/*}
-	IP_ADDR=${IP_ADDR%.*}
-	RET_0=$(echo "${REMOTE_ADDR}" | grep "${IP_ADDR}")
-	RET_1=$(echo "${MSG}" | grep "ws_ok")
-	if [ -z "${RET_0}${RET_1}" ];then
-		# 非lan用户访问，记录下
-		RET_2=$(echo ${MSG} | grep -E "ss_status|statusctl")
-		if [ -z "${RET_2}" ];then
-			echo "[$(date -R +%Y年%m月%d日\ %X)] $REMOTE_ADDR:$REMOTE_PORT → ${MSG}" >>${LOGFILE}
+	MSG=$(printf '%s' "${MSG}" | tr -d '\r')
+	[ -n "${MSG}" ] || continue
+
+	if ! is_lan_remote_addr "${REMOTE_ADDR}"; then
+		if ! printf '%s' "${MSG}" | grep -Eq 'ws_ok|ss_status|statusctl'; then
+			echo "[$(date -R +%Y年%m月%d日\ %X)] ${REMOTE_ADDR}:${REMOTE_PORT} → ${MSG}" >>"${LOGFILE}"
 			clean_log
 		fi
+		echo "拒绝非局域网来源访问：${REMOTE_ADDR}"
+		exit 1
 	fi
-	RET_3=$(echo "${MSG}" | grep -Ew "wget|curl|socat|nc|eval|ssh|scp|sed|awk|dropbear|dd|ln|rm|mv|cp|cd|aria2c|printf|openssl|base64|nvram|dbus|service|ps|ifconfig|ping|yaml|log")
-	RET_4=$(echo "${MSG}" | grep -E ">|<")
-	if [ "${MSG}" == "show_message" ]; then
+
+	case "${MSG}" in
+	"echo ws_ok")
+		echo "ws_ok"
+		;;
+	"show_message")
 		echo "成功连接到路由器，当前时间：$(date -R +%Y年%m月%d日\ %X)"
-		echo "服务器：$SERVER_NAME"
-		echo "客户端：$REMOTE_ADDR"
-		echo "浏览器：$HTTP_USER_AGENT"
-		echo "$(env)"
+		echo "服务器：${SERVER_NAME}"
+		echo "客户端：${REMOTE_ADDR}"
+		echo "浏览器：${HTTP_USER_AGENT}"
 		echo "请点击下方按钮执行操作！"
-	elif [ "${MSG}" == "reboot" ]; then
+		;;
+	"reboot")
 		echo "检测到你要执行路由器重启命令！拒绝！"
-		exit
-	elif [ "${MSG}" == "get_ssf_log" ]; then
-		cat /tmp/upload/ssf_status.txt | /usr/bin/tr '\n' '@@'
-	elif [ "${MSG}" == "get_real_log" ]; then
-		_log=$(cat /tmp/upload/ss_log.txt)
-		if [ -z "${_log}" ];then
+		exit 1
+		;;
+	"get_ssf_log")
+		[ -f /tmp/upload/ssf_status.txt ] && cat /tmp/upload/ssf_status.txt | /usr/bin/tr '\n' '@@'
+		;;
+	"get_real_log")
+		_log=$(cat /tmp/upload/ss_log.txt 2>/dev/null)
+		if [ -z "${_log}" ]; then
 			echo "开始获取日志！"
 		else
 			echo "${_log}"
 		fi
-	elif [ "${MSG}" == "follow_webtest" ]; then
+		;;
+	"follow_webtest")
 		WEBTEST_FILE=/tmp/upload/webtest.txt
 		WEBTEST_STREAM=/tmp/upload/webtest.stream
 		[ -f "${WEBTEST_FILE}" ] || : >"${WEBTEST_FILE}"
@@ -85,12 +110,77 @@ do
 			[ "${line}" = "stop>stop" ] && break
 		done
 		exit 0
-	elif echo "${MSG}" | grep -Eq '^/koolshare/bin/statusctl --socket-path /tmp/status-tool\.sock (probe-once|get-cache|ping)$'; then
-		cmd ${MSG}
-	elif [ -n "${RET_3}" -o -n "${RET_4}" ]; then
-		echo "不允许命令：${MSG}"
-		exit
-	else
-		cmd $MSG
-	fi
+		;;
+	"cat /tmp/upload/ss_status.txt"|\
+	"cat /tmp/upload/ss_log.txt"|\
+	"cat /tmp/upload/ss_subscribe_log.txt"|\
+	"cat /tmp/upload/webtest.txt"|\
+	"cat /tmp/upload/webtest_bakcup.txt")
+		_cat_file="${MSG#cat }"
+		[ -f "${_cat_file}" ] && cat "${_cat_file}" 2>&1
+		;;
+	"/koolshare/bin/statusctl --socket-path /tmp/status-tool.sock probe-once")
+		/koolshare/bin/statusctl --socket-path /tmp/status-tool.sock probe-once 2>&1
+		;;
+	"/koolshare/bin/statusctl --socket-path /tmp/status-tool.sock get-cache")
+		/koolshare/bin/statusctl --socket-path /tmp/status-tool.sock get-cache 2>&1
+		;;
+	"/koolshare/bin/statusctl --socket-path /tmp/status-tool.sock ping")
+		/koolshare/bin/statusctl --socket-path /tmp/status-tool.sock ping 2>&1
+		;;
+	"/koolshare/scripts/ss_status.sh ws")
+		run_allowed_script "ss_status.sh" "ws"
+		;;
+	"sh /koolshare/scripts/ss_proc_status.sh ws")
+		run_allowed_script "ss_proc_status.sh" "ws"
+		;;
+	"sh /koolshare/scripts/ss_shunt_stats.sh follow_ws")
+		run_allowed_script "ss_shunt_stats.sh" "follow_ws"
+		;;
+	"sh /koolshare/scripts/ss_status_ws.sh follow_ssf_status")
+		run_allowed_script "ss_status_ws.sh" "follow_ssf_status"
+		;;
+	"sh /koolshare/scripts/ss_status_ws.sh follow_ssc_status")
+		run_allowed_script "ss_status_ws.sh" "follow_ssc_status"
+		;;
+	"sh /koolshare/scripts/ss_webtest.sh ws_start_batch")
+		run_allowed_script "ss_webtest.sh" "ws_start_batch"
+		;;
+	"sh /koolshare/scripts/ss_webtest.sh ws_close_latency")
+		run_allowed_script "ss_webtest.sh" "ws_close_latency"
+		;;
+	"sh /koolshare/scripts/ss_webtest.sh ws_stop_batch")
+		run_allowed_script "ss_webtest.sh" "ws_stop_batch"
+		;;
+	"sh /koolshare/scripts/ss_webtest.sh ws_clear_cache")
+		run_allowed_script "ss_webtest.sh" "ws_clear_cache"
+		;;
+	"sh /koolshare/scripts/ss_webtest.sh follow_webtest_ws")
+		run_allowed_script "ss_webtest.sh" "follow_webtest_ws"
+		;;
+	*)
+		if printf '%s' "${MSG}" | grep -Eq '^sh /koolshare/scripts/ss_webtest\.sh (follow_webtest_single_ws|ws_single_test) [0-9]+$'; then
+			set -- ${MSG}
+			run_allowed_script "ss_webtest.sh" "$3" "$4"
+		elif printf '%s' "${MSG}" | grep -Eq '^env LC_ALL=en_US\.UTF-8 LANG=en_US\.UTF-8 sh /koolshare/scripts/ss_node_subscribe\.sh [0-9]+( [A-Za-z0-9_-]+)?$'; then
+			set -- ${MSG}
+			if [ -n "${7:-}" ]; then
+				LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 run_allowed_script "ss_node_subscribe.sh" "$6" "$7"
+			else
+				LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 run_allowed_script "ss_node_subscribe.sh" "$6"
+			fi
+		elif printf '%s' "${MSG}" | grep -Eq '^(\. )?ss_[a-z0-9_]+\.sh( [A-Za-z0-9_.-]+){0,2}$'; then
+			set -- ${MSG}
+			if [ "$1" = "." ]; then
+				shift
+			fi
+			_script="$1"
+			shift
+			run_allowed_script "${_script}" "$@"
+		else
+			echo "不允许命令：${MSG}"
+			exit 1
+		fi
+		;;
+	esac
 done

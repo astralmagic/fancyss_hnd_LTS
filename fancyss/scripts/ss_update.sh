@@ -32,6 +32,11 @@ VERSION=version.json.js
 
 install_fancyss(){
 	echo_date "开始解压压缩包..."
+	if tar -ztf shadowsocks.tar.gz 2>/dev/null | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+		echo_date "检测到更新包包含非法路径，已中止安装！"
+		rm -rf /tmp/shadowsocks*
+		return 1
+	fi
 	tar -zxf shadowsocks.tar.gz
 	chmod a+x /tmp/shadowsocks/install.sh
 	echo_date "开始安装更新文件..."
@@ -59,9 +64,9 @@ update_ss(){
 
 	SOCKS5_OPEN=$(fss_socks5_open_bin 2>/dev/null)
 	if [ -n "${SOCKS5_OPEN}" ];then
-		run /tmp/curl-update -4sk -L --connect-timeout 5 --max-time 120 --retry 3 --retry-delay 1 -x socks5h://127.0.0.1:23456 ${main_url}/${VERSION} >/tmp/version.json.js
+		run /tmp/curl-update -4s -L --connect-timeout 5 --max-time 120 --retry 3 --retry-delay 1 -x socks5h://127.0.0.1:23456 "${main_url}/${VERSION}" >/tmp/version.json.js
 	else
-		run /tmp/curl-update -4sk -L --connect-timeout 5 --max-time 120 --retry 3 --retry-delay 1 ${main_url}/${VERSION} >/tmp/version.json.js
+		run /tmp/curl-update -4s -L --connect-timeout 5 --max-time 120 --retry 3 --retry-delay 1 "${main_url}/${VERSION}" >/tmp/version.json.js
 	fi	
 	
 	if [ "$?" != "0" ];then
@@ -91,14 +96,14 @@ update_ss(){
 		echo_date "开启下载进程，从主服务器上下载更新包..."
 		echo_date "下载链接：${main_url}/${PACKAGE}.tar.gz"
 		if [ -n "${SOCKS5_OPEN}" ];then
-			run /tmp/curl-update -4k -L --connect-timeout 5 --max-time 120 --retry 3 --retry-delay 1 -x socks5h://127.0.0.1:23456 ${main_url}/${PACKAGE}.tar.gz --output /tmp/${PACKAGE}.tar.gz
+			run /tmp/curl-update -4 -L --connect-timeout 5 --max-time 120 --retry 3 --retry-delay 1 -x socks5h://127.0.0.1:23456 "${main_url}/${PACKAGE}.tar.gz" --output "/tmp/${PACKAGE}.tar.gz"
 		else
-			run /tmp/curl-update -4k -L --connect-timeout 5 --max-time 120 --retry 3 --retry-delay 1 ${main_url}/${PACKAGE}.tar.gz --output /tmp/${PACKAGE}.tar.gz
+			run /tmp/curl-update -4 -L --connect-timeout 5 --max-time 120 --retry 3 --retry-delay 1 "${main_url}/${PACKAGE}.tar.gz" --output "/tmp/${PACKAGE}.tar.gz"
 		fi
 		
 		if [ "$?" != "0" ];then
-			rm -rf /tmp/${PACKAGE}.tar.gz
-			wget -t 3 --no-check-certificate --timeout=5 ${main_url}/${PACKAGE}.tar.gz
+			rm -rf "/tmp/${PACKAGE}.tar.gz"
+			wget -t 3 --timeout=5 "${main_url}/${PACKAGE}.tar.gz"
 		fi
 		
 		if [ "$?" != "0" ];then

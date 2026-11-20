@@ -2937,6 +2937,10 @@ get_dns_para(){
 
 	# udp, tcp, dot
 	local net="$(get_dns_selected_net "${type}" "${numb}")"
+	case "${net}" in
+	udp|tcp|dot) ;;
+	*) net="udp" ;;
+	esac
 	
 	local dns_opt=$(eval echo \$ss_basic_chng_${type}_${net}_${numb}_opt)
 	local dns_usr=$(eval echo \$ss_basic_chng_${type}_${net}_${numb}_usr)
@@ -3054,14 +3058,19 @@ EOF
 ]
 EOF
 		else
-			if ! cat "${add_file}" | run jq '. += [{
-				"tag": "dns_udp_'"${relay_port}"'",
+			if ! cat "${add_file}" | run jq \
+				--arg tag "dns_udp_${relay_port}" \
+				--argjson relay_port "${relay_port}" \
+				--arg addr "${addr}" \
+				--argjson port "${port}" \
+				'. += [{
+				"tag": $tag,
 				"listen": "127.0.0.1",
-				"port": '"${relay_port}"',
+				"port": $relay_port,
 				"protocol": "dokodemo-door",
 				"settings": {
-					"address": "'"${addr}"'",
-					"port": '"${port}"',
+					"address": $addr,
+					"port": $port,
 					"network": "udp",
 					"timeout": 0,
 					"followRedirect": false
@@ -3113,6 +3122,10 @@ get_dns(){
 	# udp, tcp, dot
 	local net="$(get_dns_selected_net "${type}" "${numb}")"
 	local eff_net="$(get_dns_effective_net "${type}" "${numb}")"
+	case "${net}" in
+	udp|tcp|dot) ;;
+	*) net="udp" ;;
+	esac
 	
 	local dns_opt=$(eval echo \$ss_basic_chng_${type}_${net}_${numb}_opt)
 	local dns_usr=$(eval echo \$ss_basic_chng_${type}_${net}_${numb}_usr)
@@ -3387,10 +3400,10 @@ create_dnsmasq_conf() {
 	rm -rf /jffs/scripts/dnsmasq.postconf
 	rm -rf /jffs/scripts/dnsmasq-sdn.postconf
 
-	# 2. custom dnsmasq settings by user
+	# 2. custom dnsmasq settings by user (allowlist safe directives only)
 	if [ -n "${ss_dnsmasq}" ]; then
 		echo_date "添加自定义dnsmasq设置到/tmp/custom.conf"
-		echo "${ss_dnsmasq}" | base64_decode | sort -u >>/tmp/custom.conf
+		echo "${ss_dnsmasq}" | base64_decode | tr -d '\r' | grep -E '^[[:space:]]*(#|$|(address|server|local|ipset|nftset|cname|host-record|bogus-nxdomain|rebind-domain-ok|cache-size|min-cache-ttl|max-cache-ttl|resolv-file|domain-needed|bogus-priv|no-negcache|strict-order|all-servers)([=[:space:]]|$))' | sort -u >>/tmp/custom.conf
 	fi
 
 	#ln_conf
@@ -3558,6 +3571,10 @@ get_xray_ss_http_obfs_tcp_settings() {
 	EOF
 }
 
+ss_shell_quote_sq() {
+	printf '%s' "$1" | sed "s/'/'\\\\''/g"
+}
+
 write_ss_obfs_start_script() {
 	local _script="$1"
 	local _server="$2"
@@ -3569,18 +3586,22 @@ write_ss_obfs_start_script() {
 
 	[ -n "${_script}" ] || return 1
 	[ -n "${_server}" ] || return 1
-	[ -n "${_port}" ] || return 1
-	[ -n "${_local_port}" ] || return 1
-	[ -n "${_obfs}" ] || return 1
+	case "${_port}" in ''|*[!0-9]*) return 1 ;; esac
+	case "${_local_port}" in ''|*[!0-9]*) return 1 ;; esac
+	case "${_obfs}" in http|tls) ;; *) return 1 ;; esac
+	case "${_obfs_arg}" in ''|'--fast-open') ;; *) _obfs_arg="" ;; esac
+
+	local _q_server="$(ss_shell_quote_sq "${_server}")"
+	local _q_host="$(ss_shell_quote_sq "${_host}")"
 	cat > "${_script}" <<-EOF
 		#!/bin/sh
-		_server='${_server}'
+		_server='${_q_server}'
 		_port='${_port}'
 		_local_port='${_local_port}'
 		_obfs='${_obfs}'
-		_host='${_host}'
+		_host='${_q_host}'
 		_obfs_arg='${_obfs_arg}'
-		if ps w | grep "obfs-local" | grep -w "\${_server}" | grep -w "\${_port}" | grep -w "\${_local_port}" | grep -v grep >/dev/null 2>&1; then
+		if ps w | grep "obfs-local" | grep -Fw -- "\${_server}" | grep -Fw -- "\${_port}" | grep -Fw -- "\${_local_port}" | grep -v grep >/dev/null 2>&1; then
 			exit 0
 		fi
 		if [ -n "\${_host}" ]; then
@@ -3608,9 +3629,13 @@ start_ss_obfs_helper() {
 	detect_running_status obfs-local /var/run/obfs_local.pid
 }
 
+json_escape_str(){
+	printf '%s' "$1" | tr -d '\r\n' | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
 get_value_null(){
 	if [ -n "$1" ]; then
-		echo \"$1\"
+		printf '"%s"\n' "$(json_escape_str "$1")"
 	else
 		echo null
 	fi
@@ -3618,7 +3643,7 @@ get_value_null(){
 
 get_value_speed(){
 	if [ -n "$1" ]; then
-		echo \"${1}mbps\"
+		printf '"%smbps"\n' "$(json_escape_str "$1")"
 	else
 		echo null
 	fi
@@ -3626,9 +3651,9 @@ get_value_speed(){
 
 get_value_empty(){
 	if [ -n "$1" ]; then
-		echo \"$1\"
+		printf '"%s"\n' "$(json_escape_str "$1")"
 	else
-		echo \"\"
+		echo '""'
 	fi
 }
 
@@ -5118,7 +5143,28 @@ start_naive(){
 	detect_running_status2 ipt2socks 23456
 	
 	echo_date "开启NaïveProxy主进程..."
-	run_bg naive --listen=socks://127.0.0.1:23456 --proxy=${ss_basic_naive_prot}://${ss_basic_naive_user}:${ss_basic_password}@${ss_basic_server}:${ss_basic_naive_port}
+	case "${ss_basic_naive_prot}" in
+	https|quic) ;;
+	*)
+		echo_date "NaïveProxy 协议参数非法：${ss_basic_naive_prot}"
+		close_in_five flag
+		;;
+	esac
+	case "${ss_basic_naive_port}" in
+	''|*[!0-9]*)
+		echo_date "NaïveProxy 端口参数非法：${ss_basic_naive_port}"
+		close_in_five flag
+		;;
+	esac
+	rm -f /tmp/naive.json >/dev/null 2>&1
+	(
+		umask 077
+		run jq -n \
+			--arg listen "socks://127.0.0.1:23456" \
+			--arg proxy "${ss_basic_naive_prot}://${ss_basic_naive_user}:${ss_basic_password}@${ss_basic_server}:${ss_basic_naive_port}" \
+			'{listen: $listen, proxy: $proxy}' > /tmp/naive.json
+	)
+	run_bg naive /tmp/naive.json
 	detect_running_status2 naive 23456
 }
 
@@ -5282,12 +5328,40 @@ start_anytls(){
 	detect_running_status3 anytls-zig 23456 1 force
 }
 
+is_cron_int_range() {
+	local val="$1" min="$2" max="$3"
+	case "${val}" in
+	''|*[!0-9]*) return 1 ;;
+	esac
+	[ "${val}" -ge "${min}" ] && [ "${val}" -le "${max}" ]
+}
+
+is_cron_hour_csv() {
+	local raw="$1" item="" old_ifs="${IFS}"
+	[ -n "${raw}" ] || return 1
+	case "${raw}" in
+	*[!0-9,]*|,*|*,|*,,*) return 1 ;;
+	esac
+	IFS=','
+	for item in ${raw}; do
+		IFS="${old_ifs}"
+		is_cron_int_range "${item}" 0 23 || return 1
+		IFS=','
+	done
+	IFS="${old_ifs}"
+	return 0
+}
+
 write_cron_job() {
 	# 定时规则更新
 	sed -i '/ssupdate/d' /var/spool/cron/crontabs/* >/dev/null 2>&1
 	if [ "1" == "${ss_basic_rule_update}" ]; then
-		echo_date "⏰️fancyss规则定时更新任务启用，每天${ss_basic_rule_update_time}点自动检测更新规则."
-		cru a ssupdate "0 ${ss_basic_rule_update_time} * * * /bin/sh /koolshare/scripts/ss_rule_update.sh"
+		if is_cron_int_range "${ss_basic_rule_update_time}" 0 23; then
+			echo_date "⏰️fancyss规则定时更新任务启用，每天${ss_basic_rule_update_time}点自动检测更新规则."
+			cru a ssupdate "0 ${ss_basic_rule_update_time} * * * /bin/sh /koolshare/scripts/ss_rule_update.sh"
+		else
+			echo_date "⚠️fancyss规则定时更新时间参数非法，已跳过。"
+		fi
 	else
 		echo_date "❎️fancyss规则定时更新任务未启用！"
 	fi
@@ -5298,12 +5372,16 @@ write_cron_job() {
 	else
 		sed -i '/ssnodeupdate/d;/ssnodeprof_/d' /var/spool/cron/crontabs/* >/dev/null 2>&1
 		if [ "${ss_basic_node_update}" == "1" ]; then
-			if [ "${ss_basic_node_update_day}" == "0" ]; then
-				cru a ssnodeupdate "0 ${ss_basic_node_update_hr} * * * /koolshare/scripts/ss_node_subscribe.sh fancyss 3"
-				echo_date "⏰️fancyss定时更新订阅任务启用，每天${ss_basic_node_update_hr}点自动更新订阅。"
+			if is_cron_int_range "${ss_basic_node_update_hr}" 0 23 && is_cron_int_range "${ss_basic_node_update_day}" 0 7; then
+				if [ "${ss_basic_node_update_day}" == "0" ]; then
+					cru a ssnodeupdate "0 ${ss_basic_node_update_hr} * * * /koolshare/scripts/ss_node_subscribe.sh fancyss 3"
+					echo_date "⏰️fancyss定时更新订阅任务启用，每天${ss_basic_node_update_hr}点自动更新订阅。"
+				else
+					cru a ssnodeupdate "0 ${ss_basic_node_update_hr} * * ${ss_basic_node_update_day} /koolshare/scripts/ss_node_subscribe.sh fancyss 3"
+					echo_date "⏰️fancyss定时更新订阅任务启用，每周${ss_basic_node_update_day}的${ss_basic_node_update_hr}点自动更新订阅。"
+				fi
 			else
-				cru a ssnodeupdate "0 ${ss_basic_node_update_hr} * * ${ss_basic_node_update_day} /koolshare/scripts/ss_node_subscribe.sh fancyss 3"
-				echo_date "⏰️fancyss定时更新订阅任务启用，每周${ss_basic_node_update_day}的${ss_basic_node_update_hr}点自动更新订阅。"
+				echo_date "⚠️fancyss定时更新订阅时间参数非法，已跳过。"
 			fi
 		else
 			echo_date "❎️fancyss定时更新订阅节点任务未启用！"
@@ -5313,9 +5391,13 @@ write_cron_job() {
 	# 定时webtest
 	sed -i '/sslatencyjob/d' /var/spool/cron/crontabs/* >/dev/null 2>&1
 	if [ "${ss_basic_lt_cru_opts}" == "1" ]; then
-		echo_date "⏰️fancyss 节点web落地延迟检测任务启用，设置每隔${ss_basic_lt_cru_time}分钟检测一次..."
-		sed -i '/sslatencyjob/d' /var/spool/cron/crontabs/* >/dev/null 2>&1
-		cru a sslatencyjob "*/${ss_basic_lt_cru_time} * * * * /koolshare/scripts/ss_webtest.sh 2"
+		if is_cron_int_range "${ss_basic_lt_cru_time}" 1 59; then
+			echo_date "⏰️fancyss 节点web落地延迟检测任务启用，设置每隔${ss_basic_lt_cru_time}分钟检测一次..."
+			sed -i '/sslatencyjob/d' /var/spool/cron/crontabs/* >/dev/null 2>&1
+			cru a sslatencyjob "*/${ss_basic_lt_cru_time} * * * * /koolshare/scripts/ss_webtest.sh 2"
+		else
+			echo_date "⚠️fancyss节点web落地延迟检测间隔非法，已跳过。"
+		fi
 	else
 		echo_date "❎️fancyss节点web落地延迟检测任务未启用！"
 	fi
@@ -7052,29 +7134,36 @@ set_ss_reboot_job() {
 	if [[ "${ss_reboot_check}" == "0" ]]; then
 		remove_ss_reboot_job
 	elif [[ "${ss_reboot_check}" == "1" ]]; then
+		is_cron_int_range "${ss_basic_time_min}" 0 59 && is_cron_int_range "${ss_basic_time_hour}" 0 23 || { echo_date "【科学上网】：定时重启时间参数非法，跳过设置。"; return 1; }
 		echo_date "【科学上网】：设置每天${ss_basic_time_hour}时${ss_basic_time_min}分重启插件..."
-		cru a ss_reboot ${ss_basic_time_min} ${ss_basic_time_hour}" * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
+		cru a ss_reboot "${ss_basic_time_min} ${ss_basic_time_hour} * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
 	elif [[ "${ss_reboot_check}" == "2" ]]; then
+		is_cron_int_range "${ss_basic_time_min}" 0 59 && is_cron_int_range "${ss_basic_time_hour}" 0 23 && is_cron_int_range "${ss_basic_week}" 0 7 || { echo_date "【科学上网】：定时重启周计划参数非法，跳过设置。"; return 1; }
 		echo_date "【科学上网】：设置每周${ss_basic_week}的${ss_basic_time_hour}时${ss_basic_time_min}分重启插件..."
-		cru a ss_reboot ${ss_basic_time_min} ${ss_basic_time_hour}" * * "${ss_basic_week}" /bin/sh /koolshare/ss/ssconfig.sh restart"
+		cru a ss_reboot "${ss_basic_time_min} ${ss_basic_time_hour} * * ${ss_basic_week} /bin/sh /koolshare/ss/ssconfig.sh restart"
 	elif [[ "${ss_reboot_check}" == "3" ]]; then
+		is_cron_int_range "${ss_basic_time_min}" 0 59 && is_cron_int_range "${ss_basic_time_hour}" 0 23 && is_cron_int_range "${ss_basic_day}" 1 31 || { echo_date "【科学上网】：定时重启月计划参数非法，跳过设置。"; return 1; }
 		echo_date "【科学上网】：设置每月${ss_basic_day}日${ss_basic_time_hour}时${ss_basic_time_min}分重启插件..."
-		cru a ss_reboot ${ss_basic_time_min} ${ss_basic_time_hour} ${ss_basic_day}" * * /bin/sh /koolshare/ss/ssconfig.sh restart"
+		cru a ss_reboot "${ss_basic_time_min} ${ss_basic_time_hour} ${ss_basic_day} * * /bin/sh /koolshare/ss/ssconfig.sh restart"
 	elif [[ "${ss_reboot_check}" == "4" ]]; then
 		if [[ "${ss_basic_inter_pre}" == "1" ]]; then
+			is_cron_int_range "${ss_basic_inter_min}" 1 59 || { echo_date "【科学上网】：定时重启间隔分钟非法，跳过设置。"; return 1; }
 			echo_date "【科学上网】：设置每隔${ss_basic_inter_min}分钟重启插件..."
-			cru a ss_reboot "*/"${ss_basic_inter_min}" * * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
+			cru a ss_reboot "*/${ss_basic_inter_min} * * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
 		elif [[ "${ss_basic_inter_pre}" == "2" ]]; then
+			is_cron_int_range "${ss_basic_inter_hour}" 1 23 || { echo_date "【科学上网】：定时重启间隔小时非法，跳过设置。"; return 1; }
 			echo_date "【科学上网】：设置每隔${ss_basic_inter_hour}小时重启插件..."
-			cru a ss_reboot "0 */"${ss_basic_inter_hour}" * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
+			cru a ss_reboot "0 */${ss_basic_inter_hour} * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
 		elif [[ "${ss_basic_inter_pre}" == "3" ]]; then
+			is_cron_int_range "${ss_basic_time_min}" 0 59 && is_cron_int_range "${ss_basic_time_hour}" 0 23 && is_cron_int_range "${ss_basic_inter_day}" 1 31 || { echo_date "【科学上网】：定时重启间隔天参数非法，跳过设置。"; return 1; }
 			echo_date "【科学上网】：设置每隔${ss_basic_inter_day}天${ss_basic_inter_hour}小时${ss_basic_time_min}分钟重启插件..."
-			cru a ss_reboot ${ss_basic_time_min} ${ss_basic_time_hour}" */"${ss_basic_inter_day} " * * /bin/sh /koolshare/ss/ssconfig.sh restart"
+			cru a ss_reboot "${ss_basic_time_min} ${ss_basic_time_hour} */${ss_basic_inter_day} * * /bin/sh /koolshare/ss/ssconfig.sh restart"
 		fi
 	elif [[ "${ss_reboot_check}" == "5" ]]; then
-		check_custom_time=$(echo ss_basic_custom | base64_decode)
+		check_custom_time=$(printf '%s' "${ss_basic_custom}" | base64_decode)
+		is_cron_int_range "${ss_basic_time_min}" 0 59 && is_cron_hour_csv "${check_custom_time}" || { echo_date "【科学上网】：自定义定时重启时间参数非法，跳过设置。"; return 1; }
 		echo_date "【科学上网】：设置每天${check_custom_time}时的${ss_basic_time_min}分重启插件..."
-		cru a ss_reboot ${ss_basic_time_min} ${check_custom_time}" * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
+		cru a ss_reboot "${ss_basic_time_min} ${check_custom_time} * * * /bin/sh /koolshare/ss/ssconfig.sh restart"
 	fi
 }
 
