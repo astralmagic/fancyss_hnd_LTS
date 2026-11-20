@@ -188,6 +188,25 @@ exit 0
         update_sh = (ROOT / "fancyss/scripts/ss_update.sh").read_text(encoding="utf-8")
         self.assertIn("tar -ztf shadowsocks.tar.gz", update_sh)
 
+    def test_zig_submodule_security_fixes_present(self):
+        checks = {
+            "tool/node-tool/src/main.zig": ("isValidShellIdentifier", 'writeAll("WT_NODE_ENV_FIELDS=\'")'),
+            "tool/ws-tool/src/main.zig": ("isAllowedOrigin", 'eqlIgnoreCase(name, "Proxy")'),
+            "tool/sub-tool/src/main.zig": ("const sni_owned = try rawUriQueryValueAlloc",),
+            "tool/webtest-tool/src/main.zig": ("isSafeRuntimePath", "isPeerAuthorized", "0o600"),
+            "tool/anytls-zig/src/main.zig": ("insecure: bool = false,", "MissingTlsVerificationHost"),
+        }
+        for rel, needles in checks.items():
+            p = ROOT / rel
+            if not p.exists():
+                continue
+            content = p.read_text(encoding="utf-8")
+            for needle in needles:
+                self.assertIn(needle, content, f"{rel} missing {needle}")
+        anytls_p = ROOT / "tool/anytls-zig/src/main.zig"
+        if anytls_p.exists():
+            self.assertNotIn("allow_truncation_attacks = true", anytls_p.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

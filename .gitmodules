@@ -1,29 +1,29 @@
 [submodule "tool/geotool"]
 	path = tool/geotool
-	url = https://github.com/hq450/geotool.git
+	url = https://github.com/astralmagic/geotool.git
 [submodule "tool/xapi-tool"]
 	path = tool/xapi-tool
-	url = https://github.com/hq450/xapi-tool.git
+	url = https://github.com/astralmagic/xapi-tool.git
 [submodule "tool/node-tool"]
 	path = tool/node-tool
-	url = https://github.com/hq450/node-tool.git
+	url = https://github.com/astralmagic/node-tool.git
 [submodule "tool/sub-tool"]
 	path = tool/sub-tool
 	url = https://github.com/astralmagic/sub-tool.git
 [submodule "tool/ws-tool"]
 	path = tool/ws-tool
-	url = https://github.com/hq450/ws-tool.git
+	url = https://github.com/astralmagic/ws-tool.git
 [submodule "tool/status-tool"]
 	path = tool/status-tool
-	url = https://github.com/hq450/status-tool.git
+	url = https://github.com/astralmagic/status-tool.git
 [submodule "tool/sub-get"]
 	path = tool/sub-get
-	url = https://github.com/hq450/sub-get.git
+	url = https://github.com/astralmagic/sub-get.git
 [submodule "tool/anytls-zig"]
 	path = tool/anytls-zig
-	url = https://github.com/hq450/anytls-zig.git
+	url = https://github.com/astralmagic/anytls-zig.git
 	branch = main
 [submodule "tool/webtest-tool"]
 	path = tool/webtest-tool
-	url = https://github.com/hq450/webtest-tool.git
+	url = https://github.com/astralmagic/webtest-tool.git
 	branch = main
