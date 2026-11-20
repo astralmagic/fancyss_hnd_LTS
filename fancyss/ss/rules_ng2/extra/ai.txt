@@ -1,0 +1,13 @@
+# Claude / Anthropic known telemetry, logging, and feature-flag endpoints
+domain:browser-intake-datadoghq.com
+domain:browser-intake-us5-datadoghq.com
+domain:datadoghq-browser-agent.com
+domain:prodregistryv2.org
+domain:statsig.com
+domain:statsigapi.net
+domain:us5.datadoghq.com
+full:api.honeycomb.io
+full:api.segment.io
+full:cdn.segment.com
+full:http-intake.logs.datadoghq.com
+full:o1158394.ingest.sentry.io
