@@ -13,6 +13,7 @@ domain:activematter.game
 domain:activision.com
 domain:activisionblizzard.com
 domain:activisionblizzardmedia.com
+domain:ageofempires.com
 domain:amdgaming.com
 domain:amiibo.com
 domain:anthemgame.com
@@ -112,6 +113,7 @@ domain:cncrivals.com
 domain:commandandconquer.com
 domain:conquerwithcharacter.com
 domain:convrgencegame.com
+domain:counter-strike.net
 domain:crashbandicoot.com
 domain:crossout.net
 domain:crsed.net
@@ -206,6 +208,7 @@ domain:fab.com
 domain:fabricmc.net
 domain:faceit-cdn.net
 domain:faceit.com
+domain:fallout.com
 domain:fanatical.com
 domain:fflogs.com
 domain:ficgs.com
@@ -215,6 +218,7 @@ domain:fire-emblem-heroes.com
 domain:fireemblemawakening.com
 domain:firesidegatherings.com
 domain:fitgirl-repacks.site
+domain:flightsimulator.com
 domain:flipnotestudio.com
 domain:forgecdn.net
 domain:fortnite-vod.akamaized.net
@@ -228,6 +232,7 @@ domain:futpromos.com
 domain:futunited.com
 domain:gaijin.net
 domain:gaijinent.com
+domain:gaikai.com
 domain:game-repack.site
 domain:game.maj-soul.com
 domain:gamebanana.com
@@ -267,6 +272,8 @@ domain:gooblox.com
 domain:gpstatic.com
 domain:gstore.val.manlaxy.com
 domain:hackyourconsole.com
+domain:half-life.com
+domain:halowaypoint.com
 domain:hayday.com
 domain:haydaygame.com
 domain:hearthstone.nosdn.127.net
@@ -314,6 +321,7 @@ domain:konamisportsclub.jp
 domain:konamistyle.jp
 domain:kraftonde.com
 domain:kyurem.com
+domain:l4d.com
 domain:lb-cdn.maj-soul.com
 domain:lb-hw.maj-soul.com
 domain:lb-sy.maj-soul.com
@@ -506,15 +514,23 @@ domain:playnintendo.com
 domain:playoverwatch.com
 domain:playparagon.com
 domain:playstation
+domain:playstation.co.jp
 domain:playstation.com
+domain:playstation.com.hk
+domain:playstation.com.tw
 domain:playstation.net
+domain:playstation.org
+domain:playstationmusic.com
 domain:playstationnetwork.com
+domain:playstationsafety.com
+domain:playstationstudios.com
 domain:playvalorant.com
 domain:playwarcraft3.com
 domain:pogo.com
 domain:pogobeta.com
 domain:poi.moe
 domain:pokedex3d.com
+domain:pokemon-home.com
 domain:pokemon-moon.com
 domain:pokemon-sun.com
 domain:pokemon-sunmoon.com
@@ -523,6 +539,7 @@ domain:pokemon.com
 domain:pokemonbank.com
 domain:pokemonblackwhite.com
 domain:pokemonbw.com
+domain:pokemoncenter.com
 domain:pokemonchampionships.com
 domain:pokemongoldsilver.com
 domain:pokemonhome.com
@@ -545,6 +562,9 @@ domain:projectapex.com
 domain:projectmoon.studio
 domain:protondb.com
 domain:prts.plus
+domain:psn.com
+domain:psn.jp
+domain:psn.net
 domain:pubg.com
 domain:pvp.net
 domain:pvp.tv
@@ -629,10 +649,12 @@ domain:s.team
 domain:sc2.nosdn.127.net
 domain:seagroup.com
 domain:seaofsolitude.com
+domain:seaofthieves.com
 domain:seeurlpcl.com
 domain:sekai.colorfulpalette.org
 domain:sekirothegame.com
 domain:shadowcomplex.com
+domain:sie.com
 domain:sierragames.com
 domain:sih-db.com
 domain:sih.app
@@ -650,6 +672,7 @@ domain:snkplaymore.info
 domain:solidstate.com
 domain:sony.com
 domain:sonyentertainmentnetwork.com
+domain:sonyinteractiveentertainment.com
 domain:spearhead.kr
 domain:speedhunters.com
 domain:speedrun.com
@@ -663,6 +686,7 @@ domain:ssx3.com
 domain:star-conflict.com
 domain:starcraft.com
 domain:starcraft2.com
+domain:starfieldgame.com
 domain:starfox.com
 domain:stargazer-games.com
 domain:starwarsbattlefront.com
@@ -686,6 +710,7 @@ domain:steamcdn-a.akamaihd.net
 domain:steamcommunity-a.akamaihd.net
 domain:steamcommunity.com
 domain:steamconnecttest.com
+domain:steamcontent.com
 domain:steamcontent.tnkjmec.com
 domain:steamdb.info
 domain:steamdeck.com
@@ -698,11 +723,13 @@ domain:steampipe-kr.akamaized.net
 domain:steampipe-partner.akamaized.net
 domain:steampipe.akamaized.net
 domain:steampowered.com
+domain:steamserver.net
 domain:steamstat.us
 domain:steamstatic.com
 domain:steamstore-a.akamaihd.net
 domain:steamunlocked.net
 domain:steamusercontent-a.akamaihd.net
+domain:steamusercontent.com
 domain:steamuserimages-a.akamaihd.net
 domain:steamvideo-a.akamaihd.net
 domain:stellasora.global
@@ -730,6 +757,7 @@ domain:swtor.com
 domain:swtor.net
 domain:take2games.com
 domain:tarkov.com
+domain:teamfortress.com
 domain:teamneedforspeed.com
 domain:tellmewhygame.com
 domain:thedreadwolfrises.com
@@ -741,6 +769,7 @@ domain:thesimssocial.com
 domain:thetrackernetwork.com
 domain:thewitcher.com
 domain:thewonderful101.com
+domain:thinkwithportals.com
 domain:thunderstore.io
 domain:thunderstore.org
 domain:tiberiumalliances.com
@@ -857,6 +886,8 @@ domain:zyngapoker.com
 full:a.ppy.sh
 full:a4e8s8k3.map2.ssl.hwcdn.net
 full:assets.ppy.sh
+full:assets1.xboxlive.com
+full:assets2.xboxlive.com
 full:blizzard.gcdn.cloudn.co.kr
 full:c.ppy.sh
 full:client.hikarifield.co.jp
@@ -864,11 +895,18 @@ full:d1unuk07s6td74.cloudfront.net
 full:d348twzf7a8p5.cloudfront.net
 full:datarouter.apps.netherrealm.com
 full:devforum-uploads.s3.dualstack.us-east-2.amazonaws.com
+full:device.auth.xboxlive.com
 full:dlgarenanow-a.akamaihd.net
 full:download.hikarifield.co.jp
 full:doy2mn9upadnk.cloudfront.net
 full:eaasserts-a.akamaihd.net
 full:epicgames-download1.akamaized.net
+full:fhk01.ps4.update.playstation.net
+full:fhk01.ps5.update.playstation.net
+full:fjp01.ps4.update.playstation.net
+full:fjp01.ps5.update.playstation.net
+full:fus01.ps4.update.playstation.net
+full:fus01.ps5.update.playstation.net
 full:gog-cdn-lumen.secure2.footprint.net
 full:gog-cdn.akamaized.net
 full:gog.salesmanago.com
@@ -892,6 +930,7 @@ full:steamcommunity-a.akamaihd.net.edgesuite.net
 full:steamugcquincy.blob.core.windows.net
 full:store-images.s-microsoft.com
 full:supercell.zendesk.com
+full:title.auth.xboxlive.com
 full:ubisoft.siteintercept.qualtrics.com
 full:ubistatic1-a.akamaihd.net
 full:ubistatic10-a.akamaihd.net
@@ -917,8 +956,12 @@ full:ubistatic6-a.akamaihd.net
 full:ubistatic7-a.akamaihd.net
 full:ubistatic8-a.akamaihd.net
 full:ubistatic9-a.akamaihd.net
+full:user.auth.xboxlive.com
 full:wb-agora-hydra-file-storage-k1.s3.amazonaws.com
+full:xbox.ipv6.microsoft.com
+full:xsts.auth.xboxlive.com
 keyword:epicgames
+keyword:playstation
 keyword:steambroadcast
 keyword:steamstore
 keyword:steamuserimages

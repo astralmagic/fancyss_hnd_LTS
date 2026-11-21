@@ -2443,7 +2443,7 @@ function get_shunt_preset_group(item) {
 	if (id == "networktest" || id == "connectivity-check" || id == "trackerslist") {
 		return "网络与工具";
 	}
-	if (id == "media" || id == "youtube" || id == "netflix" || id == "disney" || id == "max" || id == "primevideo" || id == "appletv" || id == "spotify" || id == "tiktok" || id == "bilibili" || id == "games") {
+	if (id == "media" || id == "youtube" || id == "netflix" || id == "disney" || id == "max" || id == "primevideo" || id == "appletv" || id == "spotify" || id == "tiktok" || id == "bilibili" || id == "games" || id == "steam" || id == "nintendo" || id == "xbox" || id == "playstation" || id == "games-other") {
 		return "流媒体与娱乐";
 	}
 	return "代理与平台";
@@ -2473,7 +2473,7 @@ function get_shunt_preset_icon(item) {
 	if (id == "spotify") return "🎵";
 	if (id == "tiktok") return "🎶";
 	if (id == "bilibili") return "📼";
-	if (id == "games") return "🎮";
+	if (id == "games" || id == "steam" || id == "nintendo" || id == "xbox" || id == "playstation" || id == "games-other") return "🎮";
 	if (id == "networktest") return "📈";
 	if (id == "connectivity-check") return "🧭";
 	if (id == "trackerslist") return "🧲";

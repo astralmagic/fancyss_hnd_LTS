@@ -186,6 +186,93 @@
         {
           "type": "remote_domain_list_custom",
           "url": "https://raw.githubusercontent.com/DustinWin/domain-list-custom/domains/games.list"
+        },
+        {
+          "type": "local_site_tokens",
+          "path": "rules_ng2/extra/steam.txt"
+        },
+        {
+          "type": "local_site_tokens",
+          "path": "rules_ng2/extra/nintendo.txt"
+        },
+        {
+          "type": "local_site_tokens",
+          "path": "rules_ng2/extra/xbox.txt"
+        },
+        {
+          "type": "local_site_tokens",
+          "path": "rules_ng2/extra/playstation.txt"
+        }
+      ]
+    },
+    {
+      "id": "steam",
+      "mode": "generated",
+      "sources": [
+        {
+          "type": "local_games_partition",
+          "path": "rules_ng2/site/games.txt",
+          "bucket": "steam"
+        },
+        {
+          "type": "local_site_tokens",
+          "path": "rules_ng2/extra/steam.txt"
+        }
+      ]
+    },
+    {
+      "id": "nintendo",
+      "mode": "generated",
+      "sources": [
+        {
+          "type": "local_games_partition",
+          "path": "rules_ng2/site/games.txt",
+          "bucket": "nintendo"
+        },
+        {
+          "type": "local_site_tokens",
+          "path": "rules_ng2/extra/nintendo.txt"
+        }
+      ]
+    },
+    {
+      "id": "xbox",
+      "mode": "generated",
+      "sources": [
+        {
+          "type": "local_games_partition",
+          "path": "rules_ng2/site/games.txt",
+          "bucket": "xbox"
+        },
+        {
+          "type": "local_site_tokens",
+          "path": "rules_ng2/extra/xbox.txt"
+        }
+      ]
+    },
+    {
+      "id": "playstation",
+      "mode": "generated",
+      "sources": [
+        {
+          "type": "local_games_partition",
+          "path": "rules_ng2/site/games.txt",
+          "bucket": "playstation"
+        },
+        {
+          "type": "local_site_tokens",
+          "path": "rules_ng2/extra/playstation.txt"
+        }
+      ]
+    },
+    {
+      "id": "games-other",
+      "mode": "generated",
+      "sources": [
+        {
+          "type": "local_games_partition",
+          "path": "rules_ng2/site/games.txt",
+          "bucket": "other"
         }
       ]
     },

@@ -1,9 +1,9 @@
 {
-  "generated_at": 1795199740,
+  "generated_at": 1795233443,
   "source": "geotool",
   "site": {
     "ai": {
-      "total": 238
+      "total": 236
     },
     "apple": {
       "total": 1584
@@ -39,7 +39,10 @@
       "total": 234
     },
     "games": {
-      "total": 924
+      "total": 955
+    },
+    "games-other": {
+      "total": 689
     },
     "gfw": {
       "total": 6598
@@ -68,8 +71,14 @@
     "networktest": {
       "total": 1939
     },
+    "nintendo": {
+      "total": 97
+    },
     "openai": {
       "total": 24
+    },
+    "playstation": {
+      "total": 20
     },
     "primevideo": {
       "total": 31
@@ -86,6 +95,9 @@
     "spotify": {
       "total": 30
     },
+    "steam": {
+      "total": 61
+    },
     "telegram": {
       "total": 21
     },
@@ -97,6 +109,9 @@
     },
     "twitter": {
       "total": 24
+    },
+    "xbox": {
+      "total": 88
     },
     "youtube": {
       "total": 181
@@ -145,9 +160,9 @@
         "ai"
       ],
       "ip_assets": [],
-      "site_count": 238,
+      "site_count": 236,
       "ip_count": 0,
-      "total": 238
+      "total": 236
     },
     "openai": {
       "site_assets": [
@@ -315,9 +330,54 @@
         "games"
       ],
       "ip_assets": [],
-      "site_count": 924,
+      "site_count": 955,
       "ip_count": 0,
-      "total": 924
+      "total": 955
+    },
+    "steam": {
+      "site_assets": [
+        "steam"
+      ],
+      "ip_assets": [],
+      "site_count": 61,
+      "ip_count": 0,
+      "total": 61
+    },
+    "nintendo": {
+      "site_assets": [
+        "nintendo"
+      ],
+      "ip_assets": [],
+      "site_count": 97,
+      "ip_count": 0,
+      "total": 97
+    },
+    "xbox": {
+      "site_assets": [
+        "xbox"
+      ],
+      "ip_assets": [],
+      "site_count": 88,
+      "ip_count": 0,
+      "total": 88
+    },
+    "playstation": {
+      "site_assets": [
+        "playstation"
+      ],
+      "ip_assets": [],
+      "site_count": 20,
+      "ip_count": 0,
+      "total": 20
+    },
+    "games-other": {
+      "site_assets": [
+        "games-other"
+      ],
+      "ip_assets": [],
+      "site_count": 689,
+      "ip_count": 0,
+      "total": 689
     },
     "networktest": {
       "site_assets": [

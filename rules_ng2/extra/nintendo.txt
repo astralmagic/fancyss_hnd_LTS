@@ -1,0 +1,21 @@
+# Nintendo / Switch / eShop / Pokemon curated common domains
+domain:nintendo.com
+domain:nintendo.net
+domain:nintendo.co.jp
+domain:nintendo.co.uk
+domain:nintendo.com.hk
+domain:nintendo.tw
+domain:nintendo.co.kr
+domain:nintendo.eu
+domain:nintendo.de
+domain:nintendo.fr
+domain:nintendo.it
+domain:nintendo.es
+domain:nintendo.com.au
+domain:nintendoswitch.com
+domain:nintendoswitch.net
+domain:nintendowifi.net
+domain:nintendonetwork.net
+domain:pokemon.com
+domain:pokemon-home.com
+domain:pokemoncenter.com
