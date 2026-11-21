@@ -1,5 +1,10 @@
 fancyss Changelog
 
+3.6.0（20261121）
+   - add	新增按变更域分级局部重载（L0–L4）与 Xray 分流热重载动态新增 outbound（`xray api ado` + DNS 联动），修改规则、ACL、WebRTC 或分流节点时无需整套重启插件。
+   - add	新增游戏平台与 AI 细分分流预设：游戏平台拆出 `steam`、`nintendo`、`xbox`、`playstation`、`games-other`；AI 拆出 `claude`、`gemini`、`ai-other`，并补充 `intercomassets.com`、`hcaptcha.com`、`challenges.cloudflare.com` 等伴生风控/验证域名。
+   - fix	修复规则更新脚本在 BusyBox 下的 `mktemp` 兼容问题，刷新规则上游并新增每日自动更新工作流。
+
 3.5.32（20261121）
    - add	新增全局 WebRTC 防泄漏开关（附加功能 -> 代理行为），支持拦截常见 STUN/TURN 端口（3478-3481、5349、19302-19309）或所有非基础出站 UDP 端口（保留 DNS/DHCP/NTP），并提供独立的 IPv6 处理选项。
    - add	WebRTC 防泄漏支持选择处理行为（直接拦截 `reject` 或通过节点 `TPROXY` 转发 `proxy`），Xray 分流模式下可指定任意支持 Xray 的转发节点并在不支持 UDP 或未开启 IPv6 代理时自动回退至 `reject` 防止静默泄漏。
