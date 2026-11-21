@@ -90,9 +90,19 @@ start_fancyss(){
 }
 
 start_fancyss_shunt_hot(){
+	local need_dns_flag="${HOT_NEED_DNS_RELOAD_FILE:-/tmp/fancyss_shunt_hot_reload/need_dns_reload}"
 	if [ "$(dbus get ss_basic_shunt_hot_reload)" = "1" ] && [ -x "/koolshare/scripts/ss_shunt_hot_reload.sh" ]; then
 		echo_date "[hot-reload] 尝试通过 Xray API 热更新节点分流规则..."
 		if sh /koolshare/scripts/ss_shunt_hot_reload.sh apply; then
+			if [ -f "${need_dns_flag}" ]; then
+				rm -f "${need_dns_flag}" >/dev/null 2>&1 || true
+				echo_date "[hot-reload] 检测到分流域名或新节点白名单变化，自动联动局部重载 DNS..."
+				if ! sh /koolshare/ss/ssconfig.sh reload_scopes "dns"; then
+					echo_date "[hot-reload] 联动局部重载 DNS 失败，回退到完整重启。"
+					start_fancyss
+					return
+				fi
+			fi
 			return 0
 		fi
 		echo_date "[hot-reload] 热更新失败，回退到完整重启。"
@@ -155,12 +165,28 @@ reload_fancyss_scopes(){
 	fi
 
 	if [ "${need_shunt_hot}" = "1" ]; then
+		local need_dns_flag="${HOT_NEED_DNS_RELOAD_FILE:-/tmp/fancyss_shunt_hot_reload/need_dns_reload}"
 		if [ "$(dbus get ss_basic_shunt_hot_reload)" = "1" ] && [ -x "/koolshare/scripts/ss_shunt_hot_reload.sh" ]; then
 			echo_date "[hot-reload] 尝试通过 Xray API 热更新节点分流规则..."
 			if ! sh /koolshare/scripts/ss_shunt_hot_reload.sh apply; then
 				echo_date "[hot-reload] 热更新失败，回退到完整重启。"
 				start_fancyss
 				return
+			fi
+			if [ -f "${need_dns_flag}" ]; then
+				rm -f "${need_dns_flag}" >/dev/null 2>&1 || true
+				case "-${ssconfig_scopes}-" in
+				*-dns-*)
+					;;
+				*)
+					echo_date "[hot-reload] 检测到分流域名或新节点白名单变化，自动追加局部重载 DNS。"
+					if [ -n "${ssconfig_scopes}" ]; then
+						ssconfig_scopes="dns-${ssconfig_scopes}"
+					else
+						ssconfig_scopes="dns"
+					fi
+					;;
+				esac
 			fi
 		else
 			echo_date "[hot-reload] 分流热重载未启用或脚本不可用，回退到完整重启。"

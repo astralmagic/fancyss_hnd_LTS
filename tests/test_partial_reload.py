@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ASP_PATH = ROOT / "fancyss/webs/Module_shadowsocks.asp"
 SS_CONFIG_PATH = ROOT / "fancyss/scripts/ss_config.sh"
+SS_SHUNT_HOT_PATH = ROOT / "fancyss/scripts/ss_shunt_hot_reload.sh"
 SSCONFIG_PATH = ROOT / "fancyss/ss/ssconfig.sh"
 WEBSOCKET_PATH = ROOT / "fancyss/ss/websocket"
 
@@ -507,6 +508,168 @@ dns_udp_relay_targets_match_runtime
 """
             proc_added = subprocess.run(["sh", "-c", added_script], capture_output=True, text=True)
             self.assertNotEqual(proc_added.returncode, 0)
+
+    def test_shunt_hot_dynamic_add_outbound_and_sync_runtime_conf(self):
+        if not shutil.which("jq"):
+            self.skipTest("jq is not installed")
+        fns = "\n\n".join(
+            extract_shell_function(SS_SHUNT_HOT_PATH, fn)
+            for fn in [
+                "hot_log",
+                "hot_ensure_state_dir",
+                "hot_runtime_target_tag",
+                "hot_target_loaded",
+                "hot_mark_need_dns_reload",
+                "hot_node_needs_helper",
+                "hot_bypass_new_outbound_server",
+                "hot_remove_outbound",
+                "hot_add_outbound_from_file",
+                "hot_append_outbound_to_runtime_conf",
+                "hot_ensure_targets_loaded",
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            state_dir = tmp_path / "state"
+            out_dir = tmp_path / "outbounds"
+            state_dir.mkdir()
+            out_dir.mkdir()
+            xray_conf = tmp_path / "xray.json"
+            xray_conf.write_text(
+                json.dumps({"outbounds": [{"tag": "proxy1", "protocol": "vless", "settings": {}}]}),
+                encoding="utf-8",
+            )
+            next_file = state_dir / "next.tsv"
+            next_file.write_text("fss_r1|9|||||0\n", encoding="utf-8")
+            (out_dir / "9_outbounds.json").write_text(
+                json.dumps({
+                    "tag": "proxy9",
+                    "protocol": "vless",
+                    "settings": {"vnext": [{"address": "203.0.113.9", "port": 443}]},
+                }),
+                encoding="utf-8",
+            )
+            fake_xray = tmp_path / "fake_xray"
+            ado_capture = tmp_path / "ado_capture.json"
+            log_file = tmp_path / "hot.log"
+            fake_xray.write_text(
+                f'#!/bin/sh\ncp "$4" "{ado_capture}"\nprintf "XRAY:%s\\n" "$*" >> "{log_file}"\nexit 0\n',
+                encoding="utf-8",
+            )
+            fake_xray.chmod(0o755)
+            script = f"""
+XRAY_API_SERVER="127.0.0.1:10085"
+XAPI_TOOL_BIN="/bin/true"
+XRAY_BIN="{fake_xray}"
+XRAY_RUNTIME_CONF="{xray_conf}"
+HOT_STATE_DIR="{state_dir}"
+HOT_NEXT_FILE="{next_file}"
+HOT_NEED_DNS_RELOAD_FILE="{state_dir}/need_dns_reload"
+FSS_SHUNT_RUNTIME_OUTBOUND_DIR="{out_dir}"
+FSS_SHUNT_RUNTIME_ARTIFACT_DIR="{tmp_path}/art"
+FSS_WEBTEST_CACHE_DIR="{tmp_path}/wt"
+FSS_WEBTEST_CACHE_NODE_DIR="{tmp_path}/wt/nodes"
+echo_date() {{ printf 'LOG:%s\\n' "$*" >> "{log_file}"; }}
+run() {{ "$@"; }}
+fss_shunt_target_is_direct() {{ [ "$1" = "direct" ]; }}
+fss_shunt_target_is_reject() {{ [ "$1" = "reject" ]; }}
+fss_shunt_try_prepare_webtest_outbounds() {{ return 0; }}
+ipset() {{ printf 'IPSET:%s\\n' "$*" >> "{log_file}"; return 0; }}
+{fns}
+hot_ensure_targets_loaded
+"""
+            proc = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            lines = log_file.read_text(encoding="utf-8").splitlines()
+            self.assertIn("IPSET:-! add white_list 203.0.113.9", lines)
+            ado_data = json.loads(ado_capture.read_text(encoding="utf-8"))
+            self.assertEqual(ado_data["outbounds"][0]["tag"], "proxy9")
+            updated_conf = json.loads(xray_conf.read_text(encoding="utf-8"))
+            tags = [ob["tag"] for ob in updated_conf["outbounds"]]
+            self.assertEqual(tags, ["proxy1", "proxy9"])
+
+    def test_shunt_hot_dynamic_add_outbound_rejects_helper_node(self):
+        fns = "\n\n".join(
+            extract_shell_function(SS_SHUNT_HOT_PATH, fn)
+            for fn in [
+                "hot_log",
+                "hot_ensure_state_dir",
+                "hot_runtime_target_tag",
+                "hot_target_loaded",
+                "hot_node_needs_helper",
+                "hot_remove_outbound",
+                "hot_ensure_targets_loaded",
+            ]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            state_dir = tmp_path / "state"
+            out_dir = tmp_path / "outbounds"
+            meta_dir = tmp_path / "art/meta"
+            state_dir.mkdir()
+            out_dir.mkdir()
+            meta_dir.mkdir(parents=True)
+            xray_conf = tmp_path / "xray.json"
+            xray_conf.write_text('{"outbounds":[]}', encoding="utf-8")
+            next_file = state_dir / "next.tsv"
+            next_file.write_text("fss_r1|9|||||0\n", encoding="utf-8")
+            (out_dir / "9_outbounds.json").write_text('{"tag":"proxy9"}', encoding="utf-8")
+            (meta_dir / "9.meta").write_text("has_start=1\n", encoding="utf-8")
+            script = f"""
+XRAY_RUNTIME_CONF="{xray_conf}"
+HOT_STATE_DIR="{state_dir}"
+HOT_NEXT_FILE="{next_file}"
+FSS_SHUNT_RUNTIME_OUTBOUND_DIR="{out_dir}"
+FSS_SHUNT_RUNTIME_ARTIFACT_DIR="{tmp_path}/art"
+FSS_WEBTEST_CACHE_DIR="{tmp_path}/wt"
+FSS_WEBTEST_CACHE_NODE_DIR="{tmp_path}/wt/nodes"
+echo_date() {{ :; }}
+fss_shunt_target_is_direct() {{ return 1; }}
+fss_shunt_target_is_reject() {{ return 1; }}
+fss_shunt_try_prepare_webtest_outbounds() {{ return 0; }}
+{fns}
+hot_ensure_targets_loaded
+"""
+            proc = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+            self.assertNotEqual(proc.returncode, 0)
+
+    def test_shunt_hot_need_dns_flag_triggers_dns_scope_in_ss_config(self):
+        fn = extract_shell_function(SS_CONFIG_PATH, "reload_fancyss_scopes")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            log_file = tmp_path / "dispatch.log"
+            flag_file = tmp_path / "need_dns_reload"
+            fake_hot_script = tmp_path / "ss_shunt_hot_reload.sh"
+            fake_hot_script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake_hot_script.chmod(0o755)
+            # Patch path check by creating flag inside sh() mock
+            script = f"""
+HOT_NEED_DNS_RELOAD_FILE="{flag_file}"
+echo_date() {{ printf 'LOG:%s\\n' "$*" >> "{log_file}"; }}
+dbus() {{
+    if [ "$1" = "get" ] && [ "$2" = "ss_basic_shunt_hot_reload" ]; then
+        echo "1"
+    fi
+}}
+start_fancyss() {{ printf 'CALL:start_fancyss\\n' >> "{log_file}"; }}
+sh() {{
+    printf 'SH:%s\\n' "$*" >> "{log_file}"
+    case "$*" in
+        *"ss_shunt_hot_reload.sh apply"*)
+            echo "proxy_domains_changed" > "{flag_file}"
+            return 0
+            ;;
+    esac
+    return 0
+}}
+{fn.replace('/koolshare/scripts/ss_shunt_hot_reload.sh', str(fake_hot_script))}
+reload_fancyss_scopes "reload_shunt_hot-iptables"
+"""
+            proc = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0)
+            lines = log_file.read_text(encoding="utf-8").splitlines()
+            self.assertIn("SH:/koolshare/ss/ssconfig.sh reload_scopes dns-iptables", lines)
+            self.assertFalse(flag_file.exists())
 
 
 if __name__ == "__main__":
