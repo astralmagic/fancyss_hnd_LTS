@@ -1404,10 +1404,53 @@ fss_shunt_emit_status_probe_route_rule() {
 	printf '        {"type":"field","ruleTag":"fss_status_probe","domain":%s,"outboundTag":"proxy%s"}' "${values_json}" "${current_id}"
 }
 
+fss_shunt_get_webrtc_proxy_target() {
+	[ "${ss_basic_block_webrtc}" = "1" ] || return 0
+	[ "${ss_basic_block_webrtc_action}" = "proxy" ] || return 0
+	local node_id="${ss_basic_block_webrtc_node}"
+	case "${node_id}" in
+	""|*[!0-9]*)
+		return 0
+		;;
+	esac
+	if fss_shunt_node_supported "${node_id}"; then
+		echo "${node_id}"
+		return 0
+	fi
+	return 0
+}
+
+fss_shunt_emit_webrtc_route_rule() {
+	local current_id="$1"
+	local target_id=""
+	local outbound_tag=""
+	local runtime_out=""
+
+	[ "${ss_basic_block_webrtc}" = "1" ] || return 0
+	[ "${ss_basic_block_webrtc_action}" = "proxy" ] || return 0
+	target_id="$(fss_shunt_get_webrtc_proxy_target 2>/dev/null)"
+	if [ -n "${target_id}" ]; then
+		runtime_out="${FSS_SHUNT_RUNTIME_OUTBOUND_DIR}/${target_id}_outbounds.json"
+		if [ ! -s "${runtime_out}" ]; then
+			fss_shunt_log "⚠️WebRTC转发节点[${target_id}]出站配置不可用，已回退至当前主节点[${current_id}]。"
+			target_id="${current_id}"
+		fi
+	else
+		target_id="${current_id}"
+	fi
+	outbound_tag="proxy${target_id}"
+	if [ "${ss_basic_block_webrtc_ports}" = "all" ]; then
+		printf '      {"type":"field","ruleTag":"fss_webrtc","inboundTag":["tproxy-in"],"network":"udp","outboundTag":"%s"}' "${outbound_tag}"
+	else
+		printf '      {"type":"field","ruleTag":"fss_webrtc","inboundTag":["tproxy-in"],"network":"udp","port":"3478-3481,5349,19302-19309","outboundTag":"%s"}' "${outbound_tag}"
+	fi
+}
+
 fss_shunt_emit_outbounds_json() {
 	local current_id="$1"
 	local node_id=""
 	local default_target=""
+	local webrtc_target=""
 	local runtime_out=""
 
 	runtime_out="${FSS_SHUNT_RUNTIME_OUTBOUND_DIR}/${current_id}_outbounds.json"
@@ -1421,12 +1464,21 @@ fss_shunt_emit_outbounds_json() {
 			cat "${runtime_out}"
 		fi
 	fi
+	webrtc_target="$(fss_shunt_get_webrtc_proxy_target 2>/dev/null)"
+	if [ -n "${webrtc_target}" ] && [ "${webrtc_target}" != "${current_id}" ] && [ "${webrtc_target}" != "${default_target}" ]; then
+		runtime_out="${FSS_SHUNT_RUNTIME_OUTBOUND_DIR}/${webrtc_target}_outbounds.json"
+		if [ -s "${runtime_out}" ]; then
+			printf ',\n'
+			cat "${runtime_out}"
+		fi
+	fi
 	if [ -f "${FSS_SHUNT_RUNTIME_TARGET_FILE}" ]; then
 		while IFS= read -r node_id
 		do
 			[ -n "${node_id}" ] || continue
 			[ "${node_id}" = "${current_id}" ] && continue
 			[ "${node_id}" = "${default_target}" ] && continue
+			[ "${node_id}" = "${webrtc_target}" ] && continue
 			runtime_out="${FSS_SHUNT_RUNTIME_OUTBOUND_DIR}/${node_id}_outbounds.json"
 			[ -s "${runtime_out}" ] || continue
 			printf ',\n'
@@ -1966,12 +2018,17 @@ fss_shunt_prepare_outbound_cache() {
 	local ids_file="${FSS_SHUNT_RUNTIME_DIR}/cache_ids.txt"
 	local node_id=""
 	local default_target=""
+	local webrtc_target=""
 
 	: > "${ids_file}" || return 1
 	echo "${current_id}" >> "${ids_file}"
 	default_target="$(fss_shunt_get_effective_default_target 2>/dev/null)"
 	if [ -n "${default_target}" ] && ! fss_shunt_target_is_special "${default_target}"; then
 		echo "${default_target}" >> "${ids_file}"
+	fi
+	webrtc_target="$(fss_shunt_get_webrtc_proxy_target 2>/dev/null)"
+	if [ -n "${webrtc_target}" ]; then
+		echo "${webrtc_target}" >> "${ids_file}"
 	fi
 	if [ -f "${FSS_SHUNT_RUNTIME_TARGET_FILE}" ]; then
 		while IFS= read -r node_id
@@ -1999,6 +2056,7 @@ fss_shunt_build_xray_config() {
 	local tmp_file="${config_file}.tmp.$$"
 	local dns_rule=""
 	local status_rule=""
+	local webrtc_rule=""
 	local route_rules_file="${tmp_file}.rules"
 	local build_started=0
 	local build_elapsed=0
@@ -2100,6 +2158,10 @@ EOF2
 	status_rule="$(fss_shunt_emit_status_probe_route_rule "${current_id}")"
 	if [ -n "${status_rule}" ]; then
 		printf ',\n%s\n' "${status_rule}" >> "${tmp_file}"
+	fi
+	webrtc_rule="$(fss_shunt_emit_webrtc_route_rule "${current_id}")"
+	if [ -n "${webrtc_rule}" ]; then
+		printf ',\n%s\n' "${webrtc_rule}" >> "${tmp_file}"
 	fi
 	fss_shunt_emit_routing_rules_json > "${route_rules_file}" 2>/dev/null
 	if [ -s "${route_rules_file}" ]; then

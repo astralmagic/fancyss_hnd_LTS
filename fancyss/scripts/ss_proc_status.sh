@@ -375,6 +375,14 @@ GET_WEBRTC_BLOCK_DESC(){
 		echo "关闭"
 		return 0
 	fi
+	local action_desc="直接拦截"
+	if [ "${ss_basic_block_webrtc_action}" = "proxy" ];then
+		if [ "${ss_basic_mode}" = "7" ] && [ -n "${ss_basic_block_webrtc_node}" ];then
+			action_desc="节点转发（节点#${ss_basic_block_webrtc_node}）"
+		else
+			action_desc="节点转发（当前主节点）"
+		fi
+	fi
 	local ports_desc="常见端口"
 	if [ "${ss_basic_block_webrtc_ports}" = "all" ];then
 		ports_desc="所有端口"
@@ -383,7 +391,7 @@ GET_WEBRTC_BLOCK_DESC(){
 	if [ "${ss_basic_block_webrtc_ipv6:-1}" = "1" ];then
 		v6_desc="IPv4+IPv6"
 	fi
-	echo "开启（${ports_desc} / ${v6_desc}）"
+	echo "开启（${action_desc} / ${ports_desc} / ${v6_desc}）"
 }
 
 chain_exists() {
