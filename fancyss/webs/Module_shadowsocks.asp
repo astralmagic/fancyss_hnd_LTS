@@ -7678,8 +7678,8 @@ function save() {
 	}
 	var post_dbus = compfilter(get_compare_store(), dbus);
 	var submit_arg = "start";
-	if (dbus["ss_basic_enable"] == "1" && should_use_shunt_hot_reload(post_dbus)) {
-		submit_arg = "start_shunt_hot";
+	if (dbus["ss_basic_enable"] == "1") {
+		submit_arg = resolve_config_submit_action(post_dbus);
 	}
 	//console.log("post_dbus", post_dbus);
 
@@ -7849,29 +7849,218 @@ function should_touch_shunt_rule_ts(nextFields){
 	return false;
 }
 
-function should_use_shunt_hot_reload(post_dbus){
-	if (!post_dbus) return false;
-	if (!E("ss_basic_enable") || !E("ss_basic_enable").checked) return false;
-	if (!E("ss_basic_mode") || String(E("ss_basic_mode").value || "") != "7") return false;
-	if (!E("ss_basic_shunt_hot_reload") || !E("ss_basic_shunt_hot_reload").checked) return false;
-	if (String(db_ss["ss_basic_status"] || "0") != "1") return false;
-	var allowed = {
+var PARTIAL_RELOAD_KEY_SCOPES = {
+	// L0: 纯保存项（无需重启任何后台服务）
+	"ss_basic_tablet": "none",
+	"ss_basic_noserver": "none",
+	"ss_basic_node_cards": "none",
+	"ss_basic_dragable": "none",
+	"ss_basic_qrcode": "none",
+	"ss_adv_sub": "none",
+	"ss_basic_row": "none",
+	"ss_basic_interval": "none",
+	"ss_basic_nonetcheck": "none",
+	"ss_basic_nochnipcheck": "none",
+	"ss_basic_nofrnipcheck": "none",
+	"ss_basic_noruncheck": "none",
+	"ss_basic_mcore": "none",
+	"ss_basic_shunt_hot_reload": "none",
+	"ss_online_links": "none",
+	"ssr_subscribe_mode": "none",
+	"ss_basic_online_links_proxy": "none",
+	"ss_basic_online_ua": "none",
+	"ss_basic_exclude": "none",
+	"ss_basic_include": "none",
+	"ss_basic_sub_ai": "none",
+	"ss_basic_sub_node_log": "none",
+	"ss_basic_sub_keep_info_node": "none",
+	"ss_basic_gfwlist_update": "none",
+	"ss_basic_chnroute_update": "none",
+	"ss_basic_chnlist_update": "none",
+	"ss_basic_lt_web_time": "none",
+
+	// L1: 定时任务（cron）局部重载
+	"ss_basic_rule_update": "cron",
+	"ss_basic_rule_update_time": "cron",
+	"ss_basic_node_update": "cron",
+	"ss_basic_node_update_day": "cron",
+	"ss_basic_node_update_hr": "cron",
+	"ss_basic_lt_cru_opts": "cron",
+	"ss_basic_lt_cru_time": "cron",
+	"ss_reboot_check": "cron",
+	"ss_basic_week": "cron",
+	"ss_basic_day": "cron",
+	"ss_basic_inter_min": "cron",
+	"ss_basic_inter_hour": "cron",
+	"ss_basic_inter_day": "cron",
+	"ss_basic_inter_pre": "cron",
+	"ss_basic_time_hour": "cron",
+	"ss_basic_time_min": "cron",
+	"ss_basic_custom": "cron",
+
+	// L1: 状态检测与故障转移（status）局部重载
+	"ss_basic_status_mode": "status",
+	"ss_basic_furl": "status",
+	"ss_basic_curl": "status",
+	"ss_failover_enable": "status",
+	"ss_failover_c1": "status",
+	"ss_failover_c2": "status",
+	"ss_failover_c3": "status",
+	"ss_failover_s1": "status",
+	"ss_failover_s2_1": "status",
+	"ss_failover_s2_2": "status",
+	"ss_failover_s3_1": "status",
+	"ss_failover_s3_2": "status",
+	"ss_failover_s4_1": "status",
+	"ss_failover_s4_2": "status",
+	"ss_failover_s4_3": "status",
+	"ss_failover_s5": "status",
+	"fss_node_failover_backup": "status",
+	"fss_node_failover_identity": "status",
+
+	// L2: 防火墙 / 访问控制（iptables）局部重载
+	"ss_acl_default_mode": "iptables",
+	"ss_acl_default_mode_format": "iptables",
+	"ss_acl_default_ports": "iptables",
+	"ss_acl_default_udp": "iptables",
+	"ss_acl_default_quic": "iptables",
+	"ss_basic_dns_hijack": "iptables",
+	"ss_basic_block_quic": "iptables",
+	"ss_basic_udpoff": "iptables",
+	"ss_basic_udpall": "iptables",
+
+	// L3: IP 黑白名单（ipset 原子替换）
+	"ss_wan_white_ip": "ipset",
+	"ss_wan_black_ip": "ipset",
+
+	// L3: 自定义 dnsmasq 配置
+	"ss_dnsmasq": "dnsmasq",
+
+	// L3 & L4: 域名黑白名单 / DNS 方案与上游（后端会校验 UDP 中继一致性，变化时自动回退完整重启）
+	"ss_wan_white_domain": "dns",
+	"ss_wan_black_domain": "dns",
+	"ss_basic_proxy_newb": "dns",
+	"ss_basic_dns_plan": "dns",
+	"ss_basic_chng": "dns",
+	"ss_basic_smrt": "dns",
+	"ss_basic_smrt_chn_dns": "dns",
+	"ss_basic_smrt_gfw_dns": "dns",
+	"ss_basic_block_resov": "dns",
+	"ss_basic_dns_serverx": "dns",
+	"ss_basic_chng_ipv6_drop_direc": "dns",
+	"ss_basic_chng_ipv6_drop_proxy": "dns"
+};
+
+function resolve_config_submit_action(post_dbus){
+	if (!post_dbus) return "start";
+	if (!E("ss_basic_enable") || !E("ss_basic_enable").checked) return "start";
+	if (String(db_ss["ss_basic_status"] || "0") != "1") return "start";
+
+	var currentMode = E("ss_basic_mode") ? String(E("ss_basic_mode").value || "") : "";
+	var savedMode = String(db_ss["ss_basic_mode"] || "");
+	var shuntHotEnabled = !!(E("ss_basic_shunt_hot_reload") && E("ss_basic_shunt_hot_reload").checked);
+	var prevWebrtcAction = String(db_ss["ss_basic_block_webrtc_action"] || "reject");
+	var nextWebrtcAction = E("ss_basic_block_webrtc_action") ? String(E("ss_basic_block_webrtc_action").value || "reject") : prevWebrtcAction;
+	var shuntHotKeys = {
 		"ss_basic_shunt_rules": 1,
 		"ss_basic_shunt_default_node": 1,
 		"ss_basic_shunt_default_node_identity": 1,
-		"ss_basic_shunt_ingress_mode": 1,
-		"ss_basic_shunt_custom_presets": 1,
-		"ss_basic_shunt_rule_ts": 1
+		"ss_basic_shunt_custom_presets": 1
 	};
-	var has_real_change = false;
+	var webrtcIptablesKeys = {
+		"ss_basic_block_webrtc": 1,
+		"ss_basic_block_webrtc_ports": 1,
+		"ss_basic_block_webrtc_ipv6": 1,
+		"ss_basic_block_webrtc_action": 1
+	};
+	var aclRowRegex = /^ss_acl_(name|mode|port|udp|quic|ip|mac)_\d+$/;
+	var chngDnsRegex = /^ss_basic_chng_(china|trust)_(dns_[123]_chk|net_[123]_typ|(udp|tcp|dot)_[123]_(opt|usr))$/;
+	var scopes = {
+		"shunt_hot": false,
+		"ipset": false,
+		"dnsmasq": false,
+		"dns": false,
+		"iptables": false,
+		"cron": false,
+		"status": false
+	};
+	var hasAnyKey = false;
+	var hasRealKey = false;
+
 	for (var key in post_dbus) {
 		if (!post_dbus.hasOwnProperty(key)) continue;
-		if (!allowed[key]) return false;
-		if (key != "ss_basic_shunt_rule_ts") {
-			has_real_change = true;
+		hasAnyKey = true;
+
+		if (key == "ss_basic_shunt_rule_ts") {
+			continue;
+		}
+		hasRealKey = true;
+
+		if (shuntHotKeys[key]) {
+			if (currentMode != "7" || savedMode != "7" || !shuntHotEnabled) {
+				return "start";
+			}
+			scopes.shunt_hot = true;
+			continue;
+		}
+		if (key == "ss_basic_shunt_ingress_mode") {
+			if (currentMode != "7" || savedMode != "7") {
+				return "start";
+			}
+			scopes.iptables = true;
+			continue;
+		}
+		if (webrtcIptablesKeys[key]) {
+			if (prevWebrtcAction == "proxy" || nextWebrtcAction == "proxy") {
+				return "start";
+			}
+			scopes.iptables = true;
+			continue;
+		}
+		if (aclRowRegex.test(key)) {
+			scopes.iptables = true;
+			continue;
+		}
+		if (chngDnsRegex.test(key)) {
+			scopes.dns = true;
+			continue;
+		}
+		var mappedScope = PARTIAL_RELOAD_KEY_SCOPES[key];
+		if (!mappedScope) {
+			return "start";
+		}
+		if (mappedScope != "none") {
+			scopes[mappedScope] = true;
 		}
 	}
-	return has_real_change;
+
+	if (!hasAnyKey || !hasRealKey) {
+		return "start";
+	}
+
+	if (scopes.dns) {
+		scopes.dnsmasq = false;
+	}
+
+	var orderedScopes = [];
+	var order = ["shunt_hot", "ipset", "dnsmasq", "dns", "iptables", "cron", "status"];
+	for (var i = 0; i < order.length; i++) {
+		if (scopes[order[i]]) {
+			orderedScopes.push(order[i]);
+		}
+	}
+
+	if (!orderedScopes.length) {
+		return "save_only";
+	}
+	if (orderedScopes.length == 1 && orderedScopes[0] == "shunt_hot") {
+		return "start_shunt_hot";
+	}
+	return "reload_" + orderedScopes.join("-");
+}
+
+function should_use_shunt_hot_reload(post_dbus){
+	return resolve_config_submit_action(post_dbus) == "start_shunt_hot";
 }
 var realtimeLogStartTimer = null;
 var textFilePollStates = {};

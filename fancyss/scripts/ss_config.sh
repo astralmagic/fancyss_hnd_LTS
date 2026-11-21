@@ -100,6 +100,84 @@ start_fancyss_shunt_hot(){
 	start_fancyss
 }
 
+save_only_fancyss(){
+	echo_date ======================= 梅林固件 - 【科学上网】 ========================
+	echo_date
+	echo_date "[partial-reload] 本次修改仅涉及保存项（界面/订阅/测速偏好等），无需重启服务。"
+	echo_date "[partial-reload] 配置已保存生效！"
+	echo_date
+	echo_date ======================= 梅林固件 - 【科学上网】 ========================
+	return 0
+}
+
+reload_fancyss_scopes(){
+	local raw_arg="$1"
+	local scopes_raw="${raw_arg#reload_}"
+	local scope=""
+	local need_shunt_hot="0"
+	local ssconfig_scopes=""
+	local old_ifs="${IFS}"
+
+	if [ -z "${scopes_raw}" ] || ! printf '%s' "${scopes_raw}" | grep -Eq '^[a-z0-9_-]+$'; then
+		echo_date "[partial-reload] 参数格式非法（${raw_arg}），回退到完整重启。"
+		start_fancyss
+		return
+	fi
+
+	IFS='-'
+	for scope in ${scopes_raw}; do
+		[ -n "${scope}" ] || continue
+		case "${scope}" in
+		shunt_hot)
+			need_shunt_hot="1"
+			;;
+		ipset|dnsmasq|dns|iptables|cron|status)
+			if [ -n "${ssconfig_scopes}" ]; then
+				ssconfig_scopes="${ssconfig_scopes}-${scope}"
+			else
+				ssconfig_scopes="${scope}"
+			fi
+			;;
+		*)
+			IFS="${old_ifs}"
+			echo_date "[partial-reload] 未识别的局部重载域（${scope}），回退到完整重启。"
+			start_fancyss
+			return
+			;;
+		esac
+	done
+	IFS="${old_ifs}"
+
+	if [ "${need_shunt_hot}" = "0" ] && [ -z "${ssconfig_scopes}" ]; then
+		echo_date "[partial-reload] 无有效局部重载域，回退到完整重启。"
+		start_fancyss
+		return
+	fi
+
+	if [ "${need_shunt_hot}" = "1" ]; then
+		if [ "$(dbus get ss_basic_shunt_hot_reload)" = "1" ] && [ -x "/koolshare/scripts/ss_shunt_hot_reload.sh" ]; then
+			echo_date "[hot-reload] 尝试通过 Xray API 热更新节点分流规则..."
+			if ! sh /koolshare/scripts/ss_shunt_hot_reload.sh apply; then
+				echo_date "[hot-reload] 热更新失败，回退到完整重启。"
+				start_fancyss
+				return
+			fi
+		else
+			echo_date "[hot-reload] 分流热重载未启用或脚本不可用，回退到完整重启。"
+			start_fancyss
+			return
+		fi
+	fi
+
+	if [ -n "${ssconfig_scopes}" ]; then
+		if ! sh /koolshare/ss/ssconfig.sh reload_scopes "${ssconfig_scopes}"; then
+			echo_date "[partial-reload] 局部重载（${ssconfig_scopes}）失败，自动回退到完整重启。"
+			start_fancyss
+			return
+		fi
+	fi
+}
+
 # call by ws
 case $1 in
 start)
@@ -115,6 +193,22 @@ start_shunt_hot)
 	true > /tmp/upload/ss_log.txt
 	pre_start
 	start_fancyss_shunt_hot 2>&1 | tee -a /tmp/upload/ss_log.txt
+	echo XU6J03M6 | tee -a /tmp/upload/ss_log.txt
+	unset_lock
+	;;
+save_only)
+	set_lock
+	true > /tmp/upload/ss_log.txt
+	pre_start
+	save_only_fancyss 2>&1 | tee -a /tmp/upload/ss_log.txt
+	echo XU6J03M6 | tee -a /tmp/upload/ss_log.txt
+	unset_lock
+	;;
+reload_*)
+	set_lock
+	true > /tmp/upload/ss_log.txt
+	pre_start
+	reload_fancyss_scopes "$1" 2>&1 | tee -a /tmp/upload/ss_log.txt
 	echo XU6J03M6 | tee -a /tmp/upload/ss_log.txt
 	unset_lock
 	;;
@@ -156,6 +250,24 @@ start_shunt_hot)
 	http_response "$1"
 	pre_start
 	start_fancyss_shunt_hot | tee -a /tmp/upload/ss_log.txt 2>&1
+	echo XU6J03M6 | tee -a /tmp/upload/ss_log.txt
+	unset_lock
+	;;
+save_only)
+	set_lock
+	true > /tmp/upload/ss_log.txt
+	http_response "$1"
+	pre_start
+	save_only_fancyss | tee -a /tmp/upload/ss_log.txt 2>&1
+	echo XU6J03M6 | tee -a /tmp/upload/ss_log.txt
+	unset_lock
+	;;
+reload_*)
+	set_lock
+	true > /tmp/upload/ss_log.txt
+	http_response "$1"
+	pre_start
+	reload_fancyss_scopes "$2" | tee -a /tmp/upload/ss_log.txt 2>&1
 	echo XU6J03M6 | tee -a /tmp/upload/ss_log.txt
 	unset_lock
 	;;
