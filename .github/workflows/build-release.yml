@@ -318,6 +318,32 @@ jobs:
             packages/version.json.js
           retention-days: 7
 
+  sync-packages:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/fix-release-review-28-34'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: fancyss-hnd-packages
+          path: packages
+      - name: Commit verified package artifacts
+        run: |
+          set -euo pipefail
+          git add packages/fancyss_hnd_full.tar.gz packages/fancyss_hnd_lite.tar.gz \
+            packages/fancyss_hnd_v8_full.tar.gz packages/fancyss_hnd_v8_lite.tar.gz \
+            packages/version.json.js
+          git diff --cached --quiet && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "build: sync verified HND packages for 3.5.33"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
   release:
     if: startsWith(github.ref, 'refs/tags/')
     needs: build
