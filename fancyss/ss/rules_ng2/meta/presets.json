@@ -209,10 +209,65 @@
     "id": "games",
     "order": 190,
     "label": "游戏平台",
-    "description": "常见游戏平台与游戏服务域名",
+    "description": "常见游戏平台与游戏服务域名合集",
     "policy": "proxy",
     "site": [
       "games"
+    ],
+    "ip": []
+  },
+  {
+    "id": "steam",
+    "order": 191,
+    "label": "Steam / Valve",
+    "description": "Steam 商店、社区、下载 CDN 及 Valve 游戏域名",
+    "policy": "proxy",
+    "site": [
+      "steam"
+    ],
+    "ip": []
+  },
+  {
+    "id": "nintendo",
+    "order": 192,
+    "label": "Nintendo",
+    "description": "任天堂 Switch、eShop、Pokémon 等相关域名",
+    "policy": "proxy",
+    "site": [
+      "nintendo"
+    ],
+    "ip": []
+  },
+  {
+    "id": "xbox",
+    "order": 193,
+    "label": "Xbox / 微软游戏",
+    "description": "Xbox Live、Game Pass、Minecraft、动视暴雪与 Bethesda 域名",
+    "policy": "proxy",
+    "site": [
+      "xbox"
+    ],
+    "ip": []
+  },
+  {
+    "id": "playstation",
+    "order": 194,
+    "label": "PlayStation / Sony",
+    "description": "PSN、PlayStation Store、下载 CDN 与 Sony 游戏域名",
+    "policy": "proxy",
+    "site": [
+      "playstation"
+    ],
+    "ip": []
+  },
+  {
+    "id": "games-other",
+    "order": 195,
+    "label": "其他游戏平台",
+    "description": "EA、Epic、Ubisoft、Riot、Rockstar 等其余游戏平台域名",
+    "policy": "proxy",
+    "site": [
+      "games-other"
     ],
     "ip": []
   },

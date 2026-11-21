@@ -1,0 +1,20 @@
+# Steam / Valve curated common domains
+domain:steampowered.com
+domain:steamcommunity.com
+domain:steamstatic.com
+domain:steamcontent.com
+domain:steamgames.com
+domain:steamserver.net
+domain:steamdeck.com
+domain:steamusercontent.com
+domain:steam-chat.com
+domain:steam-api.com
+domain:steamdb.info
+domain:valvesoftware.com
+domain:s.team
+domain:counter-strike.net
+domain:teamfortress.com
+domain:half-life.com
+domain:thinkwithportals.com
+domain:l4d.com
+domain:underlords.com

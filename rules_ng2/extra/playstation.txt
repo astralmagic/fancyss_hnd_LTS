@@ -1,0 +1,25 @@
+# PlayStation / PSN / PS Store / Download CDN curated common domains
+domain:playstation.com
+domain:playstation.net
+domain:playstation.org
+domain:playstation.co.jp
+domain:playstation.com.hk
+domain:playstation.com.tw
+domain:playstationnetwork.com
+domain:playstationsafety.com
+domain:playstationmusic.com
+domain:playstationstudios.com
+domain:sonyentertainmentnetwork.com
+domain:sonyinteractiveentertainment.com
+domain:sie.com
+domain:gaikai.com
+domain:psn.jp
+domain:psn.com
+domain:psn.net
+full:fus01.ps4.update.playstation.net
+full:fus01.ps5.update.playstation.net
+full:fjp01.ps4.update.playstation.net
+full:fjp01.ps5.update.playstation.net
+full:fhk01.ps4.update.playstation.net
+full:fhk01.ps5.update.playstation.net
+keyword:playstation

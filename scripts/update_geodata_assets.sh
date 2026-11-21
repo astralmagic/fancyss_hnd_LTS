@@ -490,6 +490,31 @@ emit_source() {
 		path=$(printf '%s' "$source_json" | jq -r '.path')
 		cat "${REPO_ROOT}/${path}" | normalize_site_tokens
 		;;
+	site:local_games_partition)
+		path=$(printf '%s' "$source_json" | jq -r '.path')
+		bucket=$(printf '%s' "$source_json" | jq -r '.bucket')
+		awk -v target="${bucket}" '
+		{
+			line = $0
+			gsub(/\r/, "", line)
+			sub(/#.*/, "", line)
+			gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+			if (line == "") next
+			val = tolower(line)
+			sub(/^(domain|full|keyword):/, "", val)
+			cls = "other"
+			if (val !~ /microsoft/ && val ~ /(steam|valve|dota2?|csgo|counter-strike|playartifact|underlords|teamfortress|half-life|thinkwithportals|l4d\.com|s\.team)/) {
+				cls = "steam"
+			} else if (val ~ /(nintendo|amiibo|pokemon|mario|zelda|splatoon|kirby|metroid|xenoblade|fire-?emblem|animal-?crossing|ac-pocketcamp|pikmin|smashbros|wii\.com|miiverse|ayudanintendo|100classicbooks)/) {
+				cls = "nintendo"
+			} else if (val ~ /(playstation|sonyentertainmentnetwork|sonyinteractiveentertainment|sie\.com|gaikai\.com|psn\.(com|net|jp)|dualsense|sony\.(com|net|co\.jp)$)/) {
+				cls = "playstation"
+			} else if (val ~ /(xbox|gamepass\.com|minecraft|mojang|bethesda|bethsoft|beth\.games|elderscrolls|fallout|doom\.com|quake|starfield|activision|blizzard|battle\.net|battlenet|blz|callofduty|diablo|overwatch|hearthstone|starcraft|warcraft|worldofwarcraft|heroesofthestorm|king\.com|candycrush|halowaypoint|forzamotorsport|forzaracingchampionship|seaofthieves|ageofempires|flightsimulator|obsidian\.net|inxile|doublefine|compulsiongames|ninjatheory|undeadlabs|rare\.co\.uk|playground-games|turn10)/) {
+				cls = "xbox"
+			}
+			if (cls == target) print line
+		}' "${REPO_ROOT}/${path}" | normalize_site_tokens
+		;;
 	ip:remote_666os_ip)
 		normalize_ip_plain < "${remote_tmp}"
 		;;
