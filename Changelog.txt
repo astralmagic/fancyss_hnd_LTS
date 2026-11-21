@@ -1,5 +1,9 @@
 fancyss Changelog
 
+3.5.32（20261121）
+   - add	新增全局 WebRTC 防泄漏开关（附加功能 -> 代理行为），支持拦截常见 STUN/TURN 端口（3478-3481、5349、19302-19309）或所有非基础出站 UDP 端口（保留 DNS/DHCP/NTP），并提供独立的 IPv6 处理选项。
+   - add	WebRTC 防泄漏支持选择处理行为（直接拦截 `reject` 或通过节点 `TPROXY` 转发 `proxy`），Xray 分流模式下可指定任意支持 Xray 的转发节点并在不支持 UDP 或未开启 IPv6 代理时自动回退至 `reject` 防止静默泄漏。
+
 3.5.31（20261115）
    - update	建立 HND/HND v8 个人 LTS 发布策略，运行时插件、Xray 与规则更新统一切换到 astralmagic/fancyss_hnd_LTS 受控源。
    - update	Xray-core 升级到自编译 `v26.11.9-676eaf6`，使用 Go `1.27.3` 构建，包含根证书清理与默认关闭 MPTCP 的安全修复。
