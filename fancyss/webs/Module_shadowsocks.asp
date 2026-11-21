@@ -2455,7 +2455,7 @@ function get_shunt_preset_icon(item) {
 	if (policy == "direct") {
 		return "🟢";
 	}
-	if (id == "ai" || id == "openai") return "🤖";
+	if (id == "ai" || id == "openai" || id == "claude" || id == "gemini" || id == "ai-other") return "🤖";
 	if (id == "telegram") return "✈️";
 	if (id == "twitter" || id == "social-media") return "💬";
 	if (id == "discord") return "🎧";
