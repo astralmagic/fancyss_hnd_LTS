@@ -241,6 +241,7 @@ remove_now(){
 	[ -z "${ss_basic_proxy_newb}" ] && dbus set ss_basic_proxy_newb=1
 	[ -z "${ss_basic_proxy_ipv6}" ] && dbus set ss_basic_proxy_ipv6=0
 	[ -z "${ss_basic_block_webrtc}" ] && dbus set ss_basic_block_webrtc=0
+	[ -z "${ss_basic_block_webrtc_action}" ] && dbus set ss_basic_block_webrtc_action=reject
 	[ -z "${ss_basic_block_webrtc_ports}" ] && dbus set ss_basic_block_webrtc_ports=common
 	[ -z "${ss_basic_block_webrtc_ipv6}" ] && dbus set ss_basic_block_webrtc_ipv6=1
 	[ -z "${ss_basic_udpoff}" ] && dbus set ss_basic_udpoff=0

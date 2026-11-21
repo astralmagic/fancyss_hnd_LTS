@@ -158,6 +158,10 @@ fss_base_apply_node_derived_env() {
 		fi
 	fi
 	ss_basic_server_orig=${ss_basic_server}
+	if [ "${ss_basic_block_webrtc}" = "1" ] && [ "${ss_basic_block_webrtc_action}" = "proxy" ];then
+		mangle=1
+	fi
+
 	fss_base_apply_node_no_udp
 }
 
@@ -519,6 +523,10 @@ if [ "${FSS_BASE_SKIP_DBUS_EXPORT:-0}" != "1" ]; then
 			break
 		fi
 	done
+
+	if [ "${ss_basic_block_webrtc}" = "1" ] && [ "${ss_basic_block_webrtc_action}" = "proxy" ];then
+		mangle=1
+	fi
 
 	fss_base_apply_node_no_udp
 

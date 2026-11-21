@@ -6962,11 +6962,17 @@ function conf2obj(obj, action) {
 	if (E("ss_basic_status_mode") && typeof obj["ss_basic_status_mode"] == "undefined") {
 		E("ss_basic_status_mode").value = "serve";
 	}
+	if (E("ss_basic_block_webrtc_action") && typeof obj["ss_basic_block_webrtc_action"] == "undefined") {
+		E("ss_basic_block_webrtc_action").value = "reject";
+	}
 	if (E("ss_basic_block_webrtc_ports") && typeof obj["ss_basic_block_webrtc_ports"] == "undefined") {
 		E("ss_basic_block_webrtc_ports").value = "common";
 	}
 	if (E("ss_basic_block_webrtc_ipv6") && typeof obj["ss_basic_block_webrtc_ipv6"] == "undefined") {
 		E("ss_basic_block_webrtc_ipv6").checked = true;
+	}
+	if (typeof refresh_webrtc_node_options == "function") {
+		refresh_webrtc_node_options(obj["ss_basic_block_webrtc_node"]);
 	}
 }
 function ssconf_node2obj(node_sel) {
@@ -7255,6 +7261,8 @@ function save() {
 	  "ss_basic_hy2_tfo_switch",
 	  "ss_basic_hy2_cg_opt",
 	  "ss_basic_shunt_ingress_mode",
+	  "ss_basic_block_webrtc_action",
+	  "ss_basic_block_webrtc_node",
 	  "ss_basic_block_webrtc_ports"
 	];
 	var params_check = [
@@ -9008,8 +9016,47 @@ function update_visibility() {
 	sync_chinadns_ipv6_drop_proxy_ui();
 	showhide("ss_dnsmasq_cus", E("ss_basic_dns_serverx").checked == false);
 	var webrtcBlock = E("ss_basic_block_webrtc") && E("ss_basic_block_webrtc").checked;
+	var webrtcAction = E("ss_basic_block_webrtc_action") ? E("ss_basic_block_webrtc_action").value : "reject";
+	showhide("ss_basic_block_webrtc_action_row", webrtcBlock);
+	showhide("ss_basic_block_webrtc_node_row", webrtcBlock && webrtcAction == "proxy");
 	showhide("ss_basic_block_webrtc_ports_row", webrtcBlock);
 	showhide("ss_basic_block_webrtc_ipv6_row", webrtcBlock);
+	if (webrtcBlock && webrtcAction == "proxy" && typeof refresh_webrtc_node_options == "function") {
+		refresh_webrtc_node_options();
+	}
+}
+
+function refresh_webrtc_node_options(preferredValue) {
+	var sel = E("ss_basic_block_webrtc_node");
+	if (!sel) {
+		return;
+	}
+	var currentVal = (typeof preferredValue != "undefined" && preferredValue !== null)
+		? String(preferredValue)
+		: (sel.value || (typeof db_ss != "undefined" && db_ss["ss_basic_block_webrtc_node"] ? String(db_ss["ss_basic_block_webrtc_node"]) : ""));
+	var nodes = (typeof get_shunt_supported_target_nodes == "function" && typeof ss_nodes != "undefined")
+		? get_shunt_supported_target_nodes()
+		: [];
+	sel.innerHTML = "";
+	var addOpt = function(val, text) {
+		var opt = document.createElement("option");
+		opt.value = val;
+		opt.textContent = text;
+		sel.appendChild(opt);
+	};
+	addOpt("", "跟随当前主节点");
+	var found = (currentVal === "");
+	for (var i = 0; i < nodes.length; i++) {
+		var item = nodes[i];
+		if (String(item.id) === currentVal) {
+			found = true;
+		}
+		addOpt(String(item.id), String(item.label));
+	}
+	if (!found && currentVal !== "") {
+		addOpt(currentVal, "节点 #" + currentVal + "（已保存）");
+	}
+	sel.value = currentVal;
 }
 
 function Add_profile() { //点击节点页面内添加节点动作
@@ -16510,6 +16557,13 @@ function toggleKeyMask(o, show){
 									["once", "once 按次启动"],
 									["", "兼容模式"]
 								];
+								var option_webrtc_action = [
+									["reject", "直接拦截（彻底防泄漏，可能影响语音/视频）"],
+									["proxy", "通过节点转发（保持语音/视频可用）"]
+								];
+								var option_webrtc_node = [
+									["", "跟随当前主节点"]
+								];
 								var option_webrtc_ports = [
 									["common", "常见端口（3478-3481,5349,19302-19309）"],
 									["all", "所有端口（保留DNS/DHCP/NTP）"]
@@ -17680,6 +17734,8 @@ function toggleKeyMask(o, show){
 															{ title: '开启ipv6代理', id:'ss_basic_proxy_ipv6', hint:'146', type:'checkbox', func:'u', value:false},
 															{ title: 'New Bing模式', id:'ss_basic_proxy_newb', hint:'149', type:'checkbox', value:true},
 															{ title: '开启WebRTC防泄漏', id:'ss_basic_block_webrtc', hint:'157', type:'checkbox', func:'u', value:false},
+															{ title: 'WebRTC处理行为', rid:'ss_basic_block_webrtc_action_row', hint:'157', id:'ss_basic_block_webrtc_action', type:'select', func:'u', style:'width:auto', options:option_webrtc_action, value:'reject'},
+															{ title: 'WebRTC转发节点', rid:'ss_basic_block_webrtc_node_row', hint:'157', id:'ss_basic_block_webrtc_node', type:'select', style:'width:auto', options:option_webrtc_node, value:''},
 															{ title: 'WebRTC拦截端口范围', rid:'ss_basic_block_webrtc_ports_row', hint:'157', id:'ss_basic_block_webrtc_ports', type:'select', style:'width:auto', options:option_webrtc_ports, value:'common'},
 															{ title: 'WebRTC防泄漏同时处理IPv6', rid:'ss_basic_block_webrtc_ipv6_row', hint:'157', id:'ss_basic_block_webrtc_ipv6', type:'checkbox', value:true},
 															{ td: '<tr><td class="smth" style="font-weight: bold;" colspan="2">性能优化</td></tr>'},

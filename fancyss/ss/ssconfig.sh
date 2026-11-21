@@ -720,6 +720,8 @@ prepare_system() {
 	set_default "ss_basic_block_quic" "1"
 	set_default "ss_basic_proxy_ipv6" "0"
 	set_default "ss_basic_block_webrtc" "0"
+	set_default "ss_basic_block_webrtc_action" "reject"
+	set_default "ss_basic_block_webrtc_node" ""
 	set_default "ss_basic_block_webrtc_ports" "common"
 	set_default "ss_basic_block_webrtc_ipv6" "1"
 	normalize_server_resolv_mode
@@ -6045,10 +6047,44 @@ get_webrtc_block_ports_mode() {
 	esac
 }
 
+get_webrtc_block_action() {
+	case "${ss_basic_block_webrtc_action}" in
+	proxy)
+		echo "proxy"
+		;;
+	*)
+		echo "reject"
+		;;
+	esac
+}
+
 apply_webrtc_block4() {
 	[ "${ss_basic_block_webrtc}" = "1" ] || return 0
 	local ports_mode="$(get_webrtc_block_ports_mode)"
+	local action="$(get_webrtc_block_action)"
 	local common_ports="3478:3481,5349,19302:19309"
+
+	if [ "${action}" = "proxy" ]; then
+		if proxy_core_supports_udp && [ "${mangle}" = "1" ]; then
+			ensure_chain mangle SHADOWSOCKS_WEBRTC || return 1
+			iptables -t mangle -F SHADOWSOCKS_WEBRTC >/dev/null 2>&1 || return 1
+			append_if_not_exists mangle -A SHADOWSOCKS_WEBRTC -p udp -m set --match-set ignlist dst -j RETURN || return 1
+			if [ "${ports_mode}" = "all" ]; then
+				echo_date "WebRTC防泄漏（IPv4）：通过节点转发所有出站UDP端口（保留DNS/DHCP/NTP）。"
+				append_if_not_exists mangle -A SHADOWSOCKS_WEBRTC -p udp -m multiport --dport 53,67:68,123 -j RETURN || return 1
+				append_if_not_exists mangle -A SHADOWSOCKS_WEBRTC -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
+			else
+				echo_date "WebRTC防泄漏（IPv4）：通过节点转发常见STUN/TURN UDP端口（${common_ports}）。"
+				append_if_not_exists mangle -A SHADOWSOCKS_WEBRTC -p udp -m multiport --dport "${common_ports}" -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
+			fi
+			if ! iptables -t mangle -C PREROUTING -i br+ -p udp -j SHADOWSOCKS_WEBRTC >/dev/null 2>&1; then
+				iptables -t mangle -I PREROUTING 1 -i br+ -p udp -j SHADOWSOCKS_WEBRTC >/dev/null 2>&1 || return 1
+			fi
+			return 0
+		else
+			echo_date "⚠️WebRTC防泄漏（IPv4）：当前代理核心不支持UDP或未启用TPROXY，已自动回退为直接拦截（reject）。"
+		fi
+	fi
 
 	ensure_chain filter SHADOWSOCKS_WEBRTC || return 1
 	iptables -t filter -F SHADOWSOCKS_WEBRTC >/dev/null 2>&1 || return 1
@@ -6070,13 +6106,42 @@ apply_webrtc_block4() {
 apply_webrtc_block6() {
 	[ "${ss_basic_block_webrtc}" = "1" ] || return 0
 	[ "${ss_basic_block_webrtc_ipv6}" = "1" ] || return 0
+	local ports_mode="$(get_webrtc_block_ports_mode)"
+	local action="$(get_webrtc_block_action)"
+	local common_ports="3478:3481,5349,19302:19309"
+
+	if [ "${action}" = "proxy" ]; then
+		if ipv6_proxy_enabled && proxy_core_supports_udp && [ "${mangle}" = "1" ] && ip6tables -t mangle -L PREROUTING >/dev/null 2>&1; then
+			local tproxy_port6="$(get_tproxy_port6)"
+			if ensure_chain6 mangle SHADOWSOCKS6_WEBRTC; then
+				ip6tables -t mangle -F SHADOWSOCKS6_WEBRTC >/dev/null 2>&1 || true
+				if append_if_not_exists6 mangle -A SHADOWSOCKS6_WEBRTC -p udp -m set --match-set ignlist6 dst -j RETURN; then
+					append_if_not_exists6 mangle -A SHADOWSOCKS6_WEBRTC -p udp -d fc00::/7 -j RETURN || true
+					append_if_not_exists6 mangle -A SHADOWSOCKS6_WEBRTC -p udp -d ff00::/8 -j RETURN || true
+					if [ "${ports_mode}" = "all" ]; then
+						echo_date "WebRTC防泄漏（IPv6）：通过节点转发所有出站UDP端口（保留DNS/DHCPv6/NTP）。"
+						append_if_not_exists6 mangle -A SHADOWSOCKS6_WEBRTC -p udp -m multiport --dport 53,123,546:547 -j RETURN || return 0
+						append_if_not_exists6 mangle -A SHADOWSOCKS6_WEBRTC -p udp -j TPROXY --on-port "${tproxy_port6}" --tproxy-mark 0x07 || return 0
+					else
+						echo_date "WebRTC防泄漏（IPv6）：通过节点转发常见STUN/TURN UDP端口（${common_ports}）。"
+						append_if_not_exists6 mangle -A SHADOWSOCKS6_WEBRTC -p udp -m multiport --dport "${common_ports}" -j TPROXY --on-port "${tproxy_port6}" --tproxy-mark 0x07 || return 0
+					fi
+					if ! ip6tables -t mangle -C PREROUTING -i br+ -p udp -j SHADOWSOCKS6_WEBRTC >/dev/null 2>&1; then
+						ip6tables -t mangle -I PREROUTING 1 -i br+ -p udp -j SHADOWSOCKS6_WEBRTC >/dev/null 2>&1 || true
+					fi
+					return 0
+				fi
+			fi
+			echo_date "⚠️WebRTC防泄漏（IPv6）：写入ip6tables mangle转发规则失败，回退为直接拦截（reject）。"
+		else
+			echo_date "⚠️WebRTC防泄漏（IPv6）：未开启IPv6代理或当前核心不支持UDP，IPv6已自动回退为直接拦截（reject）。"
+		fi
+	fi
+
 	if ! ip6tables -t filter -L FORWARD >/dev/null 2>&1; then
 		echo_date "⚠️当前系统不支持ip6tables filter表，跳过IPv6 WebRTC防泄漏规则。"
 		return 0
 	fi
-	local ports_mode="$(get_webrtc_block_ports_mode)"
-	local common_ports="3478:3481,5349,19302:19309"
-
 	if ! ensure_chain6 filter SHADOWSOCKS6_WEBRTC; then
 		echo_date "⚠️创建ip6tables SHADOWSOCKS6_WEBRTC链失败，跳过IPv6 WebRTC防泄漏规则。"
 		return 0

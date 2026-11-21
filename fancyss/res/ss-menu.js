@@ -1062,14 +1062,16 @@ function openssHint(itemNum, flag) {
 		statusmenu += "3. 自动触发时会显示 waiting / loading / booting 等中间状态，不会再静默刷新。";
 		_caption = "说明：";
 	} else if (itemNum == 157) {
-		width = "700px";
+		width = "720px";
 		statusmenu = "<div style='padding-left:16px;padding-right:16px;line-height:1.6'>";
-		statusmenu += "<b>WebRTC 防泄漏（全局防火墙拦截）：</b><br /><br />";
+		statusmenu += "<b>WebRTC 防泄漏（全局防火墙策略）：</b><br /><br />";
 		statusmenu += "1. 浏览器通过 WebRTC（UDP STUN/TURN）探测公网 IP 时，若 UDP 未走代理或命中直连规则，会直接从路由器 WAN 口发包并暴露真实公网 IP。<br /><br />";
-		statusmenu += "2. 本开关在路由器 <b>filter FORWARD</b> 链中拦截局域网（br+）发往公网的直连 UDP 流量；<b>已通过 TPROXY 走代理的 UDP 不受影响</b>，且自动放行内网/保留地址（ignlist/ignlist6）。<br /><br />";
-		statusmenu += "3. <b>常见端口</b>：拦截常见 STUN/TURN UDP 端口（3478-3481、5349、19302-19309），对普通游戏和日常 UDP 业务影响较小。<br />";
-		statusmenu += "4. <b>所有端口</b>：拦截除基础网络端口（IPv4: 53/67-68/123；IPv6: 53/123/546-547）外的所有出站直连 UDP，可防止非常规高端口 STUN 泄漏，但会阻断未走代理的 UDP 语音/视频通话、游戏和 P2P。<br /><br />";
-		statusmenu += "5. <b>同时处理 IPv6</b>：即使未开启「IPv6 代理」，也会同步在 ip6tables 中拦截出站直连 IPv6 UDP，防止原生 IPv6 环境下 WebRTC 泄漏公网 IPv6 地址。";
+		statusmenu += "2. <b>处理行为</b>：<br />";
+		statusmenu += "&nbsp;&nbsp;&nbsp;&nbsp;• <b>直接拦截（reject）</b>：在 filter FORWARD 链中拒绝局域网（br+）发往公网的直连 UDP；已通过 TPROXY 走代理的 UDP 不受影响。<br />";
+		statusmenu += "&nbsp;&nbsp;&nbsp;&nbsp;• <b>通过节点转发（proxy）</b>：在 mangle PREROUTING 链中强制将命中的 WebRTC UDP 通过 TPROXY 送入代理节点转发，可保持语音/视频通话可用。若当前核心不支持 UDP 代理，会自动回退为直接拦截。<br /><br />";
+		statusmenu += "3. <b>转发节点</b>（仅「通过节点转发」时生效）：默认跟随当前主节点；在 <b>Xray 分流模式</b> 下可指定任意支持 Xray 的节点（例如独立 AI 节点）专门转发 WebRTC UDP；非分流模式自动使用当前主节点。<br /><br />";
+		statusmenu += "4. <b>端口范围</b>：<b>常见端口</b>仅处理 3478-3481、5349、19302-19309；<b>所有端口</b>会处理除基础网络端口（IPv4: 53/67-68/123；IPv6: 53/123/546-547）外的所有出站 UDP（均自动放行 ignlist/ignlist6 内网与保留地址）。<br /><br />";
+		statusmenu += "5. <b>同时处理 IPv6</b>：选择「通过节点转发」且开启「IPv6 代理」时同步走 IPv6 TPROXY 转发；若未开启「IPv6 代理」，则 IPv6 自动回退为直接拦截，防止原生 IPv6 泄漏。";
 		statusmenu += "</div>";
 		_caption = "说明：";
 	}
