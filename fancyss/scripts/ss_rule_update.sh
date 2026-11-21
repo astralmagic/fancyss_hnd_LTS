@@ -34,6 +34,38 @@ cleanup_rule_update(){
 	FSS_RULE_LOCK_OWNED=0
 }
 
+create_rule_tmpdir(){
+	local base_dir="${1:-/tmp}"
+	local prefix="${2:-fancyss_rule_download}"
+	local tmp_dir=""
+	local try=0
+
+	mkdir -p "${base_dir}" 2>/dev/null || return 1
+	if command -v mktemp >/dev/null 2>&1; then
+		tmp_dir="$(mktemp -d "${base_dir}/${prefix}.XXXXXX" 2>/dev/null)" && [ -n "${tmp_dir}" ] && [ -d "${tmp_dir}" ] && {
+			printf '%s\n' "${tmp_dir}"
+			return 0
+		}
+		tmp_dir="$(mktemp -d -p "${base_dir}" "${prefix}.XXXXXX" 2>/dev/null)" && [ -n "${tmp_dir}" ] && [ -d "${tmp_dir}" ] && {
+			printf '%s\n' "${tmp_dir}"
+			return 0
+		}
+	fi
+
+	while [ "${try}" -lt 32 ]
+	do
+		tmp_dir="${base_dir}/${prefix}.$$.${try}"
+		if mkdir "${tmp_dir}" 2>/dev/null; then
+			chmod 700 "${tmp_dir}" 2>/dev/null || true
+			printf '%s\n' "${tmp_dir}"
+			return 0
+		fi
+		try=$((try + 1))
+	done
+
+	return 1
+}
+
 acquire_rule_lock(){
 	local holder_pid=""
 	mkdir -p "$(dirname "${RULE_LOCK_DIR}")"
@@ -107,7 +139,7 @@ start_update(){
 		return 1
 	fi
 	trap 'cleanup_rule_update' EXIT INT TERM
-	if ! mkdir -p "${RULE_TMP_ROOT}" || ! rule_down_dir="$(mktemp -d "${RULE_TMP_ROOT}/fancyss_rule_download.XXXXXX")"; then
+	if ! rule_down_dir="$(create_rule_tmpdir "${RULE_TMP_ROOT}" "fancyss_rule_download")"; then
 		echo_date "创建规则更新临时目录失败，退出！"
 		cleanup_rule_update
 		finish_rule_log_error
@@ -144,6 +176,7 @@ start_update(){
 		local online_md5=""
 		local online_date=""
 		local local_date=""
+		local local_md5=""
 		local tmp_file=""
 		local dst_file=""
 		local tmp_md5=""
@@ -174,8 +207,12 @@ start_update(){
 
 		dst_file="${RULE_SAVE_DIR}/${online_name}"
 		if [ "${local_date}" = "${online_date}" ] && [ "${force_update}" != "1" ] && [ -f "${dst_file}" ]; then
-			echo_date "检测到${key}本地版本号和在线版本号相同，不进行更新!"
-			return 0
+			local_md5="$(md5sum "${dst_file}" 2>/dev/null | awk '{print $1}')"
+			if [ "${local_md5}" = "${online_md5}" ]; then
+				echo_date "检测到${key}本地版本号和在线版本号相同，不进行更新!"
+				return 0
+			fi
+			echo_date "检测到${key}本地文件校验不一致，重新下载修复..."
 		fi
 
 		echo_date "检测到新版本${key}，开始更新..."
@@ -345,7 +382,7 @@ if [ "$#" -gt 1 ]; then
 		mkdir -p "$(dirname "${RULE_LOG_FILE}")"
 		: > "${RULE_LOG_FILE}"
 		http_response "$1"
-		change_cru > "${RULE_LOG_FILE}"
+		change_cru > "${RULE_LOG_FILE}" 2>&1
 		echo XU6J03M6 >> "${RULE_LOG_FILE}"
 		exit 0
 		;;
@@ -357,9 +394,9 @@ if [ "$#" -gt 1 ]; then
 		ss_basic_chnroute_update=1
 		ss_basic_chnlist_update=1
 		force_update=0
-		change_cru > "${RULE_LOG_FILE}"
+		change_cru > "${RULE_LOG_FILE}" 2>&1
 		rc=0
-		start_update >> "${RULE_LOG_FILE}" || rc=$?
+		start_update >> "${RULE_LOG_FILE}" 2>&1 || rc=$?
 		if [ "${rc}" -eq 0 ]; then
 			echo XU6J03M6 >> "${RULE_LOG_FILE}"
 		fi

@@ -213,10 +213,11 @@ update_gfwlist() {
 	local tmpdir="$1"
 	local raw1="${tmpdir}/gfwlist_b64.txt"
 	local list1="${tmpdir}/gfwlist_1.txt"
+	local raw2="${tmpdir}/gfwlist_loyalsoldier.txt"
 	local list2="${tmpdir}/gfwlist_2.txt"
 	local merged="${tmpdir}/gfwlist_merged.txt"
 
-	curl_download "https://raw.githubusercontent.com/Loukky/gfwlist-by-loukky/master/gfwlist.txt" "$raw1" "download gfwlist (Loukky)"
+	curl_download "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt" "$raw1" "download gfwlist (official)"
 	python3 - "$raw1" >"$list1" <<'PY'
 import base64, re, sys
 
@@ -233,17 +234,22 @@ comment_re = re.compile(r"^\!|\[|^@@|^\d+\.\d+\.\d+\.\d+")
 domain_re = re.compile(r"([\w\-\_]+\.[\w\.\-\_]+)[\/\*]*")
 seen = set()
 for line in text.splitlines():
+    line = line.strip()
     if comment_re.search(line):
         continue
     m = domain_re.search(line)
     if not m:
         continue
-    seen.add(m.group(1))
+    seen.add(m.group(1).lower().lstrip("."))
 for d in sorted(seen):
     sys.stdout.write(d + "\n")
 PY
 
-	curl_download "https://raw.githubusercontent.com/pexcn/daily/gh-pages/gfwlist/gfwlist.txt" "$list2" "download gfwlist extra (pexcn)"
+	curl_download "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/gfw.txt" "$raw2" "download gfwlist extra (Loyalsoldier)"
+	tr -d '\r' <"$raw2" \
+		| sed '/^#/d; s/^\.//; /^$/d' \
+		| tr 'A-Z' 'a-z' \
+		| grep -E '^[a-z0-9._-]+$' >"$list2"
 
 	cat "$list1" "$list2" \
 		| grep -Ev "([0-9]{1,3}[\\.]){3}[0-9]{1,3}" \
@@ -318,9 +324,8 @@ update_chnroute() {
 	local tmpdir="$1"
 	local misakaio="${tmpdir}/misakaio.txt"
 	local apnic="${tmpdir}/apnic.txt"
-	local mon17="${tmpdir}/17mon.txt"
-	local ipip="${tmpdir}/ipip.txt"
-	local maxmind="${tmpdir}/maxmind.txt"
+	local gaoyifan="${tmpdir}/gaoyifan.txt"
+	local loyalsoldier="${tmpdir}/loyalsoldier.txt"
 	local merged="${tmpdir}/chnroute.txt"
 
 	curl_download "https://raw.githubusercontent.com/misakaio/chnroutes2/master/chnroutes.txt" "$misakaio" "download chnroute source (misakaio)"
@@ -329,15 +334,15 @@ update_chnroute() {
 	curl_stdout "https://ftp.apnic.net/stats/apnic/delegated-apnic-latest" "download chnroute source (apnic delegated)" \
 		| awk -F'|' '$2=="CN" && $3=="ipv4" { printf("%s/%d\n", $4, 32-log($5)/log(2)) }' >"$apnic"
 
-	curl_download "https://raw.githubusercontent.com/17mon/china_ip_list/refs/heads/master/china_ip_list.txt" "$mon17" "download chnroute source (17mon)"
-	sed_inplace '/^#/d' "$mon17"
+	curl_download "https://raw.githubusercontent.com/gaoyifan/china-operator-ip/ip-lists/china.txt" "$gaoyifan" "download chnroute source (gaoyifan china-operator-ip)"
+	sed_inplace '/^#/d;/^$/d' "$gaoyifan"
 
-	curl_download "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/ipip_country/ipip_country_cn.netset" "$ipip" "download chnroute source (firehol ipip)"
-	curl_download "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/geolite2_country/country_cn.netset" "$maxmind" "download chnroute source (firehol maxmind)"
+	curl_download "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/text/cn.txt" "$loyalsoldier" "download chnroute source (Loyalsoldier geoip)"
+	sed_inplace '/^#/d;/^$/d' "$loyalsoldier"
 
 	# keep only valid ipv4 routes (CIDR or single IP), avoid accidental matches from non-data content
-	sed_inplace '/^#/d;/^$/d' "$ipip" "$maxmind"
-	cat "$misakaio" "$apnic" "$mon17" "$ipip" "$maxmind" \
+	cat "$misakaio" "$apnic" "$gaoyifan" "$loyalsoldier" \
+		| tr -d '\r' \
 		| grep -E '^([0-9]{1,3}[\\.]){3}[0-9]{1,3}(/[0-9]{1,2})?$' \
 		| python3 -c 'import ipaddress,sys; networks = ipaddress.collapse_addresses(ipaddress.ip_network(line.strip()) for line in sys.stdin if line.strip()); print("\n".join(str(network) for network in networks))' >"$merged"
 

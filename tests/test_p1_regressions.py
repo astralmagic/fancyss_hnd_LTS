@@ -556,6 +556,63 @@ for arg in "$@"; do target="$arg"; done
         res = self.run_update(PATH=f"{space_dir}:{self.env['PATH']}")
         self.assertEqual(res.returncode, 0, res.stderr + res.stdout)
 
+    def test_busybox_mktemp_and_missing_mktemp_fallback(self):
+        mktemp_stub = self.bin / "mktemp"
+        try:
+            # 1) BusyBox mktemp that rejects path in template and only supports -d -p DIR TEMPLATE
+            mktemp_stub.write_text(r'''#!/bin/sh
+if [ "$1" = "-d" ] && [ "$2" = "-p" ] && [ -n "$3" ] && [ -n "$4" ]; then
+    dir="$3/${4%XXXXXX}busybox"
+    mkdir -p "$dir" && printf '%s\n' "$dir"
+    exit 0
+fi
+exit 1
+''')
+            mktemp_stub.chmod(0o755)
+            res = self.run_update()
+            self.assertEqual(res.returncode, 0, res.stderr + res.stdout)
+            self.assertEqual(list(self.work_tmp.iterdir()), [])
+
+            # 2) mktemp completely unusable -> falls back to mkdir loop
+            mktemp_stub.write_text("#!/bin/sh\nexit 127\n")
+            mktemp_stub.chmod(0o755)
+            res_fallback = self.run_update()
+            self.assertEqual(res_fallback.returncode, 0, res_fallback.stderr + res_fallback.stdout)
+            self.assertEqual(list(self.work_tmp.iterdir()), [])
+        finally:
+            mktemp_stub.unlink(missing_ok=True)
+
+    def test_same_date_corrupted_local_file_is_repaired(self):
+        res_init = self.run_update("update")
+        self.assertEqual(res_init.returncode, 0, res_init.stderr + res_init.stdout)
+        # Corrupt local gfwlist.gz while keeping manifest date identical to remote
+        (self.local / "gfwlist.gz").write_text("corrupted-local-content\n")
+        (self.root / "wget.log").unlink(missing_ok=True)
+        res_repair = self.run_update("update")
+        self.assertEqual(res_repair.returncode, 0, res_repair.stderr + res_repair.stdout)
+        self.assertEqual((self.local / "gfwlist.gz").read_text(), "new-gfwlist\n")
+        downloaded = (self.root / "wget.log").read_text().splitlines()
+        self.assertEqual(downloaded, ["rules.json.js", "gfwlist.gz"])
+
+    def test_update_rules_script_excludes_unmaintained_upstreams(self):
+        script = (ROOT / "rules_ng/update_rules.sh").read_text()
+        for obsolete in (
+            "pexcn/daily",
+            "Loukky/gfwlist-by-loukky",
+            "17mon/china_ip_list",
+            "firehol/blocklist-ipsets",
+        ):
+            self.assertNotIn(obsolete, script)
+        for active in (
+            "gfwlist/gfwlist/master/gfwlist.txt",
+            "Loyalsoldier/v2ray-rules-dat/release/gfw.txt",
+            "gaoyifan/china-operator-ip/ip-lists/china.txt",
+            "Loyalsoldier/geoip/release/text/cn.txt",
+            "misakaio/chnroutes2/master/chnroutes.txt",
+            "felixonmars/dnsmasq-china-list",
+        ):
+            self.assertIn(active, script)
+
 
 class ProcStatusVersionTests(unittest.TestCase):
     def test_format_anytls_version_line_keeps_16_char_column(self):
