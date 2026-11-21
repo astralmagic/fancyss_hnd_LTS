@@ -19,3 +19,9 @@ domain:nintendonetwork.net
 domain:pokemon.com
 domain:pokemon-home.com
 domain:pokemoncenter.com
+
+# Explicit ownership for domains without the platform name
+domain:donkeykongcountryreturns.com
+domain:wariolandshakeit.com
+domain:wariowarediy.com
+domain:yoshisnewisland.com

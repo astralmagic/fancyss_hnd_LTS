@@ -9033,7 +9033,7 @@ function refresh_webrtc_node_options(preferredValue) {
 	}
 	var currentVal = (typeof preferredValue != "undefined" && preferredValue !== null)
 		? String(preferredValue)
-		: (sel.value || (typeof db_ss != "undefined" && db_ss["ss_basic_block_webrtc_node"] ? String(db_ss["ss_basic_block_webrtc_node"]) : ""));
+		: sel.value;
 	var nodes = (typeof get_shunt_supported_target_nodes == "function" && typeof ss_nodes != "undefined")
 		? get_shunt_supported_target_nodes()
 		: [];

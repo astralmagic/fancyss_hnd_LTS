@@ -48,6 +48,8 @@ jobs:
 
       - name: Run P1/P2 regression and AnyTLS integration tests
         run: |
+          python3 tests/test_webrtc_block.py -v
+          python3 tests/test_game_partitions.py -v
           python3 tests/test_p1_regressions.py -v
           python3 tests/test_p2_regressions.py -v
           python3 tests/test_review_regressions.py -v

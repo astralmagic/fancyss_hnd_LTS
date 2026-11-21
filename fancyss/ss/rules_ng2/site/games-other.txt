@@ -40,15 +40,10 @@ domain:bioware.com
 domain:biowarestore.com
 domain:bistudio.com
 domain:blackboxgames.com
-domain:blizzcon-a.akamaihd.net
 domain:blox.com
 domain:bluearchive-cn.com
 domain:bluearchive.jp
 domain:bluestacks.com
-domain:bnet.163.com
-domain:bnetcmsus-a.akamaihd.net
-domain:bnetproduct-a.akamaihd.net
-domain:bnetshopus.akamaized.net
 domain:bohemia.net
 domain:boombeach.com
 domain:bowsersinsidestory.com
@@ -109,7 +104,6 @@ domain:dkr.com
 domain:dlmobilegarena-a.akamaihd.net
 domain:dodi-repacks.download
 domain:dodi-repacks.site
-domain:donkeykongcountryreturns.com
 domain:dragonage.com
 domain:dragonagekeep.com
 domain:dragonagemovie.com
@@ -473,6 +467,7 @@ domain:rpglogs.com
 domain:rsg.ms
 domain:rsg.sc
 domain:rstatic.net
+domain:ruinedking.com
 domain:sc2.nosdn.127.net
 domain:seagroup.com
 domain:seaofsolitude.com
@@ -576,8 +571,6 @@ domain:vrchat.com
 domain:vrchat.net
 domain:wargaming.com
 domain:wargaming.net
-domain:wariolandshakeit.com
-domain:wariowarediy.com
 domain:warnerbrosgames.com
 domain:warthunder.com
 domain:wbagora.com
@@ -615,7 +608,6 @@ domain:ylands.com
 domain:ynoproject.net
 domain:yo-star.com
 domain:yogify.com
-domain:yoshisnewisland.com
 domain:yostar-pictures.co.jp
 domain:yostar.cn
 domain:yostar.co.jp

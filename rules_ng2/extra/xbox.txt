@@ -34,3 +34,10 @@ full:user.auth.xboxlive.com
 full:device.auth.xboxlive.com
 full:assets1.xboxlive.com
 full:assets2.xboxlive.com
+
+# Explicit ownership for domains without the platform name
+domain:blizzcon-a.akamaihd.net
+domain:bnet.163.com
+domain:bnetcmsus-a.akamaihd.net
+domain:bnetproduct-a.akamaihd.net
+domain:bnetshopus.akamaized.net

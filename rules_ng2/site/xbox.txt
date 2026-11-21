@@ -14,6 +14,7 @@ domain:blizzard.com
 domain:blizzard.nefficient.co.kr
 domain:blizzardgames.cn
 domain:blizzardgearstore.com
+domain:blizzcon-a.akamaihd.net
 domain:blz-contentstack.com
 domain:blz.nosdn.127.net
 domain:blzddist1-a.akamaihd.net
@@ -21,6 +22,10 @@ domain:blzddistkr1-a.akamaihd.net
 domain:blzmedia-a.akamaihd.net
 domain:blznav.akamaized.net
 domain:blzstatic.cn
+domain:bnet.163.com
+domain:bnetcmsus-a.akamaihd.net
+domain:bnetproduct-a.akamaihd.net
+domain:bnetshopus.akamaized.net
 domain:callofduty.com
 domain:callofdutyendowment.com
 domain:callofdutyendowment.org
@@ -56,7 +61,6 @@ domain:playhearthstone.com
 domain:playoverwatch.com
 domain:playwarcraft3.com
 domain:renovacionxboxlive.com
-domain:ruinedking.com
 domain:seaofthieves.com
 domain:starcraft.com
 domain:starcraft2.com

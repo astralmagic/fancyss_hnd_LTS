@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -45,6 +46,7 @@ def run_webrtc_case(
             "get_webrtc_block_ports_mode",
             "get_webrtc_block_action",
             "apply_webrtc_block4",
+            "install_webrtc_proxy6",
             "apply_webrtc_block6",
         ]
     )
@@ -73,6 +75,9 @@ ip6tables() {{
         *" -C "*|*" -L "*) return 1 ;;
     esac
     printf 'V6:%s\\n' "$*" >> "{log_file}"
+    if [ -n "${{WEBRTC_IP6_FAIL_PATTERN:-}}" ]; then
+        case "$*" in ${{WEBRTC_IP6_FAIL_PATTERN}}) return 1 ;; esac
+    fi
     return 0
 }}
 apply_webrtc_block4
@@ -306,6 +311,83 @@ printf '[%s]' "$(fss_shunt_emit_outbounds_json 1)" > "{outs_file}"
             env["ss_basic_block_webrtc_action"] = "reject"
             subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, check=True)
             self.assertEqual(rule_file.read_text(encoding="utf-8").strip(), "")
+
+    def test_ipv6_proxy_install_failures_fall_back_to_reject(self):
+        for ports in ("common", "all"):
+            for failure in (
+                "-t mangle -N SHADOWSOCKS6_WEBRTC",
+                "-t mangle -F SHADOWSOCKS6_WEBRTC",
+                "-t mangle -A SHADOWSOCKS6_WEBRTC *ignlist6*",
+                "-t mangle -A SHADOWSOCKS6_WEBRTC *fc00*",
+                "-t mangle -A SHADOWSOCKS6_WEBRTC *ff00*",
+                "-t mangle -A SHADOWSOCKS6_WEBRTC *TPROXY*",
+                "-t mangle -I PREROUTING *",
+            ) + (("-t mangle -A SHADOWSOCKS6_WEBRTC *53,123,546:547*",) if ports == "all" else ()):
+                with self.subTest(ports=ports, failure=failure):
+                    _, v6, logs = run_webrtc_case({
+                        "ss_basic_block_webrtc": "1",
+                        "ss_basic_block_webrtc_action": "proxy",
+                        "ss_basic_block_webrtc_ports": ports,
+                        "ss_basic_block_webrtc_ipv6": "1",
+                        "WEBRTC_IP6_FAIL_PATTERN": failure,
+                    }, ipv6_proxy=True)
+                    self.assertIn("-t mangle -D PREROUTING -i br+ -p udp -j SHADOWSOCKS6_WEBRTC", v6)
+                    self.assertIn("-t mangle -X SHADOWSOCKS6_WEBRTC", v6)
+                    self.assertTrue(any("-j REJECT" in cmd for cmd in v6))
+                    self.assertIn("-t filter -I FORWARD 1 -i br+ -p udp -j SHADOWSOCKS6_WEBRTC", v6)
+                    self.assertIn("回退为直接拦截", logs)
+                    self.assertNotIn("已启用节点转发", logs)
+
+    def test_unset_options_and_no_udp_nodes_with_nounset(self):
+        path = ROOT / "fancyss/scripts/ss_base.sh"
+        functions = "\n".join(extract_shell_function(path, name) for name in (
+            "fss_base_apply_node_no_udp", "fss_base_apply_node_derived_env"))
+        for node_type in ("3", "6", "9"):
+            for options in ("unset ss_basic_block_webrtc ss_basic_block_webrtc_action",
+                            "ss_basic_block_webrtc=1; unset ss_basic_block_webrtc_action",
+                            "ss_basic_block_webrtc=1; ss_basic_block_webrtc_action=proxy"):
+                script = "set -eu\n" + functions + "\n" + f"ss_basic_type={node_type}\n" + options + "\n" + """
+fss_detect_storage_schema() { echo 2; }
+ss_basic_server=example.invalid
+ss_basic_naive_server=example.invalid
+ss_basic_naive_pass=fixture
+ss_basic_anytls_server=example.invalid
+ss_basic_anytls_pass=fixture
+mangle=0
+fss_base_apply_node_derived_env
+printf '%s' "$mangle"
+"""
+                result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = "1" if node_type == "3" and options.endswith("=proxy") else "0"
+                self.assertEqual(result.stdout, expected)
+
+    def test_node_selector_preserves_follow_current_after_refresh(self):
+        asp = (ROOT / "fancyss/webs/Module_shadowsocks.asp").read_text()
+        function = re.search(r"^function refresh_webrtc_node_options\(preferredValue\) \{.*?^\}", asp, re.M | re.S).group(0)
+        script = """
+const assert = require('assert');
+let sel = {value: '', innerHTML: '', appendChild() {}};
+let db_ss = {ss_basic_block_webrtc_node: '12'};
+let ss_nodes = {};
+function E() { return sel; }
+function get_shunt_supported_target_nodes() { return [{id:'12',label:'Saved'}, {id:'13',label:'New'}]; }
+let document = {createElement() { return {}; }};
+""" + function + """
+refresh_webrtc_node_options(db_ss.ss_basic_block_webrtc_node);
+assert.strictEqual(sel.value, '12');
+sel.value = '';
+refresh_webrtc_node_options();
+refresh_webrtc_node_options();
+assert.strictEqual(sel.value, '');
+sel.value = '13';
+refresh_webrtc_node_options();
+assert.strictEqual(sel.value, '13');
+refresh_webrtc_node_options('99');
+assert.strictEqual(sel.value, '99');
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_ui_and_hint_wired(self):
         asp = (ROOT / "fancyss/webs/Module_shadowsocks.asp").read_text(encoding="utf-8")
