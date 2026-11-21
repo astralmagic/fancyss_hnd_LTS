@@ -1,7 +1,8 @@
-# Claude / Anthropic known telemetry, logging, and feature-flag endpoints
+# Claude / Anthropic known telemetry, logging, support, and feature-flag endpoints
 domain:browser-intake-datadoghq.com
 domain:browser-intake-us5-datadoghq.com
 domain:datadoghq-browser-agent.com
+domain:intercomassets.com
 domain:prodregistryv2.org
 domain:statsig.com
 domain:statsigapi.net
@@ -11,3 +12,7 @@ full:api.segment.io
 full:cdn.segment.com
 full:http-intake.logs.datadoghq.com
 full:o1158394.ingest.sentry.io
+
+# AI verification / anti-bot challenge endpoints (keep same egress as AI main sites)
+domain:hcaptcha.com
+full:challenges.cloudflare.com

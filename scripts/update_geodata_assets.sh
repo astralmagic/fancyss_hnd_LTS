@@ -490,6 +490,29 @@ emit_source() {
 		path=$(printf '%s' "$source_json" | jq -r '.path')
 		cat "${REPO_ROOT}/${path}" | normalize_site_tokens
 		;;
+	site:local_ai_partition)
+		path=$(printf '%s' "$source_json" | jq -r '.path')
+		bucket=$(printf '%s' "$source_json" | jq -r '.bucket')
+		awk -v target="${bucket}" '
+		{
+			line = $0
+			gsub(/\r/, "", line)
+			sub(/#.*/, "", line)
+			gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+			if (line == "") next
+			val = tolower(line)
+			sub(/^(domain|full|keyword):/, "", val)
+			cls = "other"
+			if (val ~ /(openai|chatgpt|oaistatic|oaistatsig|oaiusercontent|sora\.com|^chat\.com$|^crixet\.com$|livekit\.cloud)/) {
+				cls = "openai"
+			} else if (val ~ /(anthropic|claude|clau\.de|^ant\.dev$|^antspace\.dev$|intercom|datadoghq|honeycomb\.io|segment\.(io|com)$|statsig|prodregistryv2\.org|featuregates\.org|o1158394\.ingest|hcaptcha\.com|^challenges\.cloudflare\.com$)/) {
+				cls = "claude"
+			} else if (val ~ /(gemini|bard\.google\.com|aistudio\.google\.com|^ai\.studio$|^ai\.google\.dev$|makersuite\.google\.com|alkali.*google\.com|generativelanguage\.googleapis\.com|generativeai\.google|deepmind\.|notebooklm|notebook\.google|jules\.google|labs\.google|labstailwind\.pa\.googleapis\.com|opal\.google|flow\.google|stitch\.withgoogle\.com|antigravity|aicode\.googleapis\.com|aida\.googleapis\.com|aisandbox-pa\.googleapis\.com|appsgenaiserver-pa\.|cloudaicompanion\.googleapis\.com|cloudcode-pa\.googleapis\.com|daily-cloudcode-pa\.googleapis\.com|geller-pa\.googleapis\.com|proactivebackend-pa\.googleapis\.com|robinfrontend-pa\.googleapis\.com)/) {
+				cls = "gemini"
+			}
+			if (cls == target) print line
+		}' "${REPO_ROOT}/${path}" | normalize_site_tokens
+		;;
 	site:local_games_partition)
 		path=$(printf '%s' "$source_json" | jq -r '.path')
 		bucket=$(printf '%s' "$source_json" | jq -r '.bucket')

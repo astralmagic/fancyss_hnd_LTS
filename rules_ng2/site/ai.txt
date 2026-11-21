@@ -105,12 +105,14 @@ domain:grokbot.com
 domain:grokipedia.com
 domain:groq.com
 domain:h2o.ai
+domain:hcaptcha.com
 domain:hf.co
 domain:hf.space
 domain:host.livekit.cloud
 domain:huggingface.co
 domain:identrust.com
 domain:intercom.io
+domain:intercomassets.com
 domain:intercomcdn.com
 domain:jasper.ai
 domain:jetbrains.ai
@@ -206,6 +208,7 @@ full:appsgenaiserver-pa.clients.google.com
 full:appsgenaiserver-pa.clients6.google.com
 full:appsgenaiserver-pa.googleapis.com
 full:cdn.segment.com
+full:challenges.cloudflare.com
 full:cloudaicompanion.googleapis.com
 full:cloudcode-pa.googleapis.com
 full:copilot-proxy.githubusercontent.com

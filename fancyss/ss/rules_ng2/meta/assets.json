@@ -25,6 +25,39 @@
       ]
     },
     {
+      "id": "claude",
+      "mode": "generated",
+      "sources": [
+        {
+          "type": "local_ai_partition",
+          "path": "rules_ng2/site/ai.txt",
+          "bucket": "claude"
+        }
+      ]
+    },
+    {
+      "id": "gemini",
+      "mode": "generated",
+      "sources": [
+        {
+          "type": "local_ai_partition",
+          "path": "rules_ng2/site/ai.txt",
+          "bucket": "gemini"
+        }
+      ]
+    },
+    {
+      "id": "ai-other",
+      "mode": "generated",
+      "sources": [
+        {
+          "type": "local_ai_partition",
+          "path": "rules_ng2/site/ai.txt",
+          "bucket": "other"
+        }
+      ]
+    },
+    {
       "id": "telegram",
       "mode": "generated",
       "sources": [

@@ -1,9 +1,12 @@
 {
-  "generated_at": 1795233443,
+  "generated_at": 1795238288,
   "source": "geotool",
   "site": {
     "ai": {
-      "total": 236
+      "total": 239
+    },
+    "ai-other": {
+      "total": 129
     },
     "apple": {
       "total": 1584
@@ -19,6 +22,9 @@
     },
     "bybit": {
       "total": 16
+    },
+    "claude": {
+      "total": 40
     },
     "cloudflare": {
       "total": 76
@@ -43,6 +49,9 @@
     },
     "games-other": {
       "total": 689
+    },
+    "gemini": {
+      "total": 49
     },
     "gfw": {
       "total": 6598
@@ -160,9 +169,9 @@
         "ai"
       ],
       "ip_assets": [],
-      "site_count": 236,
+      "site_count": 239,
       "ip_count": 0,
-      "total": 236
+      "total": 239
     },
     "openai": {
       "site_assets": [
@@ -172,6 +181,33 @@
       "site_count": 24,
       "ip_count": 0,
       "total": 24
+    },
+    "claude": {
+      "site_assets": [
+        "claude"
+      ],
+      "ip_assets": [],
+      "site_count": 40,
+      "ip_count": 0,
+      "total": 40
+    },
+    "gemini": {
+      "site_assets": [
+        "gemini"
+      ],
+      "ip_assets": [],
+      "site_count": 49,
+      "ip_count": 0,
+      "total": 49
+    },
+    "ai-other": {
+      "site_assets": [
+        "ai-other"
+      ],
+      "ip_assets": [],
+      "site_count": 129,
+      "ip_count": 0,
+      "total": 129
     },
     "telegram": {
       "site_assets": [

@@ -22,6 +22,39 @@
     "ip": []
   },
   {
+    "id": "claude",
+    "order": 22,
+    "label": "Claude / Anthropic",
+    "description": "Claude、Anthropic 及配套风控、验证与遥测域名",
+    "policy": "proxy",
+    "site": [
+      "claude"
+    ],
+    "ip": []
+  },
+  {
+    "id": "gemini",
+    "order": 24,
+    "label": "Gemini / Google AI",
+    "description": "Gemini、AI Studio、NotebookLM、DeepMind 与 Google AI 域名",
+    "policy": "proxy",
+    "site": [
+      "gemini"
+    ],
+    "ip": []
+  },
+  {
+    "id": "ai-other",
+    "order": 26,
+    "label": "其他 AI 平台",
+    "description": "Grok、Perplexity、Cursor、Copilot、HuggingFace 等其余 AI 服务域名",
+    "policy": "proxy",
+    "site": [
+      "ai-other"
+    ],
+    "ip": []
+  },
+  {
     "id": "telegram",
     "order": 30,
     "label": "Telegram",
