@@ -7858,12 +7858,10 @@ var PARTIAL_RELOAD_KEY_SCOPES = {
 	"ss_basic_qrcode": "none",
 	"ss_adv_sub": "none",
 	"ss_basic_row": "none",
-	"ss_basic_interval": "none",
 	"ss_basic_nonetcheck": "none",
 	"ss_basic_nochnipcheck": "none",
 	"ss_basic_nofrnipcheck": "none",
 	"ss_basic_noruncheck": "none",
-	"ss_basic_mcore": "none",
 	"ss_basic_shunt_hot_reload": "none",
 	"ss_online_links": "none",
 	"ssr_subscribe_mode": "none",
@@ -7898,7 +7896,11 @@ var PARTIAL_RELOAD_KEY_SCOPES = {
 	"ss_basic_time_min": "cron",
 	"ss_basic_custom": "cron",
 
+	// 代理进程启动参数需要完整重启
+	"ss_basic_mcore": "full",
+
 	// L1: 状态检测与故障转移（status）局部重载
+	"ss_basic_interval": "status",
 	"ss_basic_status_mode": "status",
 	"ss_basic_furl": "status",
 	"ss_basic_curl": "status",
@@ -7929,17 +7931,17 @@ var PARTIAL_RELOAD_KEY_SCOPES = {
 	"ss_basic_udpoff": "iptables",
 	"ss_basic_udpall": "iptables",
 
-	// L3: IP 黑白名单（ipset 原子替换）
-	"ss_wan_white_ip": "ipset",
-	"ss_wan_black_ip": "ipset",
+	// L3: 静态 IP 与 DNS 动态成员共用集合，名单修改需完整重建
+	"ss_wan_white_ip": "full",
+	"ss_wan_black_ip": "full",
 
 	// L3: 自定义 dnsmasq 配置
 	"ss_dnsmasq": "dnsmasq",
 
-	// L3 & L4: 域名黑白名单 / DNS 方案与上游（后端会校验 UDP 中继一致性，变化时自动回退完整重启）
-	"ss_wan_white_domain": "dns",
-	"ss_wan_black_domain": "dns",
-	"ss_basic_proxy_newb": "dns",
+	// 域名名单修改需清理旧动态 IP；DNS 方案与上游可局部重载（后端校验名单和 UDP 中继）
+	"ss_wan_white_domain": "full",
+	"ss_wan_black_domain": "full",
+	"ss_basic_proxy_newb": "full",
 	"ss_basic_dns_plan": "dns",
 	"ss_basic_chng": "dns",
 	"ss_basic_smrt": "dns",
@@ -8026,7 +8028,7 @@ function resolve_config_submit_action(post_dbus){
 			continue;
 		}
 		var mappedScope = PARTIAL_RELOAD_KEY_SCOPES[key];
-		if (!mappedScope) {
+		if (!mappedScope || mappedScope == "full") {
 			return "start";
 		}
 		if (mappedScope != "none") {

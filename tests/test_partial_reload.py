@@ -179,7 +179,7 @@ class FrontendPartialReloadRouterTests(unittest.TestCase):
             "ss_wan_white_ip": "MS4xLjEuMQ==",
             "ss_wan_black_ip": "OC44LjguOA==",
         })
-        self.assertEqual(res_ipset["action"], "reload_ipset")
+        self.assertEqual(res_ipset["action"], "start")
 
         res_dnsmasq = eval_js_router({"ss_dnsmasq": "Y2FjaGUtc2l6ZT0xMDAw"})
         self.assertEqual(res_dnsmasq["action"], "reload_dnsmasq")
@@ -188,11 +188,10 @@ class FrontendPartialReloadRouterTests(unittest.TestCase):
             "ss_wan_white_ip": "MS4xLjEuMQ==",
             "ss_dnsmasq": "Y2FjaGUtc2l6ZT0xMDAw",
         })
-        self.assertEqual(res_both["action"], "reload_ipset-dnsmasq")
+        self.assertEqual(res_both["action"], "start")
 
     def test_l3_l4_dns_keys_and_dnsmasq_dedup(self):
         res_dns = eval_js_router({
-            "ss_wan_white_domain": "ZXhhbXBsZS5jb20=",
             "ss_basic_dns_plan": "2",
             "ss_basic_smrt_chn_dns": "smartdns_b64:e30=",
             "ss_basic_chng_china_dns_1_chk": "1",
@@ -386,48 +385,14 @@ reload_fancyss_scopes "reload_unknown"
             lines = log_file.read_text(encoding="utf-8").splitlines()
             self.assertIn("CALL:start_fancyss", lines)
 
-    def test_reload_ipset_atomic_swap(self):
+    def test_reload_ipset_falls_back_before_mutating_shared_sets(self):
         fn = extract_shell_function(SSCONFIG_PATH, "reload_ipset_wb_only")
-        with tempfile.TemporaryDirectory() as tmp:
-            log_file = Path(tmp) / "ipset.log"
-            restore_file = Path(tmp) / "restore.txt"
-            script = f"""
-ss_basic_status="1"
-ss_basic_mode="2"
-ss_wan_white_ip="MS4xLjEuMQ=="
-ss_wan_black_ip="OC44LjguOA=="
-echo_date() {{ printf 'LOG:%s\\n' "$*" >> "{log_file}"; }}
-base64_decode() {{ python3 -c "import sys,base64; d=sys.stdin.read().strip(); print(base64.b64decode(d).decode() if d else '')"; }}
-dbus() {{
-    if [ "$1" = "list" ]; then
-        printf 'ssconf_basic_server_1=9.9.9.9\\n'
-    fi
-}}
-ipset() {{
-    if [ "$1" = "-!" ] && [ "$2" = "-R" ]; then
-        cat > "{restore_file}"
-        printf 'IPSET:restore\\n' >> "{log_file}"
-        return 0
-    fi
-    printf 'IPSET:%s\\n' "$*" >> "{log_file}"
-    return 0
-}}
-{fn}
-reload_ipset_wb_only
-"""
-            proc = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
-            self.assertEqual(proc.returncode, 0)
-            lines = log_file.read_text(encoding="utf-8").splitlines()
-            self.assertIn("IPSET:restore", lines)
-            self.assertIn("IPSET:swap fss_bl_tmp black_list", lines)
-            self.assertIn("IPSET:swap fss_wl_tmp white_list", lines)
-            self.assertIn("IPSET:destroy fss_bl_tmp", lines)
-            self.assertIn("IPSET:destroy fss_wl_tmp", lines)
-            restore_txt = restore_file.read_text(encoding="utf-8")
-            self.assertIn("add fss_wl_tmp 1.1.1.1", restore_txt)
-            self.assertIn("add fss_wl_tmp 9.9.9.9", restore_txt)
-            self.assertIn("add fss_bl_tmp 8.8.8.8", restore_txt)
-            self.assertIn("add fss_bl_tmp 149.154.0.0/16", restore_txt)
+        proc = subprocess.run(
+            ["sh", "-c", fn + "\necho_date() { :; }\nipset() { echo MUTATED; }\nreload_ipset_wb_only"],
+            capture_output=True, text=True,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn("MUTATED", proc.stdout)
 
     def test_reload_dnsmasq_only_and_dns_dedup(self):
         fns = "\n\n".join(

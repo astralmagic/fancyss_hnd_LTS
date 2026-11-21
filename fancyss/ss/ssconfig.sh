@@ -7836,6 +7836,8 @@ reload_iptables_only() {
 }
 
 refresh_domain_white_black_files() {
+	local output_dir="$1"
+	[ -n "${output_dir}" ] && [ -d "${output_dir}" ] || return 1
 	local shunt_proxy_file=""
 	local shunt_proxy_count="0"
 	local all_node_domains=""
@@ -7855,13 +7857,13 @@ refresh_domain_white_black_files() {
 	{
 		printf '%s\n' ip.sb api.skk.moe ip.skk.moe ipinfo.io ip-api.com us.ip111.cn
 		[ "${ss_basic_proxy_newb}" = "1" ] && printf '%s\n' "bing.com"
-	} > /tmp/black_list.txt
+	} > "${output_dir}/black_list.txt"
 
 	if [ -n "${shunt_proxy_file}" ] && [ -s "${shunt_proxy_file}" ]; then
 		shunt_proxy_count="$(wc -l < "${shunt_proxy_file}" | tr -d ' ')"
 		[ -n "${shunt_proxy_count}" ] || shunt_proxy_count="0"
 		echo_date "ℹ️分流运行时代理域名 ${shunt_proxy_count} 条，并入域名黑名单。"
-		cat "${shunt_proxy_file}" >> /tmp/black_list.txt
+		cat "${shunt_proxy_file}" >> "${output_dir}/black_list.txt"
 	fi
 	if [ -n "${ss_wan_black_domain}" ]; then
 		fss_b64_decode "${ss_wan_black_domain}" | awk '
@@ -7876,88 +7878,50 @@ refresh_domain_white_black_files() {
 					}
 				}
 			}
-		' >> /tmp/black_list.txt
+		' >> "${output_dir}/black_list.txt"
 	fi
 
-	: > /tmp/white_list.txt
+	: > "${output_dir}/white_list.txt"
 	all_node_domains=$(dbus list ssconf | grep _server_ | awk -F"=" '{print $NF}' | sort -u | grep -Ev "([0-9]{1,3}[\.]){3}[0-9]{1,3}")
 	wan_white_domains=$(printf '%s' "${ss_wan_white_domain}" | base64_decode | tr -d '\r' | sed '/^#/d' | grep "." | sort -u)
 	all_white_domains=$(echo ${wan_white_domains} ${all_node_domains})
 	if [ -n "${all_white_domains}" ]; then
 		for wan_white_domain in ${all_white_domains}; do
 			if [ -n "$(is_domain "${wan_white_domain}")" ]; then
-				echo "${wan_white_domain}" >> /tmp/white_list.txt
+				echo "${wan_white_domain}" >> "${output_dir}/white_list.txt"
 			fi
 		done
 	fi
 	for wan_white_domain2 in "apple.com" "microsoft.com" "dns.msftncsi.com" "worldtimeapi.org"; do
-		echo "${wan_white_domain2}" >> /tmp/white_list.txt
+		echo "${wan_white_domain2}" >> "${output_dir}/white_list.txt"
 	done
 
-	if [ ! -f /tmp/block_list.txt ] && [ -f /koolshare/ss/rules/block_list.txt ]; then
-		cp -rf /koolshare/ss/rules/block_list.txt /tmp
-	fi
 	return 0
 }
 
-reload_ipset_wb_only() {
-	local wl_tmp="fss_wl_tmp"
-	local bl_tmp="fss_bl_tmp"
-	local black_ips=""
-	local white_ips=""
-	local node_ips=""
-	local ip=""
-
-	echo_date "[partial-reload] 正在校验 IP 黑白名单局部重载前置条件..."
-	if [ "${ss_basic_status}" != "1" ]; then
-		echo_date "[partial-reload] 服务未处于运行状态，回退完整重启。"
-		return 1
-	fi
-	if ! ipset list white_list >/dev/null 2>&1 || ! ipset list black_list >/dev/null 2>&1; then
-		echo_date "[partial-reload] white_list/black_list ipset 尚未就绪，回退完整重启。"
-		return 1
-	fi
-
-	echo_date "[partial-reload] 正在通过 ipset swap 原子更新 IP/CIDR 黑白名单..."
-	black_ips=$(printf '%s' "${ss_wan_black_ip}" | base64_decode | tr -d '\r' | sed 's/#.*$//' | tr ' \t' '\n' | awk 'NF > 0')
-	white_ips=$(printf '%s' "${ss_wan_white_ip}" | base64_decode | tr -d '\r' | sed 's/#.*$//' | tr ' \t' '\n' | awk 'NF > 0')
-	node_ips=$(dbus list ssconf | grep _server_ | awk -F"=" '{print $NF}' | sort -u | grep -E "([0-9]{1,3}[\.]){3}[0-9]{1,3}")
-
-	{
-		echo "create ${bl_tmp} nethash -exist"
-		echo "flush ${bl_tmp}"
-		if [ "${ss_basic_mode}" != "6" ]; then
-			for ip in 149.154.0.0/16 91.108.4.0/22 91.108.56.0/24 109.239.140.0/24 67.198.55.0/24; do
-				echo "add ${bl_tmp} ${ip}"
-			done
+dns_domain_lists_match_runtime() {
+	local stage_dir=""
+	local list=""
+	local ret=0
+	stage_dir=$(mktemp -d /tmp/fss_dns_lists.XXXXXX) || return 1
+	refresh_domain_white_black_files "${stage_dir}" || ret=1
+	for list in white_list black_list; do
+		# 比较集合内容而非文件顺序；基线缺失时也必须回退。
+		if ! sort -u "/tmp/${list}.txt" > "${stage_dir}/${list}.active" ||
+			! sort -u "${stage_dir}/${list}.txt" > "${stage_dir}/${list}.next" ||
+			! cmp -s "${stage_dir}/${list}.active" "${stage_dir}/${list}.next"; then
+			ret=1
 		fi
-		for ip in ${black_ips}; do
-			echo "add ${bl_tmp} ${ip}"
-		done
+	done
+	rm -rf "${stage_dir}"
+	return "${ret}"
+}
 
-		echo "create ${wl_tmp} nethash -exist"
-		echo "flush ${wl_tmp}"
-		for ip in ${white_ips} ${node_ips}; do
-			echo "add ${wl_tmp} ${ip}"
-		done
-		echo "COMMIT"
-	} | ipset -! -R >/dev/null 2>&1 || {
-		ipset destroy "${bl_tmp}" >/dev/null 2>&1 || true
-		ipset destroy "${wl_tmp}" >/dev/null 2>&1 || true
-		echo_date "[partial-reload] 构建临时 IP 黑白名单 ipset 失败，回退完整重启。"
-		return 1
-	}
-
-	if ! ipset swap "${bl_tmp}" black_list >/dev/null 2>&1 || ! ipset swap "${wl_tmp}" white_list >/dev/null 2>&1; then
-		ipset destroy "${bl_tmp}" >/dev/null 2>&1 || true
-		ipset destroy "${wl_tmp}" >/dev/null 2>&1 || true
-		echo_date "[partial-reload] ipset swap 替换失败，回退完整重启。"
-		return 1
-	fi
-	ipset destroy "${bl_tmp}" >/dev/null 2>&1 || true
-	ipset destroy "${wl_tmp}" >/dev/null 2>&1 || true
-	echo_date "[partial-reload] IP/CIDR 黑白名单原子更新完成。"
-	return 0
+reload_ipset_wb_only() {
+	# white_list/black_list 同时包含静态配置与 DNS 动态地址，无法安全区分来源。
+	# 保留入口兼容旧页面，但在修改任何集合之前回退，避免丢失动态成员。
+	echo_date "[partial-reload] IP 黑白名单与 DNS 共用 ipset，需完整重启以一致地重建名单。"
+	return 1
 }
 
 reload_dnsmasq_only() {
@@ -7966,8 +7930,8 @@ reload_dnsmasq_only() {
 		return 1
 	fi
 	echo_date "[partial-reload] 正在局部重载自定义 dnsmasq 配置..."
-	create_dnsmasq_conf
-	restart_dnsmasq
+	create_dnsmasq_conf || return 1
+	restart_dnsmasq || return 1
 	echo_date "[partial-reload] dnsmasq 重载完成。"
 	return 0
 }
@@ -8028,6 +7992,7 @@ reload_dns_only() {
 	refresh_runtime_context
 	fss_require_base_dns >/dev/null 2>&1 || true
 	init_current_node_server_state
+	check_internet6_pre || true
 	sync_dns_ipv6_policy
 
 	if ! dns_udp_relay_targets_match_runtime; then
@@ -8035,17 +8000,24 @@ reload_dns_only() {
 		return 1
 	fi
 
+	if ! dns_domain_lists_match_runtime; then
+		# 包含分流热更触发的域名变化；重启 DNS 本身不会移除内核中的旧 IP。
+		echo_date "[partial-reload] 域名名单发生变化或基线缺失，需完整重启以清理旧 IP 分流规则。"
+		return 1
+	fi
+
 	echo_date "[partial-reload] 正在局部重载 DNS 服务（不中断代理主程序与防火墙）..."
-	refresh_domain_white_black_files || return 1
 	stop_dns_process
-	create_dnsmasq_conf
-	restart_dnsmasq
-	start_dns_x
+	create_dnsmasq_conf || return 1
+	restart_dnsmasq || return 1
+	start_dns_x || return 1
 	echo_date "[partial-reload] DNS 服务局部重载完成。"
 	return 0
 }
 
 reload_scopes() {
+	# shell local 动态作用域：所有底层 close_in_five 均以非零退出交回 ss_config。
+	local FSS_PARTIAL_RELOAD=1
 	local scopes_raw="$1"
 	local scope=""
 	local has_ipset="0"
