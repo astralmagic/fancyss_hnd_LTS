@@ -1,5 +1,5 @@
 {
-  "generated_at": 1795233443,
+  "generated_at": 1795236525,
   "source": "geotool",
   "site": {
     "ai": {
@@ -42,7 +42,7 @@
       "total": 955
     },
     "games-other": {
-      "total": 689
+      "total": 681
     },
     "gfw": {
       "total": 6598
@@ -72,7 +72,7 @@
       "total": 1939
     },
     "nintendo": {
-      "total": 97
+      "total": 101
     },
     "openai": {
       "total": 24
@@ -111,7 +111,7 @@
       "total": 24
     },
     "xbox": {
-      "total": 88
+      "total": 92
     },
     "youtube": {
       "total": 181
@@ -348,18 +348,18 @@
         "nintendo"
       ],
       "ip_assets": [],
-      "site_count": 97,
+      "site_count": 101,
       "ip_count": 0,
-      "total": 97
+      "total": 101
     },
     "xbox": {
       "site_assets": [
         "xbox"
       ],
       "ip_assets": [],
-      "site_count": 88,
+      "site_count": 92,
       "ip_count": 0,
-      "total": 88
+      "total": 92
     },
     "playstation": {
       "site_assets": [
@@ -375,9 +375,9 @@
         "games-other"
       ],
       "ip_assets": [],
-      "site_count": 689,
+      "site_count": 681,
       "ip_count": 0,
-      "total": 689
+      "total": 681
     },
     "networktest": {
       "site_assets": [

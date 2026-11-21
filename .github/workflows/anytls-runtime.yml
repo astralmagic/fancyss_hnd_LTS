@@ -2,9 +2,9 @@ name: AnyTLS runtime regression
 
 on:
   push:
-    paths: ['tool/anytls-go/**', 'tests/**', 'build.sh', 'fancyss/install.sh', 'fancyss/res/shunt_manifest.json.js', 'fancyss/scripts/**', 'fancyss/ss/**', 'fancyss/webs/Module_shadowsocks.asp', 'binaries/Makefile', 'binaries/tuic-client/**', 'binaries/smartdns/**', 'doc/analysis/p2_hnd_v8_stability_triage.md', 'rules_ng/**', 'rules_ng2/**', 'scripts/**', '.github/workflows/anytls-runtime.yml']
+    paths: ['tool/anytls-go/**', 'tests/**', 'build.sh', 'fancyss/install.sh', 'fancyss/res/shunt_manifest.json.js', 'fancyss/res/ss-menu.js', 'fancyss/scripts/**', 'fancyss/ss/**', 'fancyss/webs/Module_shadowsocks.asp', 'binaries/Makefile', 'binaries/tuic-client/**', 'binaries/smartdns/**', 'doc/analysis/p2_hnd_v8_stability_triage.md', 'rules_ng/**', 'rules_ng2/**', 'scripts/**', '.github/workflows/anytls-runtime.yml']
   pull_request:
-    paths: ['tool/anytls-go/**', 'tests/**', 'build.sh', 'fancyss/install.sh', 'fancyss/res/shunt_manifest.json.js', 'fancyss/scripts/**', 'fancyss/ss/**', 'fancyss/webs/Module_shadowsocks.asp', 'binaries/Makefile', 'binaries/tuic-client/**', 'binaries/smartdns/**', 'doc/analysis/p2_hnd_v8_stability_triage.md', 'rules_ng/**', 'rules_ng2/**', 'scripts/**', '.github/workflows/anytls-runtime.yml']
+    paths: ['tool/anytls-go/**', 'tests/**', 'build.sh', 'fancyss/install.sh', 'fancyss/res/shunt_manifest.json.js', 'fancyss/res/ss-menu.js', 'fancyss/scripts/**', 'fancyss/ss/**', 'fancyss/webs/Module_shadowsocks.asp', 'binaries/Makefile', 'binaries/tuic-client/**', 'binaries/smartdns/**', 'doc/analysis/p2_hnd_v8_stability_triage.md', 'rules_ng/**', 'rules_ng2/**', 'scripts/**', '.github/workflows/anytls-runtime.yml']
   workflow_dispatch:
 
 permissions:

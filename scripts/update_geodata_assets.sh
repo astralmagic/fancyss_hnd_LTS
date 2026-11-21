@@ -493,7 +493,7 @@ emit_source() {
 	site:local_games_partition)
 		path=$(printf '%s' "$source_json" | jq -r '.path')
 		bucket=$(printf '%s' "$source_json" | jq -r '.bucket')
-		awk -v target="${bucket}" '
+		awk -v target="${bucket}" -v games_file="${REPO_ROOT}/${path}" '
 		{
 			line = $0
 			gsub(/\r/, "", line)
@@ -502,18 +502,30 @@ emit_source() {
 			if (line == "") next
 			val = tolower(line)
 			sub(/^(domain|full|keyword):/, "", val)
+			# Curated platform lists take precedence over brand-name heuristics.
+			if (FILENAME != games_file) {
+				platform = FILENAME
+				sub(/^.*\//, "", platform)
+				sub(/\.txt$/, "", platform)
+				curated[val] = platform
+				next
+			}
 			cls = "other"
-			if (val !~ /microsoft/ && val ~ /(steam|valve|dota2?|csgo|counter-strike|playartifact|underlords|teamfortress|half-life|thinkwithportals|l4d\.com|s\.team)/) {
+			if (val in curated) {
+				cls = curated[val]
+			} else if (val !~ /microsoft/ && val ~ /(steam|valve|dota2?|csgo|counter-strike|playartifact|underlords|teamfortress|half-life|thinkwithportals|l4d\.com|s\.team)/) {
 				cls = "steam"
 			} else if (val ~ /(nintendo|amiibo|pokemon|mario|zelda|splatoon|kirby|metroid|xenoblade|fire-?emblem|animal-?crossing|ac-pocketcamp|pikmin|smashbros|wii\.com|miiverse|ayudanintendo|100classicbooks)/) {
 				cls = "nintendo"
 			} else if (val ~ /(playstation|sonyentertainmentnetwork|sonyinteractiveentertainment|sie\.com|gaikai\.com|psn\.(com|net|jp)|dualsense|sony\.(com|net|co\.jp)$)/) {
 				cls = "playstation"
-			} else if (val ~ /(xbox|gamepass\.com|minecraft|mojang|bethesda|bethsoft|beth\.games|elderscrolls|fallout|doom\.com|quake|starfield|activision|blizzard|battle\.net|battlenet|blz|callofduty|diablo|overwatch|hearthstone|starcraft|warcraft|worldofwarcraft|heroesofthestorm|king\.com|candycrush|halowaypoint|forzamotorsport|forzaracingchampionship|seaofthieves|ageofempires|flightsimulator|obsidian\.net|inxile|doublefine|compulsiongames|ninjatheory|undeadlabs|rare\.co\.uk|playground-games|turn10)/) {
+			} else if (val ~ /(xbox|gamepass\.com|minecraft|mojang|bethesda|bethsoft|beth\.games|elderscrolls|fallout|doom\.com|quake|starfield|activision|blizzard|battle\.net|battlenet|blz|callofduty|diablo|overwatch|hearthstone|starcraft|warcraft|worldofwarcraft|heroesofthestorm|candycrush|halowaypoint|forzamotorsport|forzaracingchampionship|seaofthieves|ageofempires|flightsimulator|obsidian\.net|inxile|doublefine|compulsiongames|ninjatheory|undeadlabs|rare\.co\.uk|playground-games|turn10)/ || val ~ /(^|[.])king[.]com$/) {
 				cls = "xbox"
 			}
 			if (cls == target) print line
-		}' "${REPO_ROOT}/${path}" | normalize_site_tokens
+		}' "${RULES_ROOT}/extra/steam.txt" "${RULES_ROOT}/extra/nintendo.txt" \
+			"${RULES_ROOT}/extra/xbox.txt" "${RULES_ROOT}/extra/playstation.txt" \
+			"${REPO_ROOT}/${path}" | normalize_site_tokens
 		;;
 	ip:remote_666os_ip)
 		normalize_ip_plain < "${remote_tmp}"
