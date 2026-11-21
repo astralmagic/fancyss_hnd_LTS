@@ -7757,6 +7757,339 @@ apply_ss_by_nat() {
 	echo_date ------------------------ 【科学上网】 启动完毕 ------------------------
 }
 
+reload_cron_only() {
+	echo_date "[partial-reload] 正在局部重载定时任务（cron）..."
+	write_cron_job
+	remove_ss_reboot_job
+	set_ss_reboot_job
+	echo_date "[partial-reload] 定时任务重载完成。"
+	return 0
+}
+
+reload_status_only() {
+	echo_date "[partial-reload] 正在局部重载状态检测与故障转移服务..."
+	stop_status
+	check_status
+	echo_date "[partial-reload] 状态检测与故障转移服务重载完成。"
+	return 0
+}
+
+reload_iptables_only() {
+	local socks5_open=""
+	local ssr_has_udp="0"
+	local want_ssr_udp="0"
+
+	echo_date "[partial-reload] 正在校验防火墙局部重载前置条件..."
+	if [ "${ss_basic_status}" != "1" ]; then
+		echo_date "[partial-reload] 服务未处于运行状态，回退完整重启。"
+		return 1
+	fi
+	socks5_open=$(fss_socks5_open_bin 2>/dev/null)
+	if [ -z "${socks5_open}" ]; then
+		echo_date "[partial-reload] 未检测到运行中的代理主程序，回退完整重启。"
+		return 1
+	fi
+	if ! ipset list ignlist >/dev/null 2>&1; then
+		echo_date "[partial-reload] 基础 ipset(ignlist) 不存在，回退完整重启。"
+		return 1
+	fi
+
+	set_default "ss_basic_block_quic" "1"
+	set_default "ss_basic_block_webrtc" "0"
+	set_default "ss_basic_block_webrtc_action" "reject"
+	set_default "ss_basic_block_webrtc_node" ""
+	set_default "ss_basic_block_webrtc_ports" "common"
+	set_default "ss_basic_block_webrtc_ipv6" "1"
+	if [ "${ss_basic_udpoff}" != "1" -a "${ss_basic_udpall}" != "1" ]; then
+		ss_basic_udpoff=1
+		ss_basic_udpall=0
+		dbus set ss_basic_udpoff=1
+		dbus set ss_basic_udpall=0
+	fi
+	if [ "${ss_basic_block_webrtc}" = "1" ] && [ "${ss_basic_block_webrtc_action}" = "proxy" ]; then
+		echo_date "[partial-reload] WebRTC 转发模式涉及代理路由配置，回退完整重启。"
+		return 1
+	fi
+
+	fss_base_load_current_node_env
+	if [ "${ss_basic_mode}" != "7" ] && [ "${ss_basic_type}" = "1" ]; then
+		[ "${mangle}" = "1" ] && want_ssr_udp="1"
+		if ps w 2>/dev/null | grep -E 'rss-redir.*-u([[:space:]]|$)' | grep -v grep >/dev/null 2>&1; then
+			ssr_has_udp="1"
+		fi
+		if [ "${want_ssr_udp}" != "${ssr_has_udp}" ]; then
+			echo_date "[partial-reload] SSR 节点 UDP 参数发生变化，需重启代理进程。"
+			return 1
+		fi
+	fi
+
+	echo_date "[partial-reload] 正在局部重载防火墙 / ACL 规则（不中断代理与 DNS）..."
+	refresh_runtime_context
+	add_wan_bypass_ips_to_ignlist
+	flush_iptables
+	load_iptables || {
+		echo_date "[partial-reload] 防火墙规则加载失败，回退完整重启。"
+		return 1
+	}
+	echo_date "[partial-reload] 防火墙 / ACL 规则重载完成。"
+	return 0
+}
+
+refresh_domain_white_black_files() {
+	local output_dir="$1"
+	[ -n "${output_dir}" ] && [ -d "${output_dir}" ] || return 1
+	local shunt_proxy_file=""
+	local shunt_proxy_count="0"
+	local all_node_domains=""
+	local wan_white_domains=""
+	local all_white_domains=""
+	local wan_white_domain=""
+	local wan_white_domain2=""
+
+	echo_date "[partial-reload] 正在刷新域名黑白名单文件..."
+	if [ "${ss_basic_mode}" = "7" ] && type fss_shunt_resolve_proxy_domain_file >/dev/null 2>&1; then
+		fss_shunt_resolve_proxy_domain_file >/dev/null 2>&1 || true
+		shunt_proxy_file="${FSS_SHUNT_PROXY_DOMAIN_FILE_RESULT}"
+	elif [ "${ss_basic_mode}" = "7" ] && type fss_shunt_get_proxy_domain_file >/dev/null 2>&1; then
+		shunt_proxy_file="$(fss_shunt_get_proxy_domain_file 2>/dev/null)"
+	fi
+
+	{
+		printf '%s\n' ip.sb api.skk.moe ip.skk.moe ipinfo.io ip-api.com us.ip111.cn
+		[ "${ss_basic_proxy_newb}" = "1" ] && printf '%s\n' "bing.com"
+	} > "${output_dir}/black_list.txt"
+
+	if [ -n "${shunt_proxy_file}" ] && [ -s "${shunt_proxy_file}" ]; then
+		shunt_proxy_count="$(wc -l < "${shunt_proxy_file}" | tr -d ' ')"
+		[ -n "${shunt_proxy_count}" ] || shunt_proxy_count="0"
+		echo_date "ℹ️分流运行时代理域名 ${shunt_proxy_count} 条，并入域名黑名单。"
+		cat "${shunt_proxy_file}" >> "${output_dir}/black_list.txt"
+	fi
+	if [ -n "${ss_wan_black_domain}" ]; then
+		fss_b64_decode "${ss_wan_black_domain}" | awk '
+			{
+				gsub(/\r/, "")
+				sub(/#.*/, "")
+				for (i = 1; i <= NF; i++) {
+					domain = tolower($i)
+					gsub(/^[*.]+/, "", domain)
+					if (domain ~ /^[a-z0-9._-]+(\.[a-z0-9._-]+)+$/ && !seen[domain]++) {
+						print domain
+					}
+				}
+			}
+		' >> "${output_dir}/black_list.txt"
+	fi
+
+	: > "${output_dir}/white_list.txt"
+	all_node_domains=$(dbus list ssconf | grep _server_ | awk -F"=" '{print $NF}' | sort -u | grep -Ev "([0-9]{1,3}[\.]){3}[0-9]{1,3}")
+	wan_white_domains=$(printf '%s' "${ss_wan_white_domain}" | base64_decode | tr -d '\r' | sed '/^#/d' | grep "." | sort -u)
+	all_white_domains=$(echo ${wan_white_domains} ${all_node_domains})
+	if [ -n "${all_white_domains}" ]; then
+		for wan_white_domain in ${all_white_domains}; do
+			if [ -n "$(is_domain "${wan_white_domain}")" ]; then
+				echo "${wan_white_domain}" >> "${output_dir}/white_list.txt"
+			fi
+		done
+	fi
+	for wan_white_domain2 in "apple.com" "microsoft.com" "dns.msftncsi.com" "worldtimeapi.org"; do
+		echo "${wan_white_domain2}" >> "${output_dir}/white_list.txt"
+	done
+
+	return 0
+}
+
+dns_domain_lists_match_runtime() {
+	local stage_dir=""
+	local list=""
+	local ret=0
+	stage_dir=$(mktemp -d /tmp/fss_dns_lists.XXXXXX) || return 1
+	refresh_domain_white_black_files "${stage_dir}" || ret=1
+	for list in white_list black_list; do
+		# 比较集合内容而非文件顺序；基线缺失时也必须回退。
+		if ! sort -u "/tmp/${list}.txt" > "${stage_dir}/${list}.active" ||
+			! sort -u "${stage_dir}/${list}.txt" > "${stage_dir}/${list}.next" ||
+			! cmp -s "${stage_dir}/${list}.active" "${stage_dir}/${list}.next"; then
+			ret=1
+		fi
+	done
+	rm -rf "${stage_dir}"
+	return "${ret}"
+}
+
+reload_ipset_wb_only() {
+	# white_list/black_list 同时包含静态配置与 DNS 动态地址，无法安全区分来源。
+	# 保留入口兼容旧页面，但在修改任何集合之前回退，避免丢失动态成员。
+	echo_date "[partial-reload] IP 黑白名单与 DNS 共用 ipset，需完整重启以一致地重建名单。"
+	return 1
+}
+
+reload_dnsmasq_only() {
+	if [ "${ss_basic_status}" != "1" ]; then
+		echo_date "[partial-reload] 服务未处于运行状态，回退完整重启。"
+		return 1
+	fi
+	echo_date "[partial-reload] 正在局部重载自定义 dnsmasq 配置..."
+	create_dnsmasq_conf || return 1
+	restart_dnsmasq || return 1
+	echo_date "[partial-reload] dnsmasq 重载完成。"
+	return 0
+}
+
+dns_udp_relay_targets_match_runtime() {
+	local xray_conf="${XRAY_RUNTIME_CONF:-/koolshare/ss/xray.json}"
+	local sep="$(printf '\037')"
+	local desired_relays=""
+	local active_relays=""
+	local uses_xray="0"
+
+	if [ "${ss_basic_mode}" = "7" ]; then
+		uses_xray="1"
+	else
+		case "${ss_basic_type}" in
+		0|3|4|5|8)
+			uses_xray="1"
+			;;
+		esac
+	fi
+
+	desired_relays="$(
+		iter_dns_udp_relay_targets 2>/dev/null | awk -F "${sep}" 'NF >= 3 && $1 != "" { print $1 ":" $2 ":" $3 }' | sort -u
+	)"
+
+	if [ "${uses_xray}" != "1" ]; then
+		[ -z "${desired_relays}" ]
+		return $?
+	fi
+
+	[ -f "${xray_conf}" ] || return 1
+	active_relays="$(
+		run jq -r '.inbounds[]? | select(.protocol == "dokodemo-door" and ((.tag // "") | startswith("dns_udp_"))) | "\(.port):\(.settings.address):\(.settings.port)"' "${xray_conf}" 2>/dev/null | sort -u
+	)" || return 1
+
+	[ "${desired_relays}" = "${active_relays}" ]
+}
+
+reload_dns_only() {
+	local socks5_open=""
+
+	echo_date "[partial-reload] 正在校验 DNS 局部重载前置条件..."
+	if [ "${ss_basic_status}" != "1" ]; then
+		echo_date "[partial-reload] 服务未处于运行状态，回退完整重启。"
+		return 1
+	fi
+	socks5_open=$(fss_socks5_open_bin 2>/dev/null)
+	if [ -z "${socks5_open}" ]; then
+		echo_date "[partial-reload] 未检测到运行中的代理主程序，回退完整重启。"
+		return 1
+	fi
+	if [ ! -f /tmp/chnlist.txt ] || [ ! -f /tmp/gfwlist.txt ]; then
+		echo_date "[partial-reload] 运行时基础域名规则缺失，回退完整重启。"
+		return 1
+	fi
+
+	fss_base_load_current_node_env
+	refresh_runtime_context
+	fss_require_base_dns >/dev/null 2>&1 || true
+	init_current_node_server_state
+	check_internet6_pre || true
+	sync_dns_ipv6_policy
+
+	if ! dns_udp_relay_targets_match_runtime; then
+		echo_date "[partial-reload] 检测到可信 UDP DNS 中继端口发生变化，需同步代理主程序 inbound，回退完整重启。"
+		return 1
+	fi
+
+	if ! dns_domain_lists_match_runtime; then
+		# 包含分流热更触发的域名变化；重启 DNS 本身不会移除内核中的旧 IP。
+		echo_date "[partial-reload] 域名名单发生变化或基线缺失，需完整重启以清理旧 IP 分流规则。"
+		return 1
+	fi
+
+	echo_date "[partial-reload] 正在局部重载 DNS 服务（不中断代理主程序与防火墙）..."
+	stop_dns_process
+	create_dnsmasq_conf || return 1
+	restart_dnsmasq || return 1
+	start_dns_x || return 1
+	echo_date "[partial-reload] DNS 服务局部重载完成。"
+	return 0
+}
+
+reload_scopes() {
+	# shell local 动态作用域：所有底层 close_in_five 均以非零退出交回 ss_config。
+	local FSS_PARTIAL_RELOAD=1
+	local scopes_raw="$1"
+	local scope=""
+	local has_ipset="0"
+	local has_dnsmasq="0"
+	local has_dns="0"
+	local has_iptables="0"
+	local has_cron="0"
+	local has_status="0"
+	local old_ifs="${IFS}"
+
+	[ -n "${scopes_raw}" ] || return 1
+	IFS='-'
+	for scope in ${scopes_raw}; do
+		[ -n "${scope}" ] || continue
+		case "${scope}" in
+		ipset)
+			has_ipset="1"
+			;;
+		dnsmasq)
+			has_dnsmasq="1"
+			;;
+		dns)
+			has_dns="1"
+			;;
+		iptables)
+			has_iptables="1"
+			;;
+		cron)
+			has_cron="1"
+			;;
+		status)
+			has_status="1"
+			;;
+		*)
+			IFS="${old_ifs}"
+			echo_date "[partial-reload] 不支持的局部重载域：${scope}，回退完整重启。"
+			return 1
+			;;
+		esac
+	done
+	IFS="${old_ifs}"
+
+	if [ "${has_ipset}" = "0" ] && [ "${has_dnsmasq}" = "0" ] && [ "${has_dns}" = "0" ] && [ "${has_iptables}" = "0" ] && [ "${has_cron}" = "0" ] && [ "${has_status}" = "0" ]; then
+		return 1
+	fi
+
+	echo_date ======================= 梅林固件 - 【科学上网】 ========================
+	echo_date
+	echo_date "-------------------- 局部重载配置（${scopes_raw}） --------------------"
+	if [ "${has_ipset}" = "1" ]; then
+		reload_ipset_wb_only || return 1
+	fi
+	if [ "${has_dns}" = "1" ]; then
+		# reload_dns_only 已包含 create_dnsmasq_conf + restart_dnsmasq，避免重复重启 dnsmasq
+		reload_dns_only || return 1
+	elif [ "${has_dnsmasq}" = "1" ]; then
+		reload_dnsmasq_only || return 1
+	fi
+	if [ "${has_iptables}" = "1" ]; then
+		reload_iptables_only || return 1
+	fi
+	if [ "${has_cron}" = "1" ]; then
+		reload_cron_only || return 1
+	fi
+	if [ "${has_status}" = "1" ]; then
+		reload_status_only || return 1
+	fi
+	echo_date
+	echo_date "------------------------ 【科学上网】 局部重载完毕 ------------------------"
+	return 0
+}
+
 pick_start_stop_daemon(){
 	for candidate in /sbin/start-stop-daemon /usr/sbin/start-stop-daemon /bin/start-stop-daemon /usr/bin/start-stop-daemon
 	do
@@ -7919,5 +8252,12 @@ refresh_node_direct_dns)
 	set_lock
 	refresh_node_direct_dns
 	unset_lock
+	;;
+reload_scopes)
+	set_lock
+	reload_rc=0
+	reload_scopes "$2" || reload_rc=$?
+	unset_lock
+	exit ${reload_rc}
 	;;
 esac

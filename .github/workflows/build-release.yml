@@ -82,6 +82,8 @@ jobs:
           assert_eq() { test "$1" = "$2" || { echo "expected $2, got $1" >&2; exit 1; }; }
           ss_basic_mode=1
           FSS_GLOBAL_BASIC_MODE=1
+          ss_basic_block_webrtc=0
+          ss_basic_block_webrtc_action=reject
           SCHEMA=2
           TYPE=6
           NAIVE_PASS='raw-secret'

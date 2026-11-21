@@ -27,6 +27,7 @@ jobs:
             /fancyss/ss/
             /fancyss/webs/Module_shadowsocks.asp
             /fancyss/res/shunt_manifest.json.js
+            /fancyss/res/ss-menu.js
             /binaries/Makefile
             /binaries/tuic-client/get_latest.sh
             /binaries/tuic-client/latest.txt
