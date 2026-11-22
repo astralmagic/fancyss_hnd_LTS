@@ -689,25 +689,34 @@ disable_ss
         self.assertNotIn("FLUSH_IPSET_FORBIDDEN", res.stdout)
 
     def test_reload_dns_process_entry_sets_fail_closed_guards_so_close_in_five_never_disables(self):
-        # Review #2 probe: reload_dns_process must set FSS_PARTIAL_RELOAD=1 & FSS_FAIL_CLOSED_RESTART=1.
+        # Review #2 + pre-merge probe: reload_dns_process must set Fail-Closed guards AND initialize runtime/IPv6 context.
         src = SSCONFIG_PATH.read_text()
         idx = src.index("reload_dns_process)")
         snippet = src[idx:idx + 350]
         self.assertIn("FSS_PARTIAL_RELOAD=1", snippet)
         self.assertIn("FSS_FAIL_CLOSED_RESTART=1", snippet)
 
-        fn_code = functions(BASE_SCRIPT, "close_in_five")
+        fn_code = functions(BASE_SCRIPT, "close_in_five") + "\n" + functions(SSCONFIG_PATH, "reload_dns_process")
         res = run_bash(
             fn_code
             + """
 echo_date() { :; }
 unset_lock() { :; }
 disable_ss() { echo "DISABLE_SS_FORBIDDEN"; }
-(
-    FSS_PARTIAL_RELOAD=1
-    FSS_FAIL_CLOSED_RESTART=1
-    export FSS_PARTIAL_RELOAD FSS_FAIL_CLOSED_RESTART
+fss_base_load_current_node_env() { echo "STEP:load_node_env"; ss_basic_type=4; }
+refresh_runtime_context() { echo "STEP:refresh_ctx"; ISP_DNS1=223.5.5.5; }
+init_protocol_config_paths() { echo "STEP:init_paths"; }
+fss_require_base_dns() { echo "STEP:base_dns"; }
+init_current_node_server_state() { echo "STEP:node_state"; }
+check_internet6_pre() { echo "STEP:check_v6"; INTERNET6=0; return 1; }
+sync_dns_ipv6_policy() { echo "STEP:sync_v6_policy:${INTERNET6}"; }
+stop_dns_process() { echo "STEP:stop_dns"; }
+start_dns_x() {
+    echo "STEP:start_dns:v6=${INTERNET6}:type=${ss_basic_type}:fc=${FSS_FAIL_CLOSED_RESTART}:pr=${FSS_PARTIAL_RELOAD}"
     close_in_five flag
+}
+(
+    reload_dns_process
 )
 rc=$?
 echo "RC=$rc"
@@ -715,6 +724,75 @@ echo "RC=$rc"
         )
         self.assertIn("RC=1", res.stdout)
         self.assertNotIn("DISABLE_SS_FORBIDDEN", res.stdout)
+        self.assertIn("STEP:load_node_env", res.stdout)
+        self.assertIn("STEP:refresh_ctx", res.stdout)
+        self.assertIn("STEP:node_state", res.stdout)
+        self.assertIn("STEP:check_v6", res.stdout)
+        self.assertIn("STEP:sync_v6_policy:0", res.stdout)
+        self.assertIn("STEP:start_dns:v6=0:type=4:fc=1:pr=1", res.stdout)
+
+    def test_list_node_server_ips_propagates_dbus_failure_and_allows_domain_only_nodes(self):
+        import base64
+
+        fn_code = functions(
+            ROOT / "fancyss/scripts/ss_node_common.sh",
+            "fss_pick_jq_bin",
+            "fss_list_node_server_hosts_slow",
+            "fss_list_node_server_hosts_v2_fast",
+            "fss_list_node_server_hosts",
+            "fss_list_node_server_ips",
+        )
+        domain_blob = base64.b64encode(json.dumps({"type": "4", "server": "node.example.com"}).encode()).decode()
+        # 1) dbus list fails in fast path AND slow path fails -> fss_list_node_server_ips must return non-zero
+        res_fail = run_bash(
+            fn_code
+            + """
+fss_detect_storage_schema() { echo 2; }
+dbus() {
+    if [ "$1" = "get" ] && [ "$2" = "fss_node_order" ]; then echo "1"; return 0; fi
+    return 1
+}
+fss_list_node_ids() { return 1; }
+fss_list_node_server_ips
+"""
+        )
+        self.assertNotEqual(res_fail.returncode, 0)
+
+        # 2) fast path dbus list fails -> falls back to slow path cleanly
+        res_fallback = run_bash(
+            fn_code
+            + """
+fss_detect_storage_schema() { echo 2; }
+dbus() {
+    if [ "$1" = "get" ] && [ "$2" = "fss_node_order" ]; then echo "1"; return 0; fi
+    return 1
+}
+fss_list_node_ids() { echo "1"; }
+fss_get_node_server_host_port() { printf '203.0.113.88\\n443\\n'; }
+fss_list_node_server_ips
+"""
+        )
+        self.assertEqual(res_fallback.returncode, 0, res_fallback.stderr)
+        self.assertEqual(res_fallback.stdout.splitlines(), ["203.0.113.88"])
+
+        # 3) domain-only nodes (zero numeric IPs) -> returns 0 with empty stdout
+        res_domain_only = run_bash(
+            fn_code
+            + f"""
+fss_detect_storage_schema() {{ echo 2; }}
+dbus() {{
+    if [ "$1" = "get" ] && [ "$2" = "fss_node_order" ]; then echo "1"; return 0; fi
+    if [ "$1" = "list" ] && [ "$2" = "fss_node_" ]; then
+        printf 'fss_node_order=1\\nfss_node_1={domain_blob}\\n'
+        return 0
+    fi
+    return 1
+}}
+fss_list_node_server_ips
+"""
+        )
+        self.assertEqual(res_domain_only.returncode, 0, res_domain_only.stderr)
+        self.assertEqual(res_domain_only.stdout.strip(), "")
 
     def test_creat_ipset_preserves_all_live_sets_and_swaps_chnroute_in_fail_closed_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1237,6 +1315,7 @@ hot_bypass_new_outbound_server '{ob}'
                     (root / "default").write_text("24")
                     (root / "identity").write_text("id-24")
                     res = run_bash(harness + store + f"""
+HOT_STATE_DIR='{root}/hot_state'
 FSS_SHUNT_DEFAULT_NODE_DBUS_KEY=default
 FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY=identity
 fss_shunt_target_is_proxy_node() {{ [ "$1" = 34 ]; }}
@@ -1290,6 +1369,50 @@ failover_action 1
             ss_log = (root / "ss_log.txt").read_text()
             self.assertIn("SH_FAIL:/koolshare/ss/ssconfig.sh reload_proxy_only", ss_log)
             self.assertIn("RUN:start-stop-daemon -S -q -b -x /koolshare/ss/ssconfig.sh -- restart", res.stdout)
+
+    def test_mode7_hot_switch_dns_reload_failure_skips_proxy_only_and_restarts_fail_closed(self):
+        store = functions(SHUNT_SCRIPT, "fss_shunt_store_default_node")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hot = root / "hot"
+            hot.touch(mode=0o755)
+            hot_state = root / "hot_state"
+            hot_state.mkdir()
+            need_dns = hot_state / "need_dns_reload"
+            harness = self._status_harness(root).replace("/koolshare/scripts/ss_shunt_hot_reload.sh", str(hot))
+            res = run_bash(
+                harness
+                + store
+                + f"""
+HOT_STATE_DIR='{hot_state}'
+FSS_SHUNT_DEFAULT_NODE_DBUS_KEY=ss_basic_shunt_default_node
+FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY=ss_basic_shunt_default_node_identity
+fss_shunt_target_is_proxy_node() {{ [ "$1" = 34 ]; }}
+fss_get_node_identity_by_id() {{ echo "id-$1"; }}
+dbus() {{
+    case "$1:$2" in
+        get:ss_basic_mode) echo 7 ;;
+        *) return 0 ;;
+    esac
+}}
+sh() {{
+    if [ "$1" = '{hot}' ]; then
+        echo "new_outbound_domain:node34.example.com" > '{need_dns}'
+        return 1
+    fi
+    echo "LIGHT_PROXY_ONLY_FORBIDDEN:$*" >> '{root}/trace'
+    return 0
+}}
+run() {{
+    echo "FULL_RESTART:$*" >> '{root}/trace'
+}}
+: > '{root}/trace'
+failover_exec_recovery switch_backup 34
+"""
+            )
+            self.assertEqual(res.returncode, 0, res.stderr)
+            trace = (root / "trace").read_text().splitlines()
+            self.assertEqual(trace, ["FULL_RESTART:start-stop-daemon -S -q -b -x /koolshare/ss/ssconfig.sh -- restart"])
 
 
 if __name__ == "__main__":

@@ -8682,6 +8682,21 @@ reload_dns_only() {
 	return 0
 }
 
+reload_dns_process() {
+	local FSS_PARTIAL_RELOAD=1
+	local FSS_FAIL_CLOSED_RESTART=1
+
+	fss_base_load_current_node_env
+	refresh_runtime_context
+	init_protocol_config_paths
+	fss_require_base_dns >/dev/null 2>&1 || true
+	init_current_node_server_state
+	check_internet6_pre || true
+	sync_dns_ipv6_policy
+	stop_dns_process
+	start_dns_x
+}
+
 reload_scopes() {
 	# shell local 动态作用域：所有底层 close_in_five 均以非零退出交回 ss_config。
 	local FSS_PARTIAL_RELOAD=1
@@ -9009,8 +9024,7 @@ reload_dns_process)
 		FSS_PARTIAL_RELOAD=1
 		FSS_FAIL_CLOSED_RESTART=1
 		export FSS_PARTIAL_RELOAD FSS_FAIL_CLOSED_RESTART
-		stop_dns_process
-		start_dns_x
+		reload_dns_process
 	) || reload_rc=$?
 	unset_lock
 	exit ${reload_rc}

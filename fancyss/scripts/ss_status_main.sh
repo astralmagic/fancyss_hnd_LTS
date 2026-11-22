@@ -334,6 +334,8 @@ failover_exec_recovery() {
 	local reason="${1:-restart}"
 	local target_node_id="${2:-}"
 	local basic_mode="$(dbus get ss_basic_mode 2>/dev/null)"
+	local need_dns_reload_file="${HOT_NEED_DNS_RELOAD_FILE:-${HOT_STATE_DIR:-/tmp/fancyss_shunt_hot_reload}/need_dns_reload}"
+	local skip_proxy_only="0"
 	failover_mark_separator "${reason}"
 	if [ "${basic_mode}" = "7" ] && [ -n "${target_node_id}" ]; then
 		if [ -x /koolshare/scripts/ss_shunt_hot_reload.sh ] &&
@@ -345,12 +347,17 @@ failover_exec_recovery() {
 			LOGM "$LOGTIME1 fancyss：保存分流兜底节点 ${target_node_id} 失败，中止本次恢复。"
 			return 1
 		fi
-		LOGM "$LOGTIME1 fancyss：分流默认出站热切换未就绪，回退轻量重载代理..."
+		if [ -f "${need_dns_reload_file}" ]; then
+			skip_proxy_only="1"
+			LOGM "$LOGTIME1 fancyss：检测到热切换期间 DNS 待重载或启动失败，跳过轻量代理重载，直接执行 Fail-Closed 安全重启..."
+		else
+			LOGM "$LOGTIME1 fancyss：分流默认出站热切换未就绪，回退轻量重载代理..."
+		fi
 	fi
-	if sh /koolshare/ss/ssconfig.sh reload_proxy_only >> "${FAILOVER_SS_LOG_FILE}" 2>&1; then
+	if [ "${skip_proxy_only}" != "1" ] && sh /koolshare/ss/ssconfig.sh reload_proxy_only >> "${FAILOVER_SS_LOG_FILE}" 2>&1; then
 		return 0
 	fi
-	LOGM "$LOGTIME1 fancyss：轻量重载代理未就绪，回退 Fail-Closed 安全重启..."
+	[ "${skip_proxy_only}" = "1" ] || LOGM "$LOGTIME1 fancyss：轻量重载代理未就绪，回退 Fail-Closed 安全重启..."
 	run start-stop-daemon -S -q -b -x /koolshare/ss/ssconfig.sh -- restart
 }
 

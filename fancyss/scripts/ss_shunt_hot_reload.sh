@@ -756,7 +756,7 @@ hot_switch_default_node() {
 		return 1
 	fi
 	if [ -f "${HOT_NEED_DNS_RELOAD_FILE}" ]; then
-		sh /koolshare/ss/ssconfig.sh reload_dns_process || return 1
+		sh /koolshare/ss/ssconfig.sh reload_dns_process 9>&- || return 1
 		rm -f "${HOT_NEED_DNS_RELOAD_FILE}" || return 1
 	fi
 	fss_shunt_store_default_node "${target_node_id}" || return 1

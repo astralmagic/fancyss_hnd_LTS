@@ -3461,7 +3461,8 @@ fss_pick_jq_bin() {
 }
 
 fss_list_node_server_hosts_slow() {
-	local node_id="" host="" port=""
+	local node_id="" host="" port="" node_ids=""
+	node_ids="$(fss_list_node_ids)" || return 1
 	while IFS= read -r node_id
 	do
 		[ -n "${node_id}" ] || continue
@@ -3474,15 +3475,20 @@ fss_list_node_server_hosts_slow() {
 		[ -n "${host}" ] || continue
 		printf '%s\n' "${host}"
 	done <<-EOF
-	$(fss_list_node_ids)
+	${node_ids}
 	EOF
 }
 
 fss_list_node_server_hosts_v2_fast() {
-	local jq_bin="" order=""
+	local jq_bin="" order="" raw_file="" rc=0
 	jq_bin="$(fss_pick_jq_bin)" || return 1
 	order="$(dbus get fss_node_order)" || return 1
-	dbus list fss_node_ 2>/dev/null | "${jq_bin}" -Rnr --arg order "${order}" '
+	raw_file="${TMPDIR:-/tmp}/fss_node_hosts_raw.$$"
+	if ! dbus list fss_node_ > "${raw_file}" 2>/dev/null; then
+		rm -f "${raw_file}" >/dev/null 2>&1
+		return 1
+	fi
+	"${jq_bin}" -Rnr --arg order "${order}" '
 		def parse_embedded_json:
 			if type != "string" or . == "" then
 				{}
@@ -3537,7 +3543,9 @@ fss_list_node_server_hosts_v2_fast() {
 		else
 			(.server // "")
 		end
-	' 2>/dev/null
+	' "${raw_file}" 2>/dev/null || rc=$?
+	rm -f "${raw_file}" >/dev/null 2>&1
+	return "${rc}"
 }
 
 fss_list_node_server_hosts() {
@@ -3556,7 +3564,10 @@ fss_list_node_server_domains() {
 }
 
 fss_list_node_server_ips() {
-	fss_list_node_server_hosts | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$|^[[:xdigit:].]*:[[:xdigit:]:.]*$' | sort -u
+	local hosts=""
+	hosts="$(fss_list_node_server_hosts)" || return 1
+	[ -n "${hosts}" ] || return 0
+	printf '%s\n' "${hosts}" | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$|^[[:xdigit:].]*:[[:xdigit:]:.]*$' | sort -u
 }
 
 fss_list_node_airport_domains() {
