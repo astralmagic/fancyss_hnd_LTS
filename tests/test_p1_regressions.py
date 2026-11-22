@@ -634,6 +634,35 @@ update_gfwlist "$TMPROOT/work"
                     self.assertEqual(manifest.read_bytes(), original_manifest)
                     (inputs / name).write_bytes(saved)
 
+    def test_chnroute_preserves_aws_mainland_ranges_after_upstream_withdrawal(self):
+        rules = ROOT / "rules_ng"
+        additions = self.local / "chnroute_aws_cn.txt"
+        shutil.copyfile(rules / additions.name, additions)
+        pinned = [ipaddress.IPv4Network(line) for line in additions.read_text().splitlines()
+                  if line and not line.startswith("#")]
+        self.assertEqual(len(pinned), 28)
+        self.assertEqual(sum(n.num_addresses for n in ipaddress.collapse_addresses(pinned)), 134126)
+        generate = r'''source "$SCRIPT"
+CURR_PATH="$OUT"
+RULE_FILE="$OUT/rules.json.js"
+curl_download() { printf '%s\n' "$UPSTREAM" > "$2"; }
+curl_stdout() { printf '%s\n' 'apnic|CN|ipv4|192.0.2.0|256|20261123|allocated'; }
+update_chnroute "$WORK"
+'''
+        for feed in ("107.176.0.0/16", "198.51.100.0/24"):
+            with self.subTest(upstream=feed):
+                result = run_bash(generate, SCRIPT=str(rules / "update_rules.sh"), OUT=str(self.local),
+                                  WORK=str(self.work_tmp), UPSTREAM=feed)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = list(ipaddress.collapse_addresses(
+                    pinned + [ipaddress.IPv4Network("192.0.2.0/24"), ipaddress.IPv4Network(feed)]
+                ))
+                output = self.local / "chnroute.txt"
+                self.assertEqual(output.read_text().splitlines(), list(map(str, expected)))
+                manifest = json.loads((self.local / "rules.json.js").read_text())["chnroute"]
+                self.assertEqual(int(manifest["count_ip"]), sum(n.num_addresses for n in expected))
+                self.assertEqual(manifest["md5"], hashlib.md5(output.read_bytes()).hexdigest())
+
     def test_update_rules_script_uses_expected_upstreams(self):
         script = (ROOT / "rules_ng/update_rules.sh").read_text()
         for obsolete in (
