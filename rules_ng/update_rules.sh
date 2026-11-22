@@ -344,7 +344,7 @@ update_chnroute() {
 	sed_inplace '/^#/d;/^$/d' "$loyalsoldier"
 
 	# keep only valid ipv4 routes (CIDR or single IP), avoid accidental matches from non-data content
-	cat "$misakaio" "$apnic" "$gaoyifan" "$loyalsoldier" \
+	cat "$misakaio" "$apnic" "$gaoyifan" "$loyalsoldier" "${CURR_PATH}/chnroute_aws_cn.txt" \
 		| tr -d '\r' \
 		| grep -E '^([0-9]{1,3}[\\.]){3}[0-9]{1,3}(/[0-9]{1,2})?$' \
 		| python3 -c 'import ipaddress,sys; networks = ipaddress.collapse_addresses(ipaddress.ip_network(line.strip()) for line in sys.stdin if line.strip()); print("\n".join(str(network) for network in networks))' >"$merged"
