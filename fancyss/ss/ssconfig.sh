@@ -1490,6 +1490,10 @@ add_current_server_ip_to_ignlist() {
 
 fail_closed_guard_has_global_mode() {
 	[ "${ss_basic_mode}" = "5" ] && return 0
+	[ "${ss_basic_mode}" = "7" ] && [ "${ss_basic_shunt_ingress_mode}" = "5" ] && return 0
+	if type get_runtime_proxy_mode >/dev/null 2>&1; then
+		[ "$(get_runtime_proxy_mode 2>/dev/null)" = "5" ] && return 0
+	fi
 	[ "${ss_acl_default_mode}" = "5" ] && return 0
 	local acl_list=""
 	local acl=""
@@ -1552,6 +1556,7 @@ install_fail_closed_guard_family() {
 
 	${cmd} -t filter -N "${tmp_chain}" >/dev/null 2>&1 || return 1
 	if ! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "ignlist${sfx}" dst -j RETURN >/dev/null 2>&1 ||
+		! ( ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "black_static${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "black_static${sfx}" dst -j DROP >/dev/null 2>&1 ) ||
 		! ( ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "black_list${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "black_list${sfx}" dst -j DROP >/dev/null 2>&1 ) ||
 		! ( ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "gfwlist${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "gfwlist${sfx}" dst -j DROP >/dev/null 2>&1 ); then
 		${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
@@ -1559,7 +1564,7 @@ install_fail_closed_guard_family() {
 		return 1
 	fi
 
-	# 非全局模式才放行 chnlist / chnroute；全局模式或存在全局 ACL 时大陆地址也必须拦截，不能直连放行
+	# 非全局模式才放行 chnlist / chnroute；全局模式、分流全局入口或全局 ACL 时大陆地址也必须拦截，不能直连放行
 	if [ "${is_global}" != "1" ]; then
 		if ! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "chnlist${sfx}" dst -j RETURN >/dev/null 2>&1 ||
 			! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "chnroute${sfx}" dst -j RETURN >/dev/null 2>&1; then
@@ -1569,7 +1574,8 @@ install_fail_closed_guard_family() {
 		fi
 	fi
 
-	if ! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "white_list${sfx}" dst -j RETURN >/dev/null 2>&1 ||
+	if ! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "white_static${sfx}" dst -j RETURN >/dev/null 2>&1 ||
+		! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "white_list${sfx}" dst -j RETURN >/dev/null 2>&1 ||
 		! ( ${cmd} -t filter -A "${tmp_chain}" -p tcp -j REJECT --reject-with tcp-reset >/dev/null 2>&1 || ${cmd} -t filter -A "${tmp_chain}" -p tcp -j DROP >/dev/null 2>&1 ) ||
 		! ( ${cmd} -t filter -A "${tmp_chain}" -p udp -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1 || ${cmd} -t filter -A "${tmp_chain}" -p udp -j DROP >/dev/null 2>&1 ); then
 		${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
@@ -1593,6 +1599,7 @@ install_fail_closed_guard_family() {
 	if ! ${cmd} -t filter -N "${out_tmp_chain}" >/dev/null 2>&1 ||
 		! ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "ignlist${sfx}" dst -j RETURN >/dev/null 2>&1 ||
 		! ( ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "router${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "router${sfx}" dst -j DROP >/dev/null 2>&1 ) ||
+		! ( ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "black_static${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "black_static${sfx}" dst -j DROP >/dev/null 2>&1 ) ||
 		! ( ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "black_list${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "black_list${sfx}" dst -j DROP >/dev/null 2>&1 ) ||
 		! ( ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "gfwlist${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "gfwlist${sfx}" dst -j DROP >/dev/null 2>&1 ); then
 		${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
@@ -1602,7 +1609,8 @@ install_fail_closed_guard_family() {
 		return 1
 	fi
 	if [ -z "${sfx}" ] && [ -n "${ip_prefix_hex}" ]; then
-		if ! ( ${cmd} -t filter -A "${out_tmp_chain}" -p tcp -m mark --mark "${ip_prefix_hex}/0xffffff00" -j REJECT --reject-with tcp-reset >/dev/null 2>&1 || ${cmd} -t filter -A "${out_tmp_chain}" -p tcp -m mark --mark "${ip_prefix_hex}/0xffffff00" -j DROP >/dev/null 2>&1 ); then
+		# refresh_runtime_context 生成的 ip_prefix_hex 已包含 /0xffffff00 掩码，直接使用，严禁重复拼接
+		if ! ( ${cmd} -t filter -A "${out_tmp_chain}" -p tcp -m mark --mark "${ip_prefix_hex}" -j REJECT --reject-with tcp-reset >/dev/null 2>&1 || ${cmd} -t filter -A "${out_tmp_chain}" -p tcp -m mark --mark "${ip_prefix_hex}" -j DROP >/dev/null 2>&1 ); then
 			${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
 			${cmd} -t filter -X "${tmp_chain}" >/dev/null 2>&1 || true
 			${cmd} -t filter -F "${out_tmp_chain}" >/dev/null 2>&1 || true
@@ -1656,10 +1664,35 @@ remove_fail_closed_guard_family() {
 }
 
 verify_proxy_ingress_rules() {
-	# 卸载临时保护链前，显式核验实际透明代理入口跳转已成功挂入 PREROUTING
+	# 卸载临时保护链前，不仅核验 PREROUTING 入口存在，还要核验当前活动业务链中实际存在 REDIRECT 动作，
+	# 防止出现“PREROUTING 入口存在但目标链缺少最终 REDIRECT 规则”时误卸载保护链！
+	local active_mode="${ss_basic_mode}"
+	local active_chain=""
+	local chain_rules=""
+
 	iptables -t nat -C PREROUTING -p tcp -j SHADOWSOCKS >/dev/null 2>&1 || return 1
+	if type get_action_chain >/dev/null 2>&1; then
+		if type resolve_acl_default_mode >/dev/null 2>&1; then
+			active_mode="$(resolve_acl_default_mode "$(if [ -n "${acl_nu}" ]; then echo 1; else echo 0; fi)" 2>/dev/null || echo "${ss_basic_mode}")"
+		fi
+		active_chain="$(get_action_chain "${active_mode}" 2>/dev/null)"
+	fi
+	if [ -n "${active_chain}" ] && [ "${active_chain}" != "RETURN" ]; then
+		chain_rules="$(iptables -t nat -S "${active_chain}" 2>/dev/null)" || return 1
+		printf '%s\n' "${chain_rules}" | grep -q -- '-j REDIRECT' || return 1
+	fi
+	if fail_closed_guard_has_global_mode; then
+		chain_rules="$(iptables -t nat -S SHADOWSOCKS_GLO 2>/dev/null)" || return 1
+		printf '%s\n' "${chain_rules}" | grep -q -- '-j REDIRECT' || return 1
+	fi
+
 	if [ "${ss_basic_proxy_ipv6}" = "1" ] && ip6tables -t nat -L SHADOWSOCKS6 >/dev/null 2>&1; then
 		ip6tables -t nat -C PREROUTING -p tcp -j SHADOWSOCKS6 >/dev/null 2>&1 || return 1
+		if [ -n "${active_chain}" ] && [ "${active_chain}" != "RETURN" ]; then
+			local active_chain6="SHADOWSOCKS6_${active_chain#SHADOWSOCKS_}"
+			chain_rules="$(ip6tables -t nat -S "${active_chain6}" 2>/dev/null)" || return 1
+			printf '%s\n' "${chain_rules}" | grep -q -- '-j REDIRECT' || return 1
+		fi
 	fi
 	return 0
 }
@@ -1769,12 +1802,23 @@ fss_collect_current_static_ip_lists() {
 	sort -u "${out_white_v6}" -o "${out_white_v6}" 2>/dev/null || true
 }
 
+fss_white_domain_sig() {
+	local wf="${1:-/tmp/white_list.txt}"
+	if [ -s "${wf}" ]; then
+		sort -u "${wf}" 2>/dev/null | cksum | awk '{print $1 ":" $2}'
+	else
+		echo "empty"
+	fi
+}
+
 reconcile_fail_closed_ipsets() {
-	# 在 FSS_FC_GUARD 保护下：
-	# 1) 纯静态 ignlist/ignlist6 通过临时集合 + ipset swap 原子重建（清除旧节点残留 IP）；
-	# 2) 共享动态集合 black_list*/white_list* 不整体 swap（保留 ChinaDNS 动态解析出的域名 IP，
-	#    防止客户端缓存期在 GFWList 模式下漏直连），而是对比静态快照增量删除已移除的静态 IP 并幂等添加当前静态项；
-	# 3) 绝不清空 gfwlist*/chnlist*/router* 动态集合；
+	# 彻底解耦静态来源与 ChinaDNS 动态域名来源：
+	# 1) 纯静态集合 ignlist* / black_static* / white_static* 全部通过临时集合 + ipset swap 原子重建：
+	#    手填黑/白名单 IP 删除或节点切换后 100% 立即生效，绝不误删 black_list* 中同名 IP 的 ChinaDNS 动态映射；
+	# 2) 动态白名单集合 white_list*（仅归 ChinaDNS 白名单域名写入）：跟踪 /tmp/white_list.txt 内容签名，
+	#    若白名单域名发生变化（例如删除某白名单域名），在 FSS_FC_GUARD 保护下原子 swap 清空动态 white_list*，
+	#    清除已删除白名单域名的残留 IP（Fail-Closed 方向，不伤静态 white_static* 且不放行直连）；
+	# 3) 动态黑名单 black_list* 及 gfwlist* / chnlist* / router* 保持不断档，不因静态变更清空；
 	# 4) 任一步骤失败立即返回非零，保留保护链并中止后续步骤。
 	local ip=""
 	local tmp_dir="${TMPDIR:-/tmp}/fss_reconcile.$$"
@@ -1782,13 +1826,20 @@ reconcile_fail_closed_ipsets() {
 	local cur_black_v6="${tmp_dir}/black.v6"
 	local cur_white_v4="${tmp_dir}/white.v4"
 	local cur_white_v6="${tmp_dir}/white.v6"
-	local snap_black_v4="${FSS_STATIC_BLACK_SNAP_V4:-/tmp/fss_static_black_ips.v4}"
-	local snap_black_v6="${FSS_STATIC_BLACK_SNAP_V6:-/tmp/fss_static_black_ips.v6}"
-	local snap_white_v4="${FSS_STATIC_WHITE_SNAP_V4:-/tmp/fss_static_white_ips.v4}"
-	local snap_white_v6="${FSS_STATIC_WHITE_SNAP_V6:-/tmp/fss_static_white_ips.v6}"
+	local white_domain_file="${FSS_WHITE_DOMAIN_FILE:-/tmp/white_list.txt}"
+	local white_sig_file="${FSS_WHITE_DOMAIN_SIG_FILE:-/tmp/fss_white_domain.sig}"
+	local prev_white_sig=""
+	local cur_white_sig=""
+	local reset_dynamic_white="0"
 
 	mkdir -p "${tmp_dir}" >/dev/null 2>&1 || return 1
 	fss_collect_current_static_ip_lists "${cur_black_v4}" "${cur_black_v6}" "${cur_white_v4}" "${cur_white_v6}"
+
+	cur_white_sig="$(fss_white_domain_sig "${white_domain_file}")"
+	[ -f "${white_sig_file}" ] && prev_white_sig="$(sed -n '1p' "${white_sig_file}" 2>/dev/null)"
+	if [ -n "${prev_white_sig}" ] && [ "${prev_white_sig}" != "${cur_white_sig}" ]; then
+		reset_dynamic_white="1"
+	fi
 
 	if ! {
 		echo "create ignlist nethash -exist"
@@ -1809,41 +1860,48 @@ reconcile_fail_closed_ipsets() {
 		echo "swap ignlist6 ignlist6_fc_tmp"
 		echo "destroy ignlist6_fc_tmp"
 
-		echo "create black_list nethash -exist"
-		echo "create black_list6 nethash family inet6 -exist"
-		echo "create white_list nethash -exist"
-		echo "create white_list6 nethash family inet6 -exist"
+		echo "create black_static nethash -exist"
+		echo "create black_static_fc_tmp nethash -exist"
+		echo "flush black_static_fc_tmp"
+		while IFS= read -r ip; do [ -n "${ip}" ] && echo "add black_static_fc_tmp ${ip}"; done < "${cur_black_v4}"
+		echo "swap black_static black_static_fc_tmp"
+		echo "destroy black_static_fc_tmp"
 
-		# 增量删除已从静态配置中移除的旧条目（不动 ChinaDNS 动态写入的域名 IP）
-		if [ -f "${snap_black_v4}" ]; then
-			while IFS= read -r ip; do
-				[ -n "${ip}" ] || continue
-				grep -Fxq "${ip}" "${cur_black_v4}" 2>/dev/null || echo "del black_list ${ip} -exist"
-			done < "${snap_black_v4}"
-		fi
-		if [ -f "${snap_black_v6}" ]; then
-			while IFS= read -r ip; do
-				[ -n "${ip}" ] || continue
-				grep -Fxq "${ip}" "${cur_black_v6}" 2>/dev/null || echo "del black_list6 ${ip} -exist"
-			done < "${snap_black_v6}"
-		fi
-		if [ -f "${snap_white_v4}" ]; then
-			while IFS= read -r ip; do
-				[ -n "${ip}" ] || continue
-				grep -Fxq "${ip}" "${cur_white_v4}" 2>/dev/null || echo "del white_list ${ip} -exist"
-			done < "${snap_white_v4}"
-		fi
-		if [ -f "${snap_white_v6}" ]; then
-			while IFS= read -r ip; do
-				[ -n "${ip}" ] || continue
-				grep -Fxq "${ip}" "${cur_white_v6}" 2>/dev/null || echo "del white_list6 ${ip} -exist"
-			done < "${snap_white_v6}"
-		fi
+		echo "create black_static6 nethash family inet6 -exist"
+		echo "create black_static6_fc_tmp nethash family inet6 -exist"
+		echo "flush black_static6_fc_tmp"
+		while IFS= read -r ip; do [ -n "${ip}" ] && echo "add black_static6_fc_tmp ${ip}"; done < "${cur_black_v6}"
+		echo "swap black_static6 black_static6_fc_tmp"
+		echo "destroy black_static6_fc_tmp"
 
-		while IFS= read -r ip; do [ -n "${ip}" ] && echo "add black_list ${ip} -exist"; done < "${cur_black_v4}"
-		while IFS= read -r ip; do [ -n "${ip}" ] && echo "add black_list6 ${ip} -exist"; done < "${cur_black_v6}"
-		while IFS= read -r ip; do [ -n "${ip}" ] && echo "add white_list ${ip} -exist"; done < "${cur_white_v4}"
-		while IFS= read -r ip; do [ -n "${ip}" ] && echo "add white_list6 ${ip} -exist"; done < "${cur_white_v6}"
+		echo "create white_static nethash -exist"
+		echo "create white_static_fc_tmp nethash -exist"
+		echo "flush white_static_fc_tmp"
+		while IFS= read -r ip; do [ -n "${ip}" ] && echo "add white_static_fc_tmp ${ip}"; done < "${cur_white_v4}"
+		echo "swap white_static white_static_fc_tmp"
+		echo "destroy white_static_fc_tmp"
+
+		echo "create white_static6 nethash family inet6 -exist"
+		echo "create white_static6_fc_tmp nethash family inet6 -exist"
+		echo "flush white_static6_fc_tmp"
+		while IFS= read -r ip; do [ -n "${ip}" ] && echo "add white_static6_fc_tmp ${ip}"; done < "${cur_white_v6}"
+		echo "swap white_static6 white_static6_fc_tmp"
+		echo "destroy white_static6_fc_tmp"
+
+		# 动态白名单域名集合发生变更（如删除白名单域名）时，原子重置动态 white_list* 清除过期域名 IP
+		if [ "${reset_dynamic_white}" = "1" ]; then
+			echo "create white_list nethash -exist"
+			echo "create white_list_dyn_tmp nethash -exist"
+			echo "flush white_list_dyn_tmp"
+			echo "swap white_list white_list_dyn_tmp"
+			echo "destroy white_list_dyn_tmp"
+
+			echo "create white_list6 nethash family inet6 -exist"
+			echo "create white_list6_dyn_tmp nethash family inet6 -exist"
+			echo "flush white_list6_dyn_tmp"
+			echo "swap white_list6 white_list6_dyn_tmp"
+			echo "destroy white_list6_dyn_tmp"
+		fi
 
 		echo "COMMIT"
 	} | ipset -R >/dev/null 2>&1; then
@@ -1851,10 +1909,7 @@ reconcile_fail_closed_ipsets() {
 		return 1
 	fi
 
-	cp -f "${cur_black_v4}" "${snap_black_v4}" >/dev/null 2>&1 || true
-	cp -f "${cur_black_v6}" "${snap_black_v6}" >/dev/null 2>&1 || true
-	cp -f "${cur_white_v4}" "${snap_white_v4}" >/dev/null 2>&1 || true
-	cp -f "${cur_white_v6}" "${snap_white_v6}" >/dev/null 2>&1 || true
+	printf '%s\n' "${cur_white_sig}" > "${white_sig_file}" 2>/dev/null || true
 	rm -rf "${tmp_dir}" >/dev/null 2>&1 || true
 
 	if type add_wan_bypass_ips_to_ignlist >/dev/null 2>&1; then
@@ -3769,22 +3824,22 @@ add_white_black() {
 	done
 	add_wan_bypass_ips_to_ignlist
 	
-	# {black_list}, telegram ip
+	# {black_static}, telegram ip（独立静态集合，避免与 ChinaDNS 动态 black_list 冲突）
 	if [ "${ss_basic_mode}" != "6" ]; then
 		ip_tg="149.154.0.0/16 91.108.4.0/22 91.108.56.0/24 109.239.140.0/24 67.198.55.0/24"
 		for ip in ${ip_tg}; do
-			ipset -! add black_list $ip >/dev/null 2>&1
+			ipset -! add black_static $ip >/dev/null 2>&1
 		done
 	fi
 
-	# {black_list}, black ip（使用局部变量解码，不原地覆写 ss_wan_black_ip，避免后续重复解码）
+	# {black_static}, black ip（使用局部变量解码，不原地覆写 ss_wan_black_ip；写入独立静态集合）
 	if [ -n "${ss_wan_black_ip}" ]; then
 		local decoded_black_ips="$(fss_decode_static_ip_list "${ss_wan_black_ip}")"
 		echo_date "应用IP/CIDR黑名单"
 		for ip in ${decoded_black_ips}; do
 			case "${ip}" in
-			*:*) ipset -! add black_list6 "${ip}" >/dev/null 2>&1 ;;
-			*) ipset -! add black_list "${ip}" >/dev/null 2>&1 ;;
+			*:*) ipset -! add black_static6 "${ip}" >/dev/null 2>&1 ;;
+			*) ipset -! add black_static "${ip}" >/dev/null 2>&1 ;;
 			esac
 		done
 	fi
@@ -3827,27 +3882,19 @@ add_white_black() {
 		' >> /tmp/black_list.txt
 	fi
 
-	# {white_list}, white ip（使用局部变量解码，不原地覆写 ss_wan_white_ip；按地址族分流写入）
+	# {white_static}, white ip（使用局部变量解码，不原地覆写 ss_wan_white_ip；按地址族分流写入独立静态集合）
 	[ -n "${ISP_DNS1}" ] && ISP_DNS_a="${ISP_DNS1}" || ISP_DNS_a=""
 	[ -n "${ISP_DNS2}" ] && ISP_DNS_b="${ISP_DNS2}" || ISP_DNS_b=""
 	local ALL_NODE_DOMAINS=$(dbus list ssconf|grep _server_|awk -F"=" '{print $NF}'|sort -u|grep -E "([0-9]{1,3}[\.]){3}[0-9]{1,3}")
 	local decoded_white_ips="$(fss_decode_static_ip_list "${ss_wan_white_ip}")"
 	echo_date "应用IP/CIDR白名单"
-	for ip in ${decoded_white_ips} ${ALL_NODE_DOMAINS}
+	for ip in ${ISP_DNS_a} ${ISP_DNS_b} ${decoded_white_ips} ${ALL_NODE_DOMAINS}
 	do
 		case "${ip}" in
-		*:*) ipset -! add white_list6 "$ip" >/dev/null 2>&1 ;;
-		*) ipset -! add white_list "$ip" >/dev/null 2>&1 ;;
+		*:*) ipset -! add white_static6 "$ip" >/dev/null 2>&1 ;;
+		*) ipset -! add white_static "$ip" >/dev/null 2>&1 ;;
 		esac
 	done
-	# 冷启动同步写入静态黑/白名单快照，供后续 Fail-Closed 重启做增量差集清理
-	if [ "${FSS_FAIL_CLOSED_RESTART}" != "1" ] && type fss_collect_current_static_ip_lists >/dev/null 2>&1; then
-		fss_collect_current_static_ip_lists \
-			"${FSS_STATIC_BLACK_SNAP_V4:-/tmp/fss_static_black_ips.v4}" \
-			"${FSS_STATIC_BLACK_SNAP_V6:-/tmp/fss_static_black_ips.v6}" \
-			"${FSS_STATIC_WHITE_SNAP_V4:-/tmp/fss_static_white_ips.v4}" \
-			"${FSS_STATIC_WHITE_SNAP_V6:-/tmp/fss_static_white_ips.v6}"
-	fi
 
 	# {white_list}, white domain
 	true >/tmp/white_list.txt
@@ -3866,6 +3913,10 @@ add_white_black() {
 	for wan_white_domain2 in "apple.com" "microsoft.com" "dns.msftncsi.com" "worldtimeapi.org"; do
 		echo "${wan_white_domain2}" >>/tmp/white_list.txt
 	done
+	# 冷启动记录白名单域名签名，供后续 Fail-Closed 重启感知白名单域名变更并重置动态 white_list*
+	if [ "${FSS_FAIL_CLOSED_RESTART}" != "1" ] && type fss_white_domain_sig >/dev/null 2>&1; then
+		fss_white_domain_sig /tmp/white_list.txt > "${FSS_WHITE_DOMAIN_SIG_FILE:-/tmp/fss_white_domain.sig}" 2>/dev/null || true
+	fi
 
 	# {block_list}
 	cp -rf /koolshare/ss/rules/block_list.txt /tmp
@@ -5923,7 +5974,7 @@ flush_ipset() {
 		while IFS= read -r set_name
 		do
 			case "${set_name}" in
-			ignlist|ignlist6|white_list|white_list6|black_list|black_list6|chnlist|chnlist6|gfwlist|gfwlist6|router|router6|chnroute|chnroute6)
+			ignlist|ignlist6|white_list|white_list6|white_static|white_static6|black_list|black_list6|black_static|black_static6|chnlist|chnlist6|gfwlist|gfwlist6|router|router6|chnroute|chnroute6)
 				printf 'flush %s\ndestroy %s\n' "${set_name}" "${set_name}" >> "${restore_file}"
 				;;
 			esac
@@ -6076,11 +6127,19 @@ creat_ipset() {
 		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush white_list"
 		echo "create white_list6 nethash family inet6 -exist"
 		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush white_list6"
+		echo "create white_static nethash -exist"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush white_static"
+		echo "create white_static6 nethash family inet6 -exist"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush white_static6"
 
 		echo "create black_list nethash -exist"
 		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush black_list"
 		echo "create black_list6 nethash family inet6 -exist"
 		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush black_list6"
+		echo "create black_static nethash -exist"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush black_static"
+		echo "create black_static6 nethash family inet6 -exist"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush black_static6"
 
 		echo "create chnlist nethash -exist"
 		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush chnlist"
@@ -7093,36 +7152,45 @@ get_shunt_ingress_mode() {
 init_shunt_chain_v4() {
 	local ingress_mode="$(get_shunt_ingress_mode)"
 
-	ensure_chain nat SHADOWSOCKS_SHU
-	ensure_chain mangle SHADOWSOCKS_SHU
-	ensure_chain filter SHADOWSOCKS_SHU
+	ensure_chain nat SHADOWSOCKS_SHU || return 1
+	ensure_chain mangle SHADOWSOCKS_SHU || return 1
+	ensure_chain filter SHADOWSOCKS_SHU || return 1
 	if [ "${ingress_mode}" = "5" ]; then
-		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set white_list dst -j RETURN
-		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -j REDIRECT --to-ports 3333
+		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set white_static dst -j RETURN || return 1
+		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set white_list dst -j RETURN || return 1
+		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -j REDIRECT --to-ports 3333 || return 1
 		if [ "${mangle}" = "1" ]; then
-			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set white_list dst -j RETURN
-			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set white_static dst -j RETURN || return 1
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set white_list dst -j RETURN || return 1
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
 		fi
-		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set white_list dst -j RETURN
-		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -j REJECT --reject-with icmp-port-unreachable
+		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set white_static dst -j RETURN || return 1
+		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set white_list dst -j RETURN || return 1
+		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -j REJECT --reject-with icmp-port-unreachable || return 1
 	else
-		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set black_list dst -j REDIRECT --to-ports 3333
-		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set chnlist dst -j RETURN
-		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set chnroute dst -j RETURN
-		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set white_list dst -j RETURN
-		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -j REDIRECT --to-ports 3333
+		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set black_static dst -j REDIRECT --to-ports 3333 || return 1
+		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set black_list dst -j REDIRECT --to-ports 3333 || return 1
+		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set chnlist dst -j RETURN || return 1
+		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set chnroute dst -j RETURN || return 1
+		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set white_static dst -j RETURN || return 1
+		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -m set --match-set white_list dst -j RETURN || return 1
+		append_if_not_exists nat -A SHADOWSOCKS_SHU -p tcp -j REDIRECT --to-ports 3333 || return 1
 		if [ "${mangle}" = "1" ]; then
-			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
-			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set chnlist dst -j RETURN
-			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set chnroute dst -j RETURN
-			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set white_list dst -j RETURN
-			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set black_static dst -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set chnlist dst -j RETURN || return 1
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set chnroute dst -j RETURN || return 1
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set white_static dst -j RETURN || return 1
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -m set --match-set white_list dst -j RETURN || return 1
+			append_if_not_exists mangle -A SHADOWSOCKS_SHU -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
 		fi
-		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set black_list dst -j REJECT --reject-with icmp-port-unreachable
-		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set chnlist dst -j RETURN
-		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set chnroute dst -j RETURN
-		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set white_list dst -j RETURN
-		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -j REJECT --reject-with icmp-port-unreachable
+		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set black_static dst -j REJECT --reject-with icmp-port-unreachable || return 1
+		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set black_list dst -j REJECT --reject-with icmp-port-unreachable || return 1
+		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set chnlist dst -j RETURN || return 1
+		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set chnroute dst -j RETURN || return 1
+		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set white_static dst -j RETURN || return 1
+		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -m set --match-set white_list dst -j RETURN || return 1
+		append_if_not_exists filter -A SHADOWSOCKS_SHU -p udp -j REJECT --reject-with icmp-port-unreachable || return 1
 	fi
 }
 
@@ -7134,30 +7202,39 @@ init_shunt_chain_v6() {
 	ensure_chain6 mangle SHADOWSOCKS6_SHU || return 1
 	ensure_chain6 filter SHADOWSOCKS6_SHU || return 1
 	if [ "${ingress_mode}" = "5" ]; then
+		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -m set --match-set white_static6 dst -j RETURN || return 1
 		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -m set --match-set white_list6 dst -j RETURN || return 1
 		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -j REDIRECT --to-ports ${tproxy_port6} || return 1
 		if [ "${mangle}" = "1" ]; then
+			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set white_static6 dst -j RETURN || return 1
 			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set white_list6 dst -j RETURN || return 1
 			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -j TPROXY --on-port ${tproxy_port6} --tproxy-mark 0x07 || return 1
 		fi
+		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -m set --match-set white_static6 dst -j RETURN || return 1
 		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -m set --match-set white_list6 dst -j RETURN || return 1
 		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -j REJECT --reject-with icmp6-port-unreachable || return 1
 	else
+		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -m set --match-set black_static6 dst -j REDIRECT --to-ports ${tproxy_port6} || return 1
 		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -m set --match-set black_list6 dst -j REDIRECT --to-ports ${tproxy_port6} || return 1
 		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -m set --match-set chnlist6 dst -j RETURN || return 1
 		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -m set --match-set chnroute6 dst -j RETURN || return 1
+		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -m set --match-set white_static6 dst -j RETURN || return 1
 		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -m set --match-set white_list6 dst -j RETURN || return 1
 		append_if_not_exists6 nat -A SHADOWSOCKS6_SHU -p tcp -j REDIRECT --to-ports ${tproxy_port6} || return 1
 		if [ "${mangle}" = "1" ]; then
+			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set black_static6 dst -j TPROXY --on-port ${tproxy_port6} --tproxy-mark 0x07 || return 1
 			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set black_list6 dst -j TPROXY --on-port ${tproxy_port6} --tproxy-mark 0x07 || return 1
 			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set chnlist6 dst -j RETURN || return 1
 			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set chnroute6 dst -j RETURN || return 1
+			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set white_static6 dst -j RETURN || return 1
 			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -m set --match-set white_list6 dst -j RETURN || return 1
 			append_if_not_exists6 mangle -A SHADOWSOCKS6_SHU -p udp -j TPROXY --on-port ${tproxy_port6} --tproxy-mark 0x07 || return 1
 		fi
+		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -m set --match-set black_static6 dst -j REJECT --reject-with icmp6-port-unreachable || return 1
 		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -m set --match-set black_list6 dst -j REJECT --reject-with icmp6-port-unreachable || return 1
 		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -m set --match-set chnlist6 dst -j RETURN || return 1
 		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -m set --match-set chnroute6 dst -j RETURN || return 1
+		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -m set --match-set white_static6 dst -j RETURN || return 1
 		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -m set --match-set white_list6 dst -j RETURN || return 1
 		append_if_not_exists6 filter -A SHADOWSOCKS6_SHU -p udp -j REJECT --reject-with icmp6-port-unreachable || return 1
 	fi
@@ -7193,61 +7270,70 @@ _start_iptables() {
 	
 	#-----------------------FOR GLOABLE---------------------
 	# 创建全局模式 nat rule
-	ensure_chain nat SHADOWSOCKS_GLO 
-	# {white_list} 直连
-	append_if_not_exists nat -A SHADOWSOCKS_GLO -p tcp -m set --match-set white_list dst -j RETURN
+	ensure_chain nat SHADOWSOCKS_GLO || return 1
+	# {white_static / white_list} 直连
+	append_if_not_exists nat -A SHADOWSOCKS_GLO -p tcp -m set --match-set white_static dst -j RETURN || return 1
+	append_if_not_exists nat -A SHADOWSOCKS_GLO -p tcp -m set --match-set white_list dst -j RETURN || return 1
 	# {剩余流量} 代理
-	append_if_not_exists nat -A SHADOWSOCKS_GLO -p tcp -j REDIRECT --to-ports 3333
+	append_if_not_exists nat -A SHADOWSOCKS_GLO -p tcp -j REDIRECT --to-ports 3333 || return 1
 	
 	#-----------------------FOR GFWLIST---------------------
 	# 创建gfwlist模式 nat rule
-	ensure_chain nat SHADOWSOCKS_GFW 
-	# {white_list} 直连
-	append_if_not_exists nat -A SHADOWSOCKS_GFW -p tcp -m set --match-set white_list dst -j RETURN	
-	# {black_list} 代理
-	append_if_not_exists nat -A SHADOWSOCKS_GFW -p tcp -m set --match-set black_list dst -j REDIRECT --to-ports 3333
+	ensure_chain nat SHADOWSOCKS_GFW || return 1
+	# {white_static / white_list} 直连
+	append_if_not_exists nat -A SHADOWSOCKS_GFW -p tcp -m set --match-set white_static dst -j RETURN || return 1
+	append_if_not_exists nat -A SHADOWSOCKS_GFW -p tcp -m set --match-set white_list dst -j RETURN || return 1
+	# {black_static / black_list} 代理
+	append_if_not_exists nat -A SHADOWSOCKS_GFW -p tcp -m set --match-set black_static dst -j REDIRECT --to-ports 3333 || return 1
+	append_if_not_exists nat -A SHADOWSOCKS_GFW -p tcp -m set --match-set black_list dst -j REDIRECT --to-ports 3333 || return 1
 	# {gfwlist} 代理
-	append_if_not_exists nat -A SHADOWSOCKS_GFW -p tcp -m set --match-set gfwlist dst -j REDIRECT --to-ports 3333
+	append_if_not_exists nat -A SHADOWSOCKS_GFW -p tcp -m set --match-set gfwlist dst -j REDIRECT --to-ports 3333 || return 1
 	# {rotlist} 代理
-	append_if_not_exists nat -A SHADOWSOCKS_GFW -p tcp -m set --match-set router dst -j REDIRECT --to-ports 3333
+	append_if_not_exists nat -A SHADOWSOCKS_GFW -p tcp -m set --match-set router dst -j REDIRECT --to-ports 3333 || return 1
 	
 	#-----------------------FOR CHNMODE---------------------
 	# 创建大陆白名单模式nat rule
-	ensure_chain nat SHADOWSOCKS_CHN 
-	# {black_list} 代理
-	append_if_not_exists nat -A SHADOWSOCKS_CHN -p tcp -m set --match-set black_list dst -j REDIRECT --to-ports 3333
+	ensure_chain nat SHADOWSOCKS_CHN || return 1
+	# {black_static / black_list} 代理
+	append_if_not_exists nat -A SHADOWSOCKS_CHN -p tcp -m set --match-set black_static dst -j REDIRECT --to-ports 3333 || return 1
+	append_if_not_exists nat -A SHADOWSOCKS_CHN -p tcp -m set --match-set black_list dst -j REDIRECT --to-ports 3333 || return 1
 	# {chnlist} 直连
-	append_if_not_exists nat -A SHADOWSOCKS_CHN -p tcp -m set --match-set chnlist dst -j RETURN
+	append_if_not_exists nat -A SHADOWSOCKS_CHN -p tcp -m set --match-set chnlist dst -j RETURN || return 1
 	# {chnroute} 直连
-	append_if_not_exists nat -A SHADOWSOCKS_CHN -p tcp -m set --match-set chnroute dst -j RETURN
-	# {white_list} 直连
-	append_if_not_exists nat -A SHADOWSOCKS_CHN -p tcp -m set --match-set white_list dst -j RETURN
+	append_if_not_exists nat -A SHADOWSOCKS_CHN -p tcp -m set --match-set chnroute dst -j RETURN || return 1
+	# {white_static / white_list} 直连
+	append_if_not_exists nat -A SHADOWSOCKS_CHN -p tcp -m set --match-set white_static dst -j RETURN || return 1
+	append_if_not_exists nat -A SHADOWSOCKS_CHN -p tcp -m set --match-set white_list dst -j RETURN || return 1
 	# {剩余流量} 代理
-	append_if_not_exists nat -A SHADOWSOCKS_CHN -p tcp -j REDIRECT --to-ports 3333
+	append_if_not_exists nat -A SHADOWSOCKS_CHN -p tcp -j REDIRECT --to-ports 3333 || return 1
 	
 	#-----------------------FOR GAMEMODE---------------------
 	# 创建游戏模式nat rule
-	ensure_chain nat SHADOWSOCKS_GAM 
-	# {black_list} 代理
-	append_if_not_exists nat -A SHADOWSOCKS_GAM -p tcp -m set --match-set black_list dst -j REDIRECT --to-ports 3333
+	ensure_chain nat SHADOWSOCKS_GAM || return 1
+	# {black_static / black_list} 代理
+	append_if_not_exists nat -A SHADOWSOCKS_GAM -p tcp -m set --match-set black_static dst -j REDIRECT --to-ports 3333 || return 1
+	append_if_not_exists nat -A SHADOWSOCKS_GAM -p tcp -m set --match-set black_list dst -j REDIRECT --to-ports 3333 || return 1
 	# {chnlist} 直连
-	append_if_not_exists nat -A SHADOWSOCKS_GAM -p tcp -m set --match-set chnlist dst -j RETURN
+	append_if_not_exists nat -A SHADOWSOCKS_GAM -p tcp -m set --match-set chnlist dst -j RETURN || return 1
 	# {chnroute} 直连
-	append_if_not_exists nat -A SHADOWSOCKS_GAM -p tcp -m set --match-set chnroute dst -j RETURN
-	# {white_list} 直连
-	append_if_not_exists nat -A SHADOWSOCKS_GAM -p tcp -m set --match-set white_list dst -j RETURN
+	append_if_not_exists nat -A SHADOWSOCKS_GAM -p tcp -m set --match-set chnroute dst -j RETURN || return 1
+	# {white_static / white_list} 直连
+	append_if_not_exists nat -A SHADOWSOCKS_GAM -p tcp -m set --match-set white_static dst -j RETURN || return 1
+	append_if_not_exists nat -A SHADOWSOCKS_GAM -p tcp -m set --match-set white_list dst -j RETURN || return 1
 	# {剩余流量} 代理
-	append_if_not_exists nat -A SHADOWSOCKS_GAM -p tcp -j REDIRECT --to-ports 3333
+	append_if_not_exists nat -A SHADOWSOCKS_GAM -p tcp -j REDIRECT --to-ports 3333 || return 1
 	
 	#-----------------------FOR HOMEMODE---------------------
 	# 创建回国模式nat rule
-	ensure_chain nat SHADOWSOCKS_HOM 
-	# {black_list} 代理
-	append_if_not_exists nat -A SHADOWSOCKS_HOM -p tcp -m set --match-set black_list dst -j REDIRECT --to-ports 3333
+	ensure_chain nat SHADOWSOCKS_HOM || return 1
+	# {black_static / black_list} 代理
+	append_if_not_exists nat -A SHADOWSOCKS_HOM -p tcp -m set --match-set black_static dst -j REDIRECT --to-ports 3333 || return 1
+	append_if_not_exists nat -A SHADOWSOCKS_HOM -p tcp -m set --match-set black_list dst -j REDIRECT --to-ports 3333 || return 1
 	# {gfwlist} 直连
-	append_if_not_exists nat -A SHADOWSOCKS_HOM -p tcp -m set --match-set gfwlist dst -j RETURN
-	# {white_list} 直连
-	append_if_not_exists nat -A SHADOWSOCKS_HOM -p tcp -m set --match-set white_list dst -j RETURN
+	append_if_not_exists nat -A SHADOWSOCKS_HOM -p tcp -m set --match-set gfwlist dst -j RETURN || return 1
+	# {white_static / white_list} 直连
+	append_if_not_exists nat -A SHADOWSOCKS_HOM -p tcp -m set --match-set white_static dst -j RETURN || return 1
+	append_if_not_exists nat -A SHADOWSOCKS_HOM -p tcp -m set --match-set white_list dst -j RETURN || return 1
 
 	#-----------------------FOR TPROXY---------------------
 	if [ "${mangle}" = "1" ]; then
@@ -7268,125 +7354,141 @@ _start_iptables() {
 	append_if_not_exists mangle -A SHADOWSOCKS -p udp -m set --match-set ignlist dst -j RETURN
 
 	# 创建gfw模式udp rule
-	ensure_chain mangle SHADOWSOCKS_GFW
+	ensure_chain mangle SHADOWSOCKS_GFW || return 1
 	if [ "${mangle}" = "1" ]; then
-		# {white_list} 直连
-		append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set white_list dst -j RETURN
-		# {black_list} 代理
-		append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		# {white_static / white_list} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set white_static dst -j RETURN || return 1
+		append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set white_list dst -j RETURN || return 1
+		# {black_static / black_list} 代理
+		append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set black_static dst -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
+		append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
 		# {gfwlist} 代理
-		append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set gfwlist dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set gfwlist dst -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
 		# {rotlist} 代理
-		append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set router dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		append_if_not_exists mangle -A SHADOWSOCKS_GFW -p udp -m set --match-set router dst -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
 	fi
 
 	# 创建白名单模式udp rule
-	ensure_chain mangle SHADOWSOCKS_CHN
+	ensure_chain mangle SHADOWSOCKS_CHN || return 1
 	if [ "${mangle}" = "1" ]; then
-		# {black_list} 代理
-		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		# {black_static / black_list} 代理
+		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set black_static dst -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
+		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
 		# {chnlist} 直连
-		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set chnlist dst -j RETURN
+		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set chnlist dst -j RETURN || return 1
 		# {chnroute} 直连
-		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set chnroute dst -j RETURN
-		# {white_list} 直连
-		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set white_list dst -j RETURN
+		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set chnroute dst -j RETURN || return 1
+		# {white_static / white_list} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set white_static dst -j RETURN || return 1
+		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -m set --match-set white_list dst -j RETURN || return 1
 		# {剩余流量} 代理
-		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		append_if_not_exists mangle -A SHADOWSOCKS_CHN -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
 	fi
 
 	# 创建游戏模式udp rule
-	ensure_chain mangle SHADOWSOCKS_GAM
+	ensure_chain mangle SHADOWSOCKS_GAM || return 1
 	if [ "${mangle}" = "1" ]; then
-		# {black_list} 代理
-		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		# {black_static / black_list} 代理
+		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set black_static dst -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
+		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
 		# {chnlist} 直连
-		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set chnlist dst -j RETURN
+		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set chnlist dst -j RETURN || return 1
 		# {chnroute} 直连
-		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set chnroute dst -j RETURN
-		# {white_list} 直连
-		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set white_list dst -j RETURN
+		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set chnroute dst -j RETURN || return 1
+		# {white_static / white_list} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set white_static dst -j RETURN || return 1
+		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -m set --match-set white_list dst -j RETURN || return 1
 		# {剩余流量} 代理
-		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		append_if_not_exists mangle -A SHADOWSOCKS_GAM -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
 	fi
 
 	# 创建glo模式udp rule
-	ensure_chain mangle SHADOWSOCKS_GLO
+	ensure_chain mangle SHADOWSOCKS_GLO || return 1
 	if [ "${mangle}" = "1" ]; then
-		# {white_list} 直连
-		append_if_not_exists mangle -A SHADOWSOCKS_GLO -p udp -m set --match-set white_list dst -j RETURN
+		# {white_static / white_list} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_GLO -p udp -m set --match-set white_static dst -j RETURN || return 1
+		append_if_not_exists mangle -A SHADOWSOCKS_GLO -p udp -m set --match-set white_list dst -j RETURN || return 1
 		# {剩余流量} 代理
-		append_if_not_exists mangle -A SHADOWSOCKS_GLO -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		append_if_not_exists mangle -A SHADOWSOCKS_GLO -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
 	fi
 
 	echo_date "创建xray分流模式专用链，入口策略：$( [ "$(get_shunt_ingress_mode)" = "5" ] && echo 全量引流 || echo 大陆白名单引流 )"
-	init_shunt_chain_v4
+	init_shunt_chain_v4 || return 1
 
 	# 创建回国模式udp rule
-	ensure_chain mangle SHADOWSOCKS_HOM
+	ensure_chain mangle SHADOWSOCKS_HOM || return 1
 	if [ "${mangle}" = "1" ]; then
-		# {black_list} 代理
-		append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		# {black_static / black_list} 代理
+		append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -m set --match-set black_static dst -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
+		append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -m set --match-set black_list dst -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
 		# {gfwlist} 直连
-		append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -m set --match-set gfwlist dst -j RETURN
-		# {white_list} 直连
-		append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -m set --match-set white_list dst -j RETURN
+		append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -m set --match-set gfwlist dst -j RETURN || return 1
+		# {white_static / white_list} 直连
+		append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -m set --match-set white_static dst -j RETURN || return 1
+		append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -m set --match-set white_list dst -j RETURN || return 1
 		# {剩余流量} 代理
-		append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07
+		append_if_not_exists mangle -A SHADOWSOCKS_HOM -p udp -j TPROXY --on-port 3333 --tproxy-mark 0x07 || return 1
 	fi
 	
 	#-----------------------FOR FILTER UDP443---------------------
 	# 创建过滤 udp rule
-	ensure_chain filter SHADOWSOCKS
+	ensure_chain filter SHADOWSOCKS || return 1
 
 	# {ignlist}不过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS -p udp -m set --match-set ignlist dst -j RETURN
+	append_if_not_exists filter -A SHADOWSOCKS -p udp -m set --match-set ignlist dst -j RETURN || return 1
 
 	# 创建gfw模式udp filter rule
-	ensure_chain filter SHADOWSOCKS_GFW
-	# {white_list} 不过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_GFW -p udp -m set --match-set white_list dst -j RETURN
-	# {black_list} 过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_GFW -p udp -m set --match-set black_list dst -j REJECT --reject-with icmp-port-unreachable
+	ensure_chain filter SHADOWSOCKS_GFW || return 1
+	# {white_static / white_list} 不过滤udp 443
+	append_if_not_exists filter -A SHADOWSOCKS_GFW -p udp -m set --match-set white_static dst -j RETURN || return 1
+	append_if_not_exists filter -A SHADOWSOCKS_GFW -p udp -m set --match-set white_list dst -j RETURN || return 1
+	# {black_static / black_list} 过滤udp 443
+	append_if_not_exists filter -A SHADOWSOCKS_GFW -p udp -m set --match-set black_static dst -j REJECT --reject-with icmp-port-unreachable || return 1
+	append_if_not_exists filter -A SHADOWSOCKS_GFW -p udp -m set --match-set black_list dst -j REJECT --reject-with icmp-port-unreachable || return 1
 	# {gfwlist} 过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_GFW -p udp -m set --match-set gfwlist dst -j REJECT --reject-with icmp-port-unreachable
+	append_if_not_exists filter -A SHADOWSOCKS_GFW -p udp -m set --match-set gfwlist dst -j REJECT --reject-with icmp-port-unreachable || return 1
 	# {rotlist} 过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_GFW -p udp -m set --match-set router dst -j REJECT --reject-with icmp-port-unreachable
+	append_if_not_exists filter -A SHADOWSOCKS_GFW -p udp -m set --match-set router dst -j REJECT --reject-with icmp-port-unreachable || return 1
 
 	# 创建白名单模式udp filter rule
-	ensure_chain filter SHADOWSOCKS_CHN
-	# {black_list} 过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_CHN -p udp -m set --match-set black_list dst -j REJECT --reject-with icmp-port-unreachable
+	ensure_chain filter SHADOWSOCKS_CHN || return 1
+	# {black_static / black_list} 过滤udp 443
+	append_if_not_exists filter -A SHADOWSOCKS_CHN -p udp -m set --match-set black_static dst -j REJECT --reject-with icmp-port-unreachable || return 1
+	append_if_not_exists filter -A SHADOWSOCKS_CHN -p udp -m set --match-set black_list dst -j REJECT --reject-with icmp-port-unreachable || return 1
 	# {chnlist} 不过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_CHN -p udp -m set --match-set chnlist dst -j RETURN
+	append_if_not_exists filter -A SHADOWSOCKS_CHN -p udp -m set --match-set chnlist dst -j RETURN || return 1
 	# {chnroute} 不过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_CHN -p udp -m set --match-set chnroute dst -j RETURN
-	# {white_list} 不过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_CHN -p udp -m set --match-set white_list dst -j RETURN
+	append_if_not_exists filter -A SHADOWSOCKS_CHN -p udp -m set --match-set chnroute dst -j RETURN || return 1
+	# {white_static / white_list} 不过滤udp 443
+	append_if_not_exists filter -A SHADOWSOCKS_CHN -p udp -m set --match-set white_static dst -j RETURN || return 1
+	append_if_not_exists filter -A SHADOWSOCKS_CHN -p udp -m set --match-set white_list dst -j RETURN || return 1
 	# {剩余流量} 过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_CHN -p udp -j REJECT --reject-with icmp-port-unreachable
+	append_if_not_exists filter -A SHADOWSOCKS_CHN -p udp -j REJECT --reject-with icmp-port-unreachable || return 1
 
 	# 创建游戏模式udp rule
-	ensure_chain filter SHADOWSOCKS_GAM 
+	ensure_chain filter SHADOWSOCKS_GAM || return 1
 	# 游戏模式默认不过滤，创建一个空的就行
 
 	# 创建glo模式udp rule
-	ensure_chain filter SHADOWSOCKS_GLO
-	# {white_list} 不过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_GLO -p udp -m set --match-set white_list dst -j RETURN
+	ensure_chain filter SHADOWSOCKS_GLO || return 1
+	# {white_static / white_list} 不过滤udp 443
+	append_if_not_exists filter -A SHADOWSOCKS_GLO -p udp -m set --match-set white_static dst -j RETURN || return 1
+	append_if_not_exists filter -A SHADOWSOCKS_GLO -p udp -m set --match-set white_list dst -j RETURN || return 1
 	# {剩余流量} 过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_GLO -p udp -j REJECT --reject-with icmp-port-unreachable
+	append_if_not_exists filter -A SHADOWSOCKS_GLO -p udp -j REJECT --reject-with icmp-port-unreachable || return 1
 
 	# 创建回国模式udp filter rule
-	ensure_chain filter SHADOWSOCKS_HOM
-	# {black_list} 过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_HOM -p udp -m set --match-set black_list dst -j REJECT --reject-with icmp-port-unreachable
+	ensure_chain filter SHADOWSOCKS_HOM || return 1
+	# {black_static / black_list} 过滤udp 443
+	append_if_not_exists filter -A SHADOWSOCKS_HOM -p udp -m set --match-set black_static dst -j REJECT --reject-with icmp-port-unreachable || return 1
+	append_if_not_exists filter -A SHADOWSOCKS_HOM -p udp -m set --match-set black_list dst -j REJECT --reject-with icmp-port-unreachable || return 1
 	# {gfwlist} 不过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_HOM -p udp -m set --match-set gfwlist dst -j RETURN
-	# {white_list} 不过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_HOM -p udp -m set --match-set white_list dst -j RETURN
+	append_if_not_exists filter -A SHADOWSOCKS_HOM -p udp -m set --match-set gfwlist dst -j RETURN || return 1
+	# {white_static / white_list} 不过滤udp 443
+	append_if_not_exists filter -A SHADOWSOCKS_HOM -p udp -m set --match-set white_static dst -j RETURN || return 1
+	append_if_not_exists filter -A SHADOWSOCKS_HOM -p udp -m set --match-set white_list dst -j RETURN || return 1
 	# {剩余流量} 过滤udp 443
-	append_if_not_exists filter -A SHADOWSOCKS_HOM -p udp -j REJECT --reject-with icmp-port-unreachable
+	append_if_not_exists filter -A SHADOWSOCKS_HOM -p udp -j REJECT --reject-with icmp-port-unreachable || return 1
 	
 	#-------------------------------------------------------
 	# 局域网黑名单（不go proxy）/局域网黑名单（go proxy）
@@ -7494,32 +7596,41 @@ _start_ipv6_iptables() {
 	fi
 
 	ensure_chain6 nat SHADOWSOCKS6_GLO || return 1
+	append_if_not_exists6 nat -A SHADOWSOCKS6_GLO -p tcp -m set --match-set white_static6 dst -j RETURN || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_GLO -p tcp -m set --match-set white_list6 dst -j RETURN || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_GLO -p tcp -j REDIRECT --to-ports $(get_tproxy_port6) || return 1
 
 	ensure_chain6 nat SHADOWSOCKS6_GFW || return 1
+	append_if_not_exists6 nat -A SHADOWSOCKS6_GFW -p tcp -m set --match-set white_static6 dst -j RETURN || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_GFW -p tcp -m set --match-set white_list6 dst -j RETURN || return 1
+	append_if_not_exists6 nat -A SHADOWSOCKS6_GFW -p tcp -m set --match-set black_static6 dst -j REDIRECT --to-ports $(get_tproxy_port6) || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_GFW -p tcp -m set --match-set black_list6 dst -j REDIRECT --to-ports $(get_tproxy_port6) || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_GFW -p tcp -m set --match-set gfwlist6 dst -j REDIRECT --to-ports $(get_tproxy_port6) || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_GFW -p tcp -m set --match-set router6 dst -j REDIRECT --to-ports $(get_tproxy_port6) || return 1
 
 	ensure_chain6 nat SHADOWSOCKS6_CHN || return 1
+	append_if_not_exists6 nat -A SHADOWSOCKS6_CHN -p tcp -m set --match-set black_static6 dst -j REDIRECT --to-ports $(get_tproxy_port6) || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_CHN -p tcp -m set --match-set black_list6 dst -j REDIRECT --to-ports $(get_tproxy_port6) || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_CHN -p tcp -m set --match-set chnlist6 dst -j RETURN || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_CHN -p tcp -m set --match-set chnroute6 dst -j RETURN || return 1
+	append_if_not_exists6 nat -A SHADOWSOCKS6_CHN -p tcp -m set --match-set white_static6 dst -j RETURN || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_CHN -p tcp -m set --match-set white_list6 dst -j RETURN || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_CHN -p tcp -j REDIRECT --to-ports $(get_tproxy_port6) || return 1
 
 	ensure_chain6 nat SHADOWSOCKS6_GAM || return 1
+	append_if_not_exists6 nat -A SHADOWSOCKS6_GAM -p tcp -m set --match-set black_static6 dst -j REDIRECT --to-ports $(get_tproxy_port6) || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_GAM -p tcp -m set --match-set black_list6 dst -j REDIRECT --to-ports $(get_tproxy_port6) || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_GAM -p tcp -m set --match-set chnlist6 dst -j RETURN || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_GAM -p tcp -m set --match-set chnroute6 dst -j RETURN || return 1
+	append_if_not_exists6 nat -A SHADOWSOCKS6_GAM -p tcp -m set --match-set white_static6 dst -j RETURN || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_GAM -p tcp -m set --match-set white_list6 dst -j RETURN || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_GAM -p tcp -j REDIRECT --to-ports $(get_tproxy_port6) || return 1
 
 	ensure_chain6 nat SHADOWSOCKS6_HOM || return 1
+	append_if_not_exists6 nat -A SHADOWSOCKS6_HOM -p tcp -m set --match-set black_static6 dst -j REDIRECT --to-ports $(get_tproxy_port6) || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_HOM -p tcp -m set --match-set black_list6 dst -j REDIRECT --to-ports $(get_tproxy_port6) || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_HOM -p tcp -m set --match-set gfwlist6 dst -j RETURN || return 1
+	append_if_not_exists6 nat -A SHADOWSOCKS6_HOM -p tcp -m set --match-set white_static6 dst -j RETURN || return 1
 	append_if_not_exists6 nat -A SHADOWSOCKS6_HOM -p tcp -m set --match-set white_list6 dst -j RETURN || return 1
 
 	#-----------------------FOR TPROXY UDP---------------------
@@ -7538,7 +7649,9 @@ _start_ipv6_iptables() {
 
 	ensure_chain6 mangle SHADOWSOCKS6_GFW || return 1
 	if [ "${mangle}" = "1" ]; then
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GFW -p udp -m set --match-set white_static6 dst -j RETURN || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_GFW -p udp -m set --match-set white_list6 dst -j RETURN || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GFW -p udp -m set --match-set black_static6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_GFW -p udp -m set --match-set black_list6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_GFW -p udp -m set --match-set gfwlist6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_GFW -p udp -m set --match-set router6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
@@ -7546,32 +7659,39 @@ _start_ipv6_iptables() {
 
 	ensure_chain6 mangle SHADOWSOCKS6_CHN || return 1
 	if [ "${mangle}" = "1" ]; then
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -m set --match-set black_static6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -m set --match-set black_list6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -m set --match-set chnlist6 dst -j RETURN || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -m set --match-set chnroute6 dst -j RETURN || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -m set --match-set white_static6 dst -j RETURN || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -m set --match-set white_list6 dst -j RETURN || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_CHN -p udp -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
 	fi
 
 	ensure_chain6 mangle SHADOWSOCKS6_GAM || return 1
 	if [ "${mangle}" = "1" ]; then
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -m set --match-set black_static6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -m set --match-set black_list6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -m set --match-set chnlist6 dst -j RETURN || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -m set --match-set chnroute6 dst -j RETURN || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -m set --match-set white_static6 dst -j RETURN || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -m set --match-set white_list6 dst -j RETURN || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_GAM -p udp -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
 	fi
 
 	ensure_chain6 mangle SHADOWSOCKS6_GLO || return 1
 	if [ "${mangle}" = "1" ]; then
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_GLO -p udp -m set --match-set white_static6 dst -j RETURN || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_GLO -p udp -m set --match-set white_list6 dst -j RETURN || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_GLO -p udp -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
 	fi
 
 	ensure_chain6 mangle SHADOWSOCKS6_HOM || return 1
 	if [ "${mangle}" = "1" ]; then
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_HOM -p udp -m set --match-set black_static6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_HOM -p udp -m set --match-set black_list6 dst -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_HOM -p udp -m set --match-set gfwlist6 dst -j RETURN || return 1
+		append_if_not_exists6 mangle -A SHADOWSOCKS6_HOM -p udp -m set --match-set white_static6 dst -j RETURN || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_HOM -p udp -m set --match-set white_list6 dst -j RETURN || return 1
 		append_if_not_exists6 mangle -A SHADOWSOCKS6_HOM -p udp -j TPROXY --on-port $(get_tproxy_port6) --tproxy-mark 0x07 || return 1
 	fi
@@ -7581,21 +7701,26 @@ _start_ipv6_iptables() {
 	append_if_not_exists6 filter -A SHADOWSOCKS6 -p udp -m set --match-set ignlist6 dst -j RETURN || return 1
 
 	ensure_chain6 filter SHADOWSOCKS6_GFW || return 1
+	append_if_not_exists6 filter -A SHADOWSOCKS6_GFW -p udp -m set --match-set white_static6 dst -j RETURN || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_GFW -p udp -m set --match-set white_list6 dst -j RETURN || return 1
+	append_if_not_exists6 filter -A SHADOWSOCKS6_GFW -p udp -m set --match-set black_static6 dst -j REJECT --reject-with icmp6-port-unreachable || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_GFW -p udp -m set --match-set black_list6 dst -j REJECT --reject-with icmp6-port-unreachable || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_GFW -p udp -m set --match-set gfwlist6 dst -j REJECT --reject-with icmp6-port-unreachable || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_GFW -p udp -m set --match-set router6 dst -j REJECT --reject-with icmp6-port-unreachable || return 1
 
 	ensure_chain6 filter SHADOWSOCKS6_CHN || return 1
+	append_if_not_exists6 filter -A SHADOWSOCKS6_CHN -p udp -m set --match-set black_static6 dst -j REJECT --reject-with icmp6-port-unreachable || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_CHN -p udp -m set --match-set black_list6 dst -j REJECT --reject-with icmp6-port-unreachable || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_CHN -p udp -m set --match-set chnlist6 dst -j RETURN || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_CHN -p udp -m set --match-set chnroute6 dst -j RETURN || return 1
+	append_if_not_exists6 filter -A SHADOWSOCKS6_CHN -p udp -m set --match-set white_static6 dst -j RETURN || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_CHN -p udp -m set --match-set white_list6 dst -j RETURN || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_CHN -p udp -j REJECT --reject-with icmp6-port-unreachable || return 1
 
 	ensure_chain6 filter SHADOWSOCKS6_GAM || return 1
 
 	ensure_chain6 filter SHADOWSOCKS6_GLO || return 1
+	append_if_not_exists6 filter -A SHADOWSOCKS6_GLO -p udp -m set --match-set white_static6 dst -j RETURN || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_GLO -p udp -m set --match-set white_list6 dst -j RETURN || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_GLO -p udp -j REJECT --reject-with icmp6-port-unreachable || return 1
 
@@ -7603,8 +7728,10 @@ _start_ipv6_iptables() {
 	init_shunt_chain_v6 || return 1
 
 	ensure_chain6 filter SHADOWSOCKS6_HOM || return 1
+	append_if_not_exists6 filter -A SHADOWSOCKS6_HOM -p udp -m set --match-set black_static6 dst -j REJECT --reject-with icmp6-port-unreachable || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_HOM -p udp -m set --match-set black_list6 dst -j REJECT --reject-with icmp6-port-unreachable || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_HOM -p udp -m set --match-set gfwlist6 dst -j RETURN || return 1
+	append_if_not_exists6 filter -A SHADOWSOCKS6_HOM -p udp -m set --match-set white_static6 dst -j RETURN || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_HOM -p udp -m set --match-set white_list6 dst -j RETURN || return 1
 	append_if_not_exists6 filter -A SHADOWSOCKS6_HOM -p udp -j REJECT --reject-with icmp6-port-unreachable || return 1
 
