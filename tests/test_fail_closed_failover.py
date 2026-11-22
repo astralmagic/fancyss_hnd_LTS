@@ -253,6 +253,68 @@ apply_ss
             self.assertEqual(idx_load_ipt + 1, idx_verify)
             self.assertEqual(idx_verify + 1, idx_guard_off)
 
+    def test_client_acl_write_failure_stops_firewall_reload(self):
+        code = functions(SSCONFIG_PATH, "load_iptables", "_start_iptables", "lan_access_control",
+                         "apply_acl_udp_rule", "apply_quic_block", "apply_acl_quic_filter_rule",
+                         "start_ipv6_proxy_rules", "get_shunt_ingress_mode")
+        script = """
+FSS_FAIL_CLOSED_RESTART=1
+ss_basic_mode=7
+ss_acl_ip_1=192.0.2.3
+ss_acl_mode_1=5
+mangle=0
+prepare_anytls_merlinbox_compat() { :; }
+ifconfig() { echo br0; }
+ensure_chain() { :; }
+init_shunt_chain_v4() { :; }
+echo_date() { :; }
+get_acl_rule_indexes() { echo 1; }
+get_acl_ip_mark() { echo 1; }
+get_acl_source_rule4() { echo "-s $ss_acl_ip_1"; }
+get_acl_udp_flag() { echo 1; }
+get_acl_quic_flag() { echo 1; }
+get_jump_mode() { echo g; }
+get_action_chain() { [ "$1" = 5 ] && echo SHADOWSOCKS_GLO || echo RETURN; }
+get_mode_name() { echo "$1"; }
+resolve_acl_ports() { echo all; }
+resolve_acl_default_ports_raw() { echo all; }
+resolve_acl_default_mode() { echo 0; }
+factor() { :; }
+dbus() { :; }
+acl_proxy_supports_udp() { return 0; }
+iptables() {
+    case "$*" in
+        "-t nat -L PREROUTING"*) echo ready ;;
+        *"-A SHADOWSOCKS -s 192.0.2.3 -p tcp"*) [ "$fault" != tcp ] ;;
+        *"-A SHADOWSOCKS -s 192.0.2.3 -p udp --dport 443"*) [ "$fault" != udp ] ;;
+    esac
+}
+append_if_not_exists() {
+    case "$*" in
+        "filter -A SHADOWSOCKS -s 192.0.2.3 "*) [ "$fault" != filter ] ;;
+    esac
+}
+insert_if_not_exists() { :; }
+apply_webrtc_block4() { :; }
+apply_webrtc_block6() { :; }
+dns_hijack_control() { :; }
+ipv6_proxy_enabled() { return 0; }
+_start_ipv6_iptables() { [ "$fault" != v6 ]; }
+prepare_anytls_merlinbox_compat6() { :; }
+fallback_ipv6_proxy_to_ipv4() { echo DOWNGRADE; }
+close_in_five() { echo "HALT:$1"; }
+"""
+        for fault in ("tcp", "udp", "filter", "v6", "none"):
+            with self.subTest(fault=fault):
+                res = run_bash(code + script + f"\nfault={fault}\nload_iptables")
+                self.assertEqual(res.stderr, "")
+                if fault == "none":
+                    self.assertEqual(res.returncode, 0, res.stdout)
+                else:
+                    self.assertNotEqual(res.returncode, 0)
+                    self.assertIn("HALT:flag", res.stdout)
+                    self.assertNotIn("DOWNGRADE", res.stdout)
+
     def test_guard_install_failure_aborts_before_flush_and_covers_ipv6_full_udp_and_black_priority(self):
         # Review #1, #2, #3, #5 probes (incl. PR #43 #1 global ACL, #2 OUTPUT guard, #3 ingress verification)
         fn_code = functions(
@@ -454,6 +516,9 @@ remove_fail_closed_guard
             "reconcile_fail_closed_ipsets",
             "add_current_server_ip_to_ignlist",
         )
+        fn_code += "\n" + functions(ROOT / "fancyss/scripts/ss_node_common.sh",
+                                     "fss_list_node_server_ips", "fss_list_node_server_hosts",
+                                     "fss_list_node_server_hosts_v2_fast", "fss_pick_jq_bin")
         black_b64 = base64.b64encode(b"198.51.100.20\n2001:db8::20\n").decode()
         white_b64 = base64.b64encode(b"198.51.100.30\n2001:db8::30\n").decode()
 
@@ -465,6 +530,24 @@ remove_fail_closed_guard
             white_dom.write_text("apple.com\nexample-old.com\n")
             white_sig.write_text("old_sig:999\n")
 
+            nodes = root / "nodes"
+            entries = [{"type": "4", "server": "203.0.113.55"}, {"type": "9", "anytls_server": "2001:db8::55"},
+                       {"type": "5", "server": "node.example.org"},
+                       {"type": "4", "xray_use_json": "1", "xray_json": json.dumps({"outbounds": [
+                           {"protocol": "vless", "settings": {"address": "203.0.113.66", "port": 443}}]})}]
+            nodes.write_text("".join(f"fss_node_{i}={base64.b64encode(json.dumps(node).encode()).decode()}\n"
+                                     for i, node in enumerate(entries, 1)))
+            fn_code += f"""
+FSS_STATIC_WHITE_SNAP_V4='{root}/legacy4'
+FSS_STATIC_WHITE_SNAP_V6='{root}/legacy6'
+fss_detect_storage_schema() {{ echo 2; }}
+dbus() {{
+    case "$1:$2" in
+        get:fss_node_order) echo "$TEST_NODE_ORDER" ;;
+        list:fss_node_) cat '{nodes}' ;;
+    esac
+}}
+"""
             # Case 1: whitelist domain removed -> dynamic white_list* is reset via swap,
             # while dynamic black_list* is untouched (only black_static* is swapped!).
             white_dom.write_text("apple.com\n")
@@ -480,7 +563,7 @@ CURRENT_NODE_SERVER_RESOLVED_IP="203.0.113.10"
 FSS_WHITE_DOMAIN_FILE="{white_dom}"
 FSS_WHITE_DOMAIN_SIG_FILE="{white_sig}"
 base64_decode() {{ python3 -c 'import base64,sys; print(base64.b64decode(sys.stdin.read()).decode())'; }}
-dbus() {{ :; }}
+TEST_NODE_ORDER=1,2,3,4
 add_wan_bypass_ips_to_ignlist() {{ return 0; }}
 ipset() {{
     if [ "$1" = "-R" ]; then
@@ -520,15 +603,18 @@ reconcile_fail_closed_ipsets
             for dynamic_set in ("gfwlist", "gfwlist6", "chnlist", "chnlist6", "router", "router6"):
                 self.assertNotIn(f"flush {dynamic_set}", body)
 
+            self.assertIn("add white_static_fc_tmp 203.0.113.55", body)
+            self.assertIn("add white_static6_fc_tmp 2001:db8::55", body)
+            self.assertIn("add white_static_fc_tmp 203.0.113.66", body)
+            self.assertNotIn("node.example.org", body)
+
             # Case 2: whitelist domains unchanged -> dynamic white_list* is preserved (no swap).
             captured.write_text("")
-            res_same = run_bash(
-                fn_code
-                + f"""
+            same_script = fn_code + f"""
 ss_basic_mode=7
 FSS_WHITE_DOMAIN_FILE="{white_dom}"
 FSS_WHITE_DOMAIN_SIG_FILE="{white_sig}"
-dbus() {{ :; }}
+TEST_NODE_ORDER=2,3
 add_wan_bypass_ips_to_ignlist() {{ return 0; }}
 ipset() {{
     if [ "$1" = "-R" ]; then
@@ -539,8 +625,24 @@ ipset() {{
 }}
 reconcile_fail_closed_ipsets
 """
-            )
+            res_same = run_bash(same_script)
             self.assertEqual(res_same.returncode, 0, res_same.stderr)
+            self.assertNotIn("swap white_list ", captured.read_text())
+
+            self.assertNotIn("203.0.113.55", captured.read_text())
+            self.assertIn("add white_static6_fc_tmp 2001:db8::55", captured.read_text())
+
+            # Older hot switches polluted the dynamic set even with an unchanged domain signature.
+            legacy = root / "legacy4"
+            legacy.write_text("203.0.113.55\n")
+            failed = run_bash(same_script.replace("cat >", "return 1; cat >"))
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertTrue(legacy.exists())
+            migrated = run_bash(same_script)
+            self.assertEqual(migrated.returncode, 0, migrated.stderr)
+            self.assertIn("swap white_list white_list_dyn_tmp", captured.read_text())
+            self.assertFalse(legacy.exists())
+            self.assertEqual(run_bash(same_script).returncode, 0)
             self.assertNotIn("swap white_list ", captured.read_text())
 
             # Failure propagation probe: ipset -R fails -> reconcile_fail_closed_ipsets MUST return non-zero.
@@ -549,7 +651,7 @@ reconcile_fail_closed_ipsets
                 + f"""
 FSS_WHITE_DOMAIN_FILE="{white_dom}"
 FSS_WHITE_DOMAIN_SIG_FILE="{white_sig}"
-dbus() {{ :; }}
+TEST_NODE_ORDER=2,3
 ipset() {{ return 1; }}
 reconcile_fail_closed_ipsets
 """
@@ -964,21 +1066,13 @@ failover_action 2
             self.assertNotIn("ssconfig.sh -- restart", res.stdout)
 
     def test_hot_switch_default_node_preserves_webrtc_custom_rules_and_other_helpers(self):
-        # Review #1, #4, #5, #6 probes:
-        # - verifies production hot_runtime_managed_rule_tags is called (no fake function name)
-        # - must NOT call fss_shunt_cleanup_runtime (which stops other nodes' helpers)
-        # - must NOT delete fss_webrtc or fss_rule_*
-        # - must rollback and return non-zero if removing old fss_default fails
-        # - must call ssconfig.sh reload_dns_process when need_dns_reload is set and fail if it fails
-        self.assertIn("hot_runtime_managed_rule_tags()", HOT_RELOAD_SCRIPT.read_text())
-        self.assertNotIn("hot_list_managed_rule_tags", HOT_RELOAD_SCRIPT.read_text())
-
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            rm_log = root / "removed.log"
-            applied_payload = root / "applied_rules.json"
             rt_conf = root / "xray.json"
+            live_conf = root / "live.json"
+            calls = root / "calls"
             initial_conf = {
+                "outbounds": [{"tag": tag} for tag in ("direct", "proxy24", "proxy34", "proxy99", "api")],
                 "inbounds": [{"tag": "socks-in"}, {"tag": "dns_udp_1055"}, {"tag": "tproxy-in"}],
                 "routing": {
                     "rules": [
@@ -995,57 +1089,61 @@ failover_action 2
                     ]
                 },
             }
-            rt_conf.write_text(json.dumps(initial_conf))
-
-            hot_code = functions(HOT_RELOAD_SCRIPT, "hot_runtime_target_tag", "hot_switch_default_node")
+            hot_code = functions(HOT_RELOAD_SCRIPT, "hot_routes_match_runtime", "hot_replace_default_routes", "hot_switch_default_node")
             base_script = f"""
-HOT_STATE_DIR='{root}/hot_state'
-HOT_LOCK_FILE='{root}/hot.lock'
 HOT_NEED_DNS_RELOAD_FILE='{root}/need_dns'
 XRAY_RUNTIME_CONF='{rt_conf}'
-ss_basic_furl='http://www.google.com/generate_204'
-ss_basic_curl='http://connectivitycheck.platform.hicloud.com/generate_204'
-run() {{ "$@"; }}
-hot_ensure_state_dir() {{ mkdir -p "${{HOT_STATE_DIR}}"; }}
+XRAY_API_SERVER='127.0.0.1:10085'
+XAPI_TOOL_BIN=list_rules
+XRAY_BIN=xray
+hot_ensure_state_dir() {{ :; }}
 hot_log() {{ echo "LOG:$*"; }}
-hot_require_ready() {{ return 0; }}
+hot_require_ready() {{ :; }}
 hot_node_needs_helper() {{ return 1; }}
-fss_shunt_cleanup_runtime() {{ echo "CLEANUP_RUNTIME_FORBIDDEN"; }}
-hot_build_next_state() {{ echo "BUILD_NEXT_FORBIDDEN"; }}
-hot_ensure_single_target_loaded() {{ echo "ensure_single:$1"; return 0; }}
-hot_runtime_managed_rule_tags() {{ printf 'fss_status_probe\\nfss_webrtc\\nfss_rule_overlap_probe\\nfss_rule_overlap_dns\\nfss_rule_claude\\nfss_default\\n'; }}
-hot_runtime_inbound_rule_tags() {{ printf 'fss_in_socks\\nfss_in_dns_udp\\n'; }}
-hot_apply_ordered_rules_json() {{ cp -f "$1" '{applied_payload}'; return 0; }}
-fss_shunt_host_from_url() {{
-    case "$1" in
-    *google*) echo "www.google.com" ;;
-    *hicloud*) echo "connectivitycheck.platform.hicloud.com" ;;
-    esac
+hot_ensure_single_target_loaded() {{
+    [ "$fault" != dns ] || touch "$HOT_NEED_DNS_RELOAD_FILE"
 }}
-dbus() {{ echo "DBUS:$*"; }}
-killall() {{ echo "KILL_FORBIDDEN"; }}
+fss_shunt_store_default_node() {{ echo "DEFAULT:$1"; }}
+dbus() {{ :; }}
+run() {{ "$@"; }}
+sh() {{ echo "SH:$*"; return 1; }}
+mv() {{
+    case "$fault:$2" in disk:*/next.json) return 1 ;; esac
+    command mv "$@"
+}}
+list_rules() {{
+    [ "$1" = routing-list-rule ] && [ "$fault" != list ] || return 1
+    jq '{{rules: [.routing.rules[] | {{rule_tag:(.ruleTag // ""), tag:.outboundTag}}]}}' '{live_conf}'
+}}
+xray() {{
+    [ "$#" = 4 ] && [ "$1 $2 $3" = "api adrules --server=$XRAY_API_SERVER" ] || return 1
+    jq -r '.routing.rules[-1].outboundTag' "$4" >> '{calls}'
+    if [ "$(wc -l < '{calls}')" -eq 1 ]; then
+        [ "$fault" != rpc ] || return 1
+        [ "$fault" != ignored ] || return 0
+        cp "$4" '{live_conf}' && [ "$fault" != timeout ]
+    else
+        cp "$4" '{live_conf}'
+    fi
+}}
 {hot_code}
 """
-            # 1) P1 #5 probe: simulate exact Xray router first-match semantics (router.go:188-204) after ordered append + old delete!
-            res = run_bash(
-                base_script
-                + f"""
-hot_remove_rule() {{ echo "REMOVE:$1" >> '{rm_log}'; return 0; }}
-hot_switch_default_node 34
-"""
-            )
-            self.assertEqual(res.returncode, 0, res.stderr)
-            out = res.stdout
-            removed = [l.split(":", 1)[1] for l in rm_log.read_text().splitlines() if l.startswith("REMOVE:")]
-            self.assertIn("ensure_single:34", out)
-            self.assertNotIn("CLEANUP_RUNTIME_FORBIDDEN", out)
-            self.assertNotIn("BUILD_NEXT_FORBIDDEN", out)
-            self.assertNotIn("KILL_FORBIDDEN", out)
+            def switch(fault="", node=34):
+                return subprocess.run(["sh", "-c", base_script + f"\nfault={fault}\nhot_switch_default_node {node}"],
+                                      text=True, capture_output=True, timeout=15)
 
-            # Simulate live Xray router rule list: append new rules, then remove deleted old tags.
-            appended = json.loads(applied_payload.read_text())["routing"]["rules"]
-            live_rules = list(initial_conf["routing"]["rules"]) + appended
-            live_rules = [r for r in live_rules if r.get("ruleTag") not in set(removed)]
+            def reset():
+                rt_conf.write_text(json.dumps(initial_conf))
+                live_conf.write_bytes(rt_conf.read_bytes())
+                calls.write_text("")
+
+            reset()
+            res = switch()
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertIn("DEFAULT:34", res.stdout)
+            self.assertEqual(calls.read_text().splitlines(), ["proxy34"])
+            self.assertEqual(rt_conf.read_bytes(), live_conf.read_bytes())
+            live_rules = json.loads(live_conf.read_text())["routing"]["rules"]
 
             def xray_first_match(inbound="", domain="", ip="", port=""):
                 for r in live_rules:
@@ -1069,121 +1167,113 @@ hot_switch_default_node 34
             self.assertEqual(xray_first_match(inbound="tproxy-in", port="3478"), "proxy24")
             self.assertEqual(xray_first_match(inbound="tproxy-in", domain="other.example"), "proxy34")
 
-            # 1b) Drift probe: live rule missing from runtime conf -> cannot guarantee order -> MUST fail & fallback!
-            rt_conf.write_text(json.dumps(initial_conf))
-            res_drift = run_bash(
-                base_script
-                + """
-hot_runtime_managed_rule_tags() { printf 'fss_rule_missing_from_disk\\nfss_default\\n'; }
-hot_remove_rule() { return 0; }
-hot_switch_default_node 34
-"""
-            )
-            self.assertNotEqual(res_drift.returncode, 0)
+            self.assertEqual([r for r in live_rules if r.get("ruleTag", "").startswith("fss_rule_")],
+                             [r for r in initial_conf["routing"]["rules"] if r.get("ruleTag", "").startswith("fss_rule_")])
+            self.assertEqual(xray_first_match(inbound="api-in"), "api")
+            self.assertEqual(switch(node=24).returncode, 0)
+            self.assertEqual(calls.read_text().splitlines(), ["proxy34", "proxy24"])
 
-            # 1c) Missing fss_in_socks tag (legacy static binding) MUST fail & fallback.
-            rt_conf.write_text(json.dumps(initial_conf))
-            res_no_socks_tag = run_bash(
-                base_script
-                + """
-hot_runtime_inbound_rule_tags() { printf ''; }
-hot_remove_rule() { return 0; }
-hot_switch_default_node 34
-"""
-            )
-            self.assertNotEqual(res_no_socks_tag.returncode, 0)
+            for fault, expected_calls in (("disk", []), ("list", []), ("rpc", ["proxy34", "proxy24"]),
+                                          ("timeout", ["proxy34", "proxy24"]), ("ignored", ["proxy34", "proxy24"])):
+                with self.subTest(fault=fault):
+                    reset()
+                    result = switch(fault)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertNotIn("DEFAULT:", result.stdout)
+                    self.assertEqual(calls.read_text().splitlines(), expected_calls)
+                    for path in (rt_conf, live_conf):
+                        self.assertEqual(json.loads(path.read_text()), initial_conf)
 
-            # 2) Fault injection: deleting old fss_default fails -> must rollback ALL new rules and return non-zero.
-            rt_conf.write_text(json.dumps(initial_conf))
-            rm_log.write_text("")
-            res_rm_fail = run_bash(
-                base_script
-                + f"""
-hot_remove_rule() {{
-    echo "REMOVE:$1" >> '{rm_log}'
-    [ "$1" = "fss_default" ] && return 1
-    return 0
-}}
-hot_switch_default_node 34
-"""
-            )
-            self.assertNotEqual(res_rm_fail.returncode, 0)
-            rm_fail_lines = rm_log.read_text()
-            self.assertIn("REMOVE:fss_in_socks_s_", rm_fail_lines)
-            self.assertIn("REMOVE:fss_in_dns_udp_s_", rm_fail_lines)
-            self.assertIn("REMOVE:fss_default_s_", rm_fail_lines)
-            self.assertIn("REMOVE:fss_rule_claude_s_", rm_fail_lines)
+            for legacy in (False, True):
+                with self.subTest(legacy=legacy):
+                    reset()
+                    changed = json.loads(live_conf.read_text())
+                    changed["routing"]["rules"][0].pop("ruleTag")
+                    live_conf.write_text(json.dumps(changed))
+                    if legacy:
+                        rt_conf.write_bytes(live_conf.read_bytes())
+                    self.assertNotEqual(switch().returncode, 0)
+                    self.assertEqual(calls.read_text(), "")
 
-            # 3) Fault injection: need_dns_reload set and reload_dns_process fails -> must return non-zero.
-            rt_conf.write_text(json.dumps(initial_conf))
-            fake_ssconfig = root / "ssconfig.sh"
-            fake_ssconfig.write_text("#!/bin/sh\nexit 1\n")
-            fake_ssconfig.chmod(0o755)
-            sh_log = root / "sh_calls.log"
-            dns_script = base_script.replace("/koolshare/ss/ssconfig.sh", str(fake_ssconfig))
-            res_dns_fail = run_bash(
-                dns_script
-                + f"""
-hot_ensure_single_target_loaded() {{ touch "${{HOT_NEED_DNS_RELOAD_FILE}}"; return 0; }}
-hot_remove_rule() {{ return 0; }}
-sh() {{ echo "SH:$*" >> '{sh_log}'; return 1; }}
-hot_switch_default_node 34
-"""
-            )
-            self.assertNotEqual(res_dns_fail.returncode, 0)
-            self.assertIn("reload_dns_process", sh_log.read_text())
+            reset()
+            res = switch("dns")
+            self.assertNotEqual(res.returncode, 0)
+            self.assertIn("SH:/koolshare/ss/ssconfig.sh reload_dns_process", res.stdout)
+            self.assertNotIn("DEFAULT:34", res.stdout)
 
-            # 4) Review #1 probe: REAL hot_runtime_managed_rule_tags with failing API -> must fail BEFORE applying rules.
-            real_enum_code = functions(
-                HOT_RELOAD_SCRIPT,
-                "hot_list_all_runtime_rule_tags",
-                "hot_runtime_managed_rule_tags",
-                "hot_runtime_inbound_rule_tags",
-                "hot_runtime_target_tag",
-                "hot_switch_default_node",
-            )
-            res_api_fail = run_bash(
-                f"""
-HOT_STATE_DIR='{root}/hot_state'
-HOT_LOCK_FILE='{root}/hot.lock'
-HOT_NEED_DNS_RELOAD_FILE='{root}/need_dns'
-XRAY_RUNTIME_CONF='{rt_conf}'
-XAPI_TOOL_BIN='xapi-tool'
-XRAY_API_SERVER='127.0.0.1:10085'
-hot_ensure_state_dir() {{ mkdir -p "${{HOT_STATE_DIR}}"; }}
-hot_log() {{ echo "LOG:$*"; }}
-hot_require_ready() {{ return 0; }}
-hot_node_needs_helper() {{ return 1; }}
-hot_ensure_single_target_loaded() {{ return 0; }}
-run() {{ return 1; }}
-hot_apply_ordered_rules_json() {{ echo "APPLY_FORBIDDEN"; return 0; }}
-{real_enum_code}
-hot_switch_default_node 34
-"""
-            )
-            self.assertNotEqual(res_api_fail.returncode, 0)
-            self.assertNotIn("APPLY_FORBIDDEN", res_api_fail.stdout)
-
-            # 5) Review #3 probe: hot_bypass_new_outbound_server adds node IP to ignlist & white_list + records snapshot.
-            bypass_code = functions(HOT_RELOAD_SCRIPT, "hot_bypass_new_outbound_server")
-            ob_file = root / "ob.json"
-            ob_file.write_text('{"settings":{"vnext":[{"address":"203.0.113.55"}]}}')
-            ipset_log = root / "bypass_ipset.log"
-            white_snap = root / "snap_white.v4"
-            res_bypass = run_bash(
-                f"""
-FSS_STATIC_WHITE_SNAP_V4='{white_snap}'
+    def test_numeric_outbound_uses_only_static_sets(self):
+        code = functions(HOT_RELOAD_SCRIPT, "hot_bypass_new_outbound_server")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ob = root / "outbound.json"
+            for addr, suffix in (("203.0.113.55", ""), ("2001:db8::55", "6")):
+                with self.subTest(addr=addr):
+                    ob.write_text(json.dumps({"settings": {"vnext": [{"address": addr}]}}))
+                    script = code + f"""
+FSS_STATIC_WHITE_SNAP_V4='{root}/legacy4'
+FSS_STATIC_WHITE_SNAP_V6='{root}/legacy6'
 run() {{ "$@"; }}
-ipset() {{ echo "ipset:$*" >> '{ipset_log}'; return 0; }}
-{bypass_code}
-hot_bypass_new_outbound_server '{ob_file}'
+: > '{root}/ops'
+ipset() {{ echo "$*" >> '{root}/ops'; [ "$3" != "$fail_set" ]; }}
+hot_bypass_new_outbound_server '{ob}'
 """
-            )
-            self.assertEqual(res_bypass.returncode, 0, res_bypass.stderr)
-            bypass_ops = ipset_log.read_text()
-            self.assertIn("ipset:-! add ignlist 203.0.113.55", bypass_ops)
-            self.assertIn("ipset:-! add white_list 203.0.113.55", bypass_ops)
-            self.assertIn("203.0.113.55", white_snap.read_text())
+                    res = run_bash(script)
+                    self.assertEqual(res.returncode, 0, res.stderr)
+                    self.assertEqual((root / "ops").read_text().splitlines(), [f"-! add ignlist{suffix} {addr}",
+                                                               f"-! add white_static{suffix} {addr}"])
+                    self.assertFalse((root / "legacy4").exists())
+                    self.assertFalse((root / "legacy6").exists())
+                    self.assertNotEqual(run_bash(f"fail_set=white_static{suffix}\n" + script).returncode, 0)
+
+    def test_mode7_fallback_reloads_saved_default(self):
+        store = functions(SHUNT_SCRIPT, "fss_shunt_store_default_node", "fss_shunt_get_configured_default_target")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hot = root / "hot"
+            hot.touch(mode=0o755)
+            harness = self._status_harness(root).replace("/koolshare/scripts/ss_shunt_hot_reload.sh", str(hot))
+            for light_ok, store_ok in ((True, True), (False, True), (False, False)):
+                with self.subTest(light_ok=light_ok, store_ok=store_ok):
+                    (root / "default").write_text("24")
+                    (root / "identity").write_text("id-24")
+                    res = run_bash(harness + store + f"""
+FSS_SHUNT_DEFAULT_NODE_DBUS_KEY=default
+FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY=identity
+fss_shunt_target_is_proxy_node() {{ [ "$1" = 34 ]; }}
+fss_shunt_target_is_direct() {{ return 1; }}
+fss_shunt_target_is_reject() {{ return 1; }}
+fss_get_node_identity_by_id() {{ echo "id-$1"; }}
+dbus() {{
+    case "$1:$2" in
+        get:ss_basic_mode) echo 7 ;;
+        set:default=34) [ "{int(store_ok)}" = 1 ] && echo 34 > '{root}/default' ;;
+        get:*) cat '{root}'/"$2" ;;
+        set:*) echo "${{2#*=}}" > '{root}'/"${{2%%=*}}" ;;
+    esac
+}}
+sh() {{
+    [ "$1" != '{hot}' ] || return 1
+    unset ss_basic_shunt_default_node
+    echo "LIGHT:$(fss_shunt_get_configured_default_target)" >> '{root}/trace'
+    return {0 if light_ok else 1}
+}}
+run() {{
+    unset ss_basic_shunt_default_node
+    echo "FULL:$(fss_shunt_get_configured_default_target)" >> '{root}/trace'
+}}
+: > '{root}/trace'
+failover_exec_recovery switch 34
+""")
+                    if not store_ok:
+                        self.assertNotEqual(res.returncode, 0)
+                        self.assertEqual((root / "trace").read_text(), "")
+                        self.assertEqual((root / "identity").read_text().strip(), "id-24")
+                        self.assertEqual((root / "default").read_text().strip(), "24")
+                        continue
+                    self.assertEqual(res.returncode, 0, res.stderr)
+                    self.assertEqual((root / "identity").read_text().strip(), "id-34")
+                    self.assertEqual((root / "trace").read_text().splitlines(),
+                                     ["LIGHT:34"] if light_ok else ["LIGHT:34", "FULL:34"])
 
     def test_reload_proxy_only_failure_falls_back_to_fail_closed_restart(self):
         with tempfile.TemporaryDirectory() as tmp:

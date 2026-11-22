@@ -3260,15 +3260,15 @@ fss_extract_xray_like_server_field_from_json_text() {
 		| ($ob.protocol // "") as $protocol
 		| if ($protocol == "vmess" or $protocol == "vless") then
 			if $field == "host" then
-				($ob.settings.vnext[0].address // "")
+				($ob.settings.vnext[0].address // $ob.settings.address // "")
 			else
-				(($ob.settings.vnext[0].port // "") | tostring)
+				(($ob.settings.vnext[0].port // $ob.settings.port // "") | tostring)
 			end
 		elif ($protocol == "socks" or $protocol == "shadowsocks" or $protocol == "trojan") then
 			if $field == "host" then
-				($ob.settings.servers[0].address // "")
+				($ob.settings.servers[0].address // $ob.settings.address // "")
 			else
-				(($ob.settings.servers[0].port // "") | tostring)
+				(($ob.settings.servers[0].port // $ob.settings.port // "") | tostring)
 			end
 		else
 			""
@@ -3305,13 +3305,13 @@ fss_node_json_server_host_port() {
 			| ($ob.protocol // "") as $protocol
 			| if ($protocol == "vmess" or $protocol == "vless") then
 				[
-					text($ob.settings.vnext[0].address),
-					text($ob.settings.vnext[0].port)
+					text($ob.settings.vnext[0].address // $ob.settings.address),
+					text($ob.settings.vnext[0].port // $ob.settings.port)
 				]
 			elif ($protocol == "socks" or $protocol == "shadowsocks" or $protocol == "trojan") then
 				[
-					text($ob.settings.servers[0].address),
-					text($ob.settings.servers[0].port)
+					text($ob.settings.servers[0].address // $ob.settings.address),
+					text($ob.settings.servers[0].port // $ob.settings.port)
 				]
 			else
 				["", ""]
@@ -3460,7 +3460,7 @@ fss_pick_jq_bin() {
 	command -v jq 2>/dev/null
 }
 
-fss_list_node_server_domains_slow() {
+fss_list_node_server_hosts_slow() {
 	local node_id="" host="" port=""
 	while IFS= read -r node_id
 	do
@@ -3472,31 +3472,17 @@ fss_list_node_server_domains_slow() {
 		$(fss_get_node_server_host_port "${node_id}")
 		EOF
 		[ -n "${host}" ] || continue
-		[ -n "$(fss_is_domain_name "${host}")" ] || continue
 		printf '%s\n' "${host}"
 	done <<-EOF
 	$(fss_list_node_ids)
 	EOF
 }
 
-fss_list_node_server_domains_v2_fast() {
-	local jq_bin="" line="" key="" value=""
-
-	jq_bin=$(fss_pick_jq_bin)
-	[ -n "${jq_bin}" ] || return 1
-
-	dbus list fss_node_ 2>/dev/null | while IFS= read -r line
-	do
-		[ -n "${line}" ] || continue
-		key=${line%%=*}
-		value=${line#*=}
-		case "${key}" in
-		fss_node_[0-9]*)
-			fss_b64_decode "${value}" 2>/dev/null || true
-			printf '\n'
-			;;
-		esac
-	done | "${jq_bin}" -Rnr '
+fss_list_node_server_hosts_v2_fast() {
+	local jq_bin="" order=""
+	jq_bin="$(fss_pick_jq_bin)" || return 1
+	order="$(dbus get fss_node_order)" || return 1
+	dbus list fss_node_ 2>/dev/null | "${jq_bin}" -Rnr --arg order "${order}" '
 		def parse_embedded_json:
 			if type != "string" or . == "" then
 				{}
@@ -3507,9 +3493,9 @@ fss_list_node_server_domains_v2_fast() {
 			($root.outbound // ($root.outbounds[0] // {})) as $ob
 			| ($ob.protocol // "") as $protocol
 			| if ($protocol == "vmess" or $protocol == "vless") then
-				($ob.settings.vnext[0].address // "")
+				($ob.settings.vnext[0].address // $ob.settings.address // "")
 			elif ($protocol == "socks" or $protocol == "shadowsocks" or $protocol == "trojan") then
-				($ob.settings.servers[0].address // "")
+				($ob.settings.servers[0].address // $ob.settings.address // "")
 			else
 				""
 			end;
@@ -3521,8 +3507,9 @@ fss_list_node_server_domains_v2_fast() {
 			else
 				sub(":.*$"; "")
 			end;
-		inputs
-		| (try fromjson catch null)
+		($order | split(",") | map({key: ., value: true}) | from_entries) as $ids
+		| inputs | capture("^fss_node_(?<id>[0-9]+)=(?<blob>.+)$")
+		| select($ids[.id]) | (.blob | try (@base64d | fromjson) catch null)
 		| select(type == "object")
 		| (.type // "") as $type
 		| if ($type == "0" or $type == "1" or $type == "5") then
@@ -3550,19 +3537,26 @@ fss_list_node_server_domains_v2_fast() {
 		else
 			(.server // "")
 		end
-	' 2>/dev/null | while IFS= read -r host
-	do
-		[ -n "${host}" ] || continue
-		[ -n "$(fss_is_domain_name "${host}")" ] || continue
-		printf '%s\n' "${host}"
-	done
+	' 2>/dev/null
+}
+
+fss_list_node_server_hosts() {
+	if [ "$(fss_detect_storage_schema)" = "2" ]; then
+		fss_list_node_server_hosts_v2_fast && return 0
+	fi
+	fss_list_node_server_hosts_slow
 }
 
 fss_list_node_server_domains() {
-	if [ "$(fss_detect_storage_schema)" = "2" ]; then
-		fss_list_node_server_domains_v2_fast && return 0
-	fi
-	fss_list_node_server_domains_slow
+	local host=""
+	fss_list_node_server_hosts | while IFS= read -r host; do
+		fss_is_domain_name "${host}"
+	done
+	return 0
+}
+
+fss_list_node_server_ips() {
+	fss_list_node_server_hosts | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$|^[[:xdigit:].]*:[[:xdigit:]:.]*$' | sort -u
 }
 
 fss_list_node_airport_domains() {

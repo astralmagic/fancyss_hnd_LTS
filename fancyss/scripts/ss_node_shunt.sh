@@ -807,6 +807,20 @@ fss_shunt_current_node_supported() {
 	fss_shunt_node_supported "${node_id}"
 }
 
+fss_shunt_store_default_node() {
+	local node_id="$1"
+	local identity="" previous_identity=""
+	fss_shunt_target_is_proxy_node "${node_id}" || return 1
+	identity="$(fss_get_node_identity_by_id "${node_id}")" || identity=""
+	previous_identity="$(dbus get "${FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY}")"
+	dbus set "${FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY}=${identity}" || return 1
+	if ! dbus set "${FSS_SHUNT_DEFAULT_NODE_DBUS_KEY}=${node_id}"; then
+		dbus set "${FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY}=${previous_identity}"
+		return 1
+	fi
+	ss_basic_shunt_default_node="${node_id}"
+}
+
 fss_shunt_get_configured_default_target() {
 	local target="${ss_basic_shunt_default_node}"
 	local target_identity=""

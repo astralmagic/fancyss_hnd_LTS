@@ -129,19 +129,11 @@ hot_bypass_new_outbound_server() {
 		;;
 	esac
 	if printf '%s' "${addr}" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
-		ipset -! add ignlist "${addr}" >/dev/null 2>&1 || true
-		ipset -! add white_list "${addr}" >/dev/null 2>&1 || true
-		local white_snap_v4="${FSS_STATIC_WHITE_SNAP_V4:-/tmp/fss_static_white_ips.v4}"
-		if [ ! -f "${white_snap_v4}" ] || ! grep -Fxq "${addr}" "${white_snap_v4}" 2>/dev/null; then
-			printf '%s\n' "${addr}" >> "${white_snap_v4}" 2>/dev/null || true
-		fi
+		ipset -! add ignlist "${addr}" >/dev/null 2>&1 || return 1
+		ipset -! add white_static "${addr}" >/dev/null 2>&1 || return 1
 	elif printf '%s' "${addr}" | grep -Fq ':'; then
-		ipset -! add ignlist6 "${addr}" >/dev/null 2>&1 || true
-		ipset -! add white_list6 "${addr}" >/dev/null 2>&1 || true
-		local white_snap_v6="${FSS_STATIC_WHITE_SNAP_V6:-/tmp/fss_static_white_ips.v6}"
-		if [ ! -f "${white_snap_v6}" ] || ! grep -Fxq "${addr}" "${white_snap_v6}" 2>/dev/null; then
-			printf '%s\n' "${addr}" >> "${white_snap_v6}" 2>/dev/null || true
-		fi
+		ipset -! add ignlist6 "${addr}" >/dev/null 2>&1 || return 1
+		ipset -! add white_static6 "${addr}" >/dev/null 2>&1 || return 1
 	else
 		if [ ! -f "${node_domains_file}" ] || ! grep -Fxq "${addr}" "${node_domains_file}" 2>/dev/null; then
 			printf '%s\n' "${addr}" >> "${node_domains_file}" 2>/dev/null || true
@@ -260,7 +252,11 @@ hot_ensure_targets_loaded() {
 			rm -f "${missing_ids_file}" >/dev/null 2>&1 || true
 			return 1
 		fi
-		hot_bypass_new_outbound_server "${outbound_file}"
+		if ! hot_bypass_new_outbound_server "${outbound_file}"; then
+			for added_tag in ${added_tags}; do hot_remove_outbound "${added_tag}" >/dev/null 2>&1 || true; done
+			rm -f "${missing_ids_file}"
+			return 1
+		fi
 		hot_log "动态注入新出站：proxy${node_id}"
 		if ! hot_add_outbound_from_file "${node_id}" "${outbound_file}"; then
 			hot_log "动态注入出站 proxy${node_id} 失败，回滚本次新增出站。"
@@ -396,49 +392,6 @@ hot_runtime_managed_rule_tags() {
 	local all_tags=""
 	all_tags="$(hot_list_all_runtime_rule_tags)" || return 1
 	printf '%s\n' "${all_tags}" | awk '/^fss_/ && !/^fss_in_/'
-}
-
-hot_runtime_inbound_rule_tags() {
-	local all_tags=""
-	all_tags="$(hot_list_all_runtime_rule_tags)" || return 1
-	printf '%s\n' "${all_tags}" | awk '/^fss_in_/'
-}
-
-hot_apply_ordered_rules_json() {
-	local adrules_file="$1"
-	[ -x "${XRAY_BIN}" ] || return 1
-	[ -s "${adrules_file}" ] || return 1
-	run "${XRAY_BIN}" api adrules --server="${XRAY_API_SERVER}" --append "${adrules_file}" >/dev/null 2>&1
-}
-
-hot_add_inbound_rule() {
-	local rule_tag="$1"
-	local target_id="$2"
-	local inbound_tags_json="$3"
-	local adrules_file="${HOT_STATE_DIR}/.adrules_${rule_tag}.$$.json"
-	local target_tag="$(hot_runtime_target_tag "${target_id}")"
-	local ret=0
-
-	[ -x "${XRAY_BIN}" ] || return 1
-	[ -n "${rule_tag}" ] && [ -n "${inbound_tags_json}" ] || return 1
-	cat > "${adrules_file}" <<-EOF
-	{
-	  "routing": {
-	    "rules": [
-	      {
-	        "type": "field",
-	        "ruleTag": "${rule_tag}",
-	        "inboundTag": ${inbound_tags_json},
-	        "outboundTag": "${target_tag}"
-	      }
-	    ]
-	  }
-	}
-	EOF
-	hot_apply_ordered_rules_json "${adrules_file}"
-	ret=$?
-	rm -f "${adrules_file}" >/dev/null 2>&1 || true
-	return "${ret}"
 }
 
 hot_remove_runtime_rules_except() {
@@ -596,13 +549,6 @@ hot_reload_apply() {
 	local prev_proxy_sig=""
 	local next_proxy_sig=""
 
-	[ -f "${HOT_LOCK_FILE}" ] && {
-		hot_log "已有热重载任务在执行。"
-		return 1
-	}
-	touch "${HOT_LOCK_FILE}" || return 1
-	trap 'rm -f "${HOT_LOCK_FILE}" "${HOT_NEXT_FILE}" "${HOT_STAGE_FILE}" >/dev/null 2>&1' EXIT INT TERM
-
 	rm -f "${HOT_NEED_DNS_RELOAD_FILE}" >/dev/null 2>&1 || true
 	hot_require_ready || return 1
 	hot_log "开始生成目标规则状态。"
@@ -657,13 +603,6 @@ hot_reload_seed() {
 }
 
 hot_reload_revert() {
-	[ -f "${HOT_LOCK_FILE}" ] && {
-		hot_log "已有热重载任务在执行。"
-		return 1
-	}
-	touch "${HOT_LOCK_FILE}" || return 1
-	trap 'rm -f "${HOT_LOCK_FILE}" "${HOT_NEXT_FILE}" >/dev/null 2>&1' EXIT INT TERM
-
 	hot_require_ready || return 1
 	[ -s "${HOT_BASE_FILE}" ] || {
 		hot_log "缺少热重载基线，无法回滚。"
@@ -726,7 +665,7 @@ hot_ensure_single_target_loaded() {
 	if hot_node_needs_helper "${target_id}"; then
 		return 1
 	fi
-	hot_bypass_new_outbound_server "${outbound_file}"
+	hot_bypass_new_outbound_server "${outbound_file}" || return 1
 	if ! hot_add_outbound_from_file "${target_id}" "${outbound_file}"; then
 		return 1
 	fi
@@ -737,220 +676,101 @@ hot_ensure_single_target_loaded() {
 	return 0
 }
 
+hot_routes_match_runtime() {
+	local config="$1" live="$2"
+	run "${XAPI_TOOL_BIN}" routing-list-rule --server "${XRAY_API_SERVER}" > "${live}" || return 1
+	run jq -e --slurpfile live "${live}" '
+		(.routing.rules | map({rule_tag: (.ruleTag // ""), tag: (.outboundTag // "")})) == $live[0].rules
+	' "${config}" >/dev/null
+}
+
+hot_replace_default_routes() {
+	# 在子 shell 中管理私有事务目录；配置备份含节点凭据。
+	(
+		umask 077
+		target="$1"
+		work="$(mktemp -d "${XRAY_RUNTIME_CONF}.switch.XXXXXX")" || exit 1
+		trap 'rm -rf "${work}"' EXIT
+		trap 'exit 1' INT TERM
+		cp -p "${XRAY_RUNTIME_CONF}" "${work}/previous.json" || exit 1
+		# API 只暴露标签和出站。顺序或内容与磁盘不符时，交由重载重新生成。
+		hot_routes_match_runtime "${work}/previous.json" "${work}/live.json" || exit 1
+		run jq -e --arg target "${target}" '
+			def tagged($name): (.ruleTag // "") | test("^fss_" + $name + "(_s_[0-9_]+)?$");
+			.routing.rules as $rules
+			| select(any(.outbounds[]; .tag == $target))
+			| ($rules | map(select(tagged("in_socks")))) as $socks
+			| ($rules | map(select(tagged("in_dns_udp")))) as $dns
+			| ($rules | map(select(tagged("status_probe")))) as $probe
+			| ($rules | map(select(tagged("default")))) as $default
+			| select(($socks | length) == 1 and $socks[0].inboundTag == ["socks-in"] and ($default | length) == 1)
+			| select(([.inbounds[]?.tag | strings | select(startswith("dns_udp_"))] | sort)
+			         == ([$dns[].inboundTag[]] | sort))
+			| ($socks + $dns + $probe + $default) as $changed
+			| ($rules - $changed) as $other
+			| ($other | map(select(.inboundTag == ["api-in"]))) as $api
+			| .routing.rules = ($api + (($socks + $dns + $probe) | map(.outboundTag = $target))
+			                    + ($other - $api) + ($default | map(.outboundTag = $target)))
+		' "${work}/previous.json" > "${work}/next.json" || exit 1
+
+		assets="$(fss_shunt_xray_asset_dir 2>/dev/null)" || assets=""
+		apply_routes() {
+			set -- "${XRAY_BIN}" api adrules --server="${XRAY_API_SERVER}" "${XRAY_RUNTIME_CONF}"
+			[ -z "${assets}" ] || set -- env "xray.location.asset=${assets}" "$@"
+			run "$@" && hot_routes_match_runtime "${XRAY_RUNTIME_CONF}" "${work}/live.json"
+		}
+		# 同一文件系统内先原子写盘。直到运行态回读成功，都保留整表回滚入口。
+		rollback_routes() {
+			trap '' INT TERM
+			if [ ! -f "${work}/next.json" ]; then
+				if ! mv -f "${work}/previous.json" "${XRAY_RUNTIME_CONF}"; then
+					hot_log "恢复磁盘配置失败，备份保留在 ${work}/previous.json。"
+					return 1
+				fi
+				if ! apply_routes; then
+					hot_log "无法确认 Xray 已恢复旧路由表，交由代理重载恢复。"
+				fi
+			fi
+			rm -rf "${work}"
+		}
+		trap 'rollback_routes' EXIT
+		mv -f "${work}/next.json" "${XRAY_RUNTIME_CONF}" || exit 1
+		apply_routes || exit 1
+		trap 'rm -rf "${work}"' EXIT
+	)
+}
+
 hot_switch_default_node() {
 	local target_node_id="$1"
-	local generation=""
-	local target_tag=""
-	local new_socks_tag=""
-	local new_dns_udp_tag=""
-	local new_default_tag=""
-	local new_probe_tag=""
-	local old_tag=""
-	local existing_tags=""
-	local inbound_tags=""
-	local dns_udp_inbounds_json=""
-	local probe_domains_json="[]"
-	local host=""
-	local has_dns_udp="0"
-	local has_probe="0"
-	local preserved_tags_json="[]"
-	local preserved_rules_json="[]"
-	local preserved_expected_count=0
-	local preserved_found_count=0
-	local adrules_file=""
-	local added_tags=""
-	local tmp_conf=""
-
-	[ -n "${target_node_id}" ] || {
-		hot_log "缺少目标默认节点 ID，无法热切换。"
-		return 1
-	}
-	[ -f "${HOT_LOCK_FILE}" ] && {
-		hot_log "已有热重载任务在执行。"
-		return 1
-	}
+	case "${target_node_id}" in ''|*[!0-9]*) return 1 ;; esac
 	hot_ensure_state_dir || return 1
-	touch "${HOT_LOCK_FILE}" || return 1
-	trap 'rm -f "${HOT_LOCK_FILE}" "${adrules_file}" "${tmp_conf}" >/dev/null 2>&1' EXIT INT TERM
-
-	rm -f "${HOT_NEED_DNS_RELOAD_FILE}" >/dev/null 2>&1 || true
+	rm -f "${HOT_NEED_DNS_RELOAD_FILE}" || return 1
 	hot_require_ready || return 1
 	if hot_node_needs_helper "${target_node_id}"; then
-		hot_log "目标默认节点 ${target_node_id} 依赖外部 helper 进程，回退重启路径。"
+		hot_log "目标节点依赖外部 helper，回退重载。"
 		return 1
 	fi
-
-	# 严禁调用 hot_build_next_state / fss_shunt_cleanup_runtime，避免执行其他分流节点的 *_stop.sh！
-	hot_ensure_single_target_loaded "${target_node_id}" || {
-		hot_log "热切换默认节点时注入出站 proxy${target_node_id} 失败。"
-		return 1
-	}
-
-	generation="$(date +%s)_$$"
-	target_tag="$(hot_runtime_target_tag "${target_node_id}")"
-	new_socks_tag="fss_in_socks_s_${generation}"
-	new_dns_udp_tag="fss_in_dns_udp_s_${generation}"
-	new_default_tag="fss_default_s_${generation}"
-	new_probe_tag="fss_status_probe_s_${generation}"
-
-	existing_tags="$(hot_runtime_managed_rule_tags)" || {
-		hot_log "热切换默认节点枚举当前运行规则失败，中止并回退。"
-		return 1
-	}
-	inbound_tags="$(hot_runtime_inbound_rule_tags)" || {
-		hot_log "热切换默认节点枚举入口绑定规则失败，中止并回退。"
-		return 1
-	}
-
-	# 必须能通过 API 同步更新 socks-in（承载 23456 健康探测与 ChinaDNS-NG）及 dns_udp_* 入口绑定；
-	# 若运行中的 xray 缺少对应 ruleTag，立即回退 reload_proxy_only！
-	if ! printf '%s\n' "${inbound_tags}" | grep -Eq '^fss_in_socks($|_s_)'; then
-		hot_log "运行中的 xray 缺少可热更新的 fss_in_socks 入口规则标签，回退轻量重载以同步健康探测出站。"
+	hot_ensure_single_target_loaded "${target_node_id}" || return 1
+	if ! hot_replace_default_routes "proxy${target_node_id}"; then
+		hot_log "整表切换或配置持久化失败，回退重载。"
 		return 1
 	fi
-
-	[ -f "${XRAY_RUNTIME_CONF}" ] || {
-		hot_log "缺少运行时配置 ${XRAY_RUNTIME_CONF}，无法保序重建规则，回退轻量重载。"
-		return 1
-	}
-	dns_udp_inbounds_json="$(run jq -c '[.inbounds[]? | .tag // empty | select(startswith("dns_udp_"))] | unique' "${XRAY_RUNTIME_CONF}" 2>/dev/null || echo '[]')"
-	if [ -n "${dns_udp_inbounds_json}" ] && [ "${dns_udp_inbounds_json}" != "[]" ]; then
-		if ! printf '%s\n' "${inbound_tags}" | grep -Eq '^fss_in_dns_udp($|_s_)'; then
-			hot_log "运行中的 xray 缺少可热更新的 fss_in_dns_udp 入口规则标签，回退轻量重载以同步 DNS 中继出站。"
-			return 1
-		fi
-		has_dns_udp="1"
-	fi
-
-	# 提取所有需要保留并置于入口规则之后的现存规则（fss_webrtc* 与自定义 fss_rule_*），
-	# 必须 100% 在运行时配置中找齐，确保新入口规则严格排在所有自定义规则之前；任一条缺失立即回退！
-	preserved_tags_json="$(
-		printf '%s\n' "${existing_tags}" | awk '!/^$/ && !/^fss_default($|_s_)/ && !/^fss_status_probe($|_s_)/' | run jq -R . | run jq -s -c '.' 2>/dev/null
-	)" || {
-		hot_log "构造保留规则列表失败，回退轻量重载。"
-		return 1
-	}
-	preserved_expected_count="$(printf '%s' "${preserved_tags_json}" | run jq -r 'length' 2>/dev/null || echo 0)"
-	if [ "${preserved_expected_count}" -gt 0 ]; then
-		preserved_rules_json="$(
-			run jq -c --argjson want "${preserved_tags_json}" --arg gen "${generation}" '
-				[
-					(.routing.rules // [])[]
-					| select((.ruleTag // "") as $t | ($want | index($t)) != null)
-					| .ruleTag = ((.ruleTag | sub("_s_[0-9_]+$"; "")) + "_s_" + $gen)
-				]
-			' "${XRAY_RUNTIME_CONF}" 2>/dev/null
-		)" || {
-			hot_log "提取现存自定义/WebRTC 规则失败，无法保证规则匹配顺序，回退轻量重载。"
-			return 1
-		}
-		preserved_found_count="$(printf '%s' "${preserved_rules_json}" | run jq -r 'length' 2>/dev/null || echo 0)"
-		if [ "${preserved_found_count}" != "${preserved_expected_count}" ]; then
-			hot_log "运行时自定义规则与磁盘配置存在差异（expected=${preserved_expected_count}, found=${preserved_found_count}），无法保证入口优先级顺序，回退轻量重载。"
-			return 1
-		fi
-	fi
-
-	# 准备 fss_status_probe 域名数组
-	if printf '%s\n' "${existing_tags}" | grep -Eq '^fss_status_probe($|_s_)'; then
-		has_probe="1"
-		probe_domains_json="$(
-			{
-				for url in "${ss_basic_furl}" "${ss_basic_curl}"; do
-					host="$(fss_shunt_host_from_url "${url}" 2>/dev/null)" || host=""
-					[ -n "${host}" ] && printf '%s\n' "${host}"
-				done
-			} | sort -u | run jq -R . | run jq -s -c '.' 2>/dev/null
-		)" || probe_domains_json="[]"
-		if [ "${probe_domains_json}" = "[]" ]; then
-			has_probe="0"
-		fi
-	fi
-
-	# 1) 构造严格保序的新一代规则集：
-	#    fss_in_socks_s_<gen> -> fss_in_dns_udp_s_<gen> -> fss_status_probe_s_<gen> -> fss_webrtc*/fss_rule_*_s_<gen> -> fss_default_s_<gen>
-	#    待删除全部旧一代标签后，socks-in 与 dns_udp_* 100% 严格优先于所有自定义规则与默认规则！
-	adrules_file="${HOT_STATE_DIR}/.switch_default_ordered.$$.json"
-	if ! run jq -n \
-		--arg target "${target_tag}" \
-		--arg socks_tag "${new_socks_tag}" \
-		--arg dns_tag "${new_dns_udp_tag}" \
-		--arg has_dns "${has_dns_udp}" \
-		--argjson dns_inbounds "${dns_udp_inbounds_json}" \
-		--arg probe_tag "${new_probe_tag}" \
-		--arg has_probe "${has_probe}" \
-		--argjson probe_domains "${probe_domains_json}" \
-		--argjson preserved "${preserved_rules_json}" \
-		--arg default_tag "${new_default_tag}" '
-		{
-			routing: {
-				rules: (
-					[{type: "field", ruleTag: $socks_tag, inboundTag: ["socks-in"], outboundTag: $target}]
-					+ (if $has_dns == "1" then [{type: "field", ruleTag: $dns_tag, inboundTag: $dns_inbounds, outboundTag: $target}] else [] end)
-					+ (if $has_probe == "1" then [{type: "field", ruleTag: $probe_tag, domain: $probe_domains, outboundTag: $target}] else [] end)
-					+ $preserved
-					+ [{type: "field", ruleTag: $default_tag, network: "tcp,udp", outboundTag: $target}]
-				)
-			}
-		}
-	' > "${adrules_file}" 2>/dev/null; then
-		hot_log "生成保序新一代路由规则 JSON 失败，回退轻量重载。"
-		return 1
-	fi
-
-	added_tags="$(run jq -r '.routing.rules[].ruleTag' "${adrules_file}" 2>/dev/null)" || {
-		hot_log "读取新一代路由规则标签失败，回退轻量重载。"
-		return 1
-	}
-
-	if ! hot_apply_ordered_rules_json "${adrules_file}"; then
-		hot_log "通过 xray api adrules 写入保序新一代规则失败，回退轻量重载。"
-		return 1
-	fi
-
-	# 2) 删除全部旧一代标签（入口 + 默认 + 探测 + 已按序克隆的自定义/WebRTC 旧标签）；
-	#    任一删除失败立即回滚本次所有新增标签并返回非零！
-	for old_tag in ${inbound_tags} ${existing_tags}; do
-		[ -n "${old_tag}" ] || continue
-		if printf '%s\n' "${added_tags}" | grep -Fxq "${old_tag}"; then
-			continue
-		fi
-		if ! hot_remove_rule "${old_tag}"; then
-			for t in ${added_tags}; do hot_remove_rule "${t}" >/dev/null 2>&1 || true; done
-			hot_log "热切换默认节点删除旧规则 ${old_tag} 失败，已回滚新一代规则并回退重启路径。"
-			return 1
-		fi
-	done
-
-	# 3) 同步更新磁盘 xray.json 的规则顺序与标签，保证后续连续热切换状态一致
-	tmp_conf="${XRAY_RUNTIME_CONF}.switch.$$"
-	if run jq --slurpfile next "${adrules_file}" '
-		.routing.rules = (
-			[(.routing.rules // [])[] | select(((.ruleTag // "") | startswith("fss_")) | not)]
-			+ $next[0].routing.rules
-		)
-	' "${XRAY_RUNTIME_CONF}" > "${tmp_conf}" 2>/dev/null; then
-		mv -f "${tmp_conf}" "${XRAY_RUNTIME_CONF}" >/dev/null 2>&1 || rm -f "${tmp_conf}" >/dev/null 2>&1
-	else
-		rm -f "${tmp_conf}" >/dev/null 2>&1 || true
-	fi
-
 	if [ -f "${HOT_NEED_DNS_RELOAD_FILE}" ]; then
-		rm -f "${HOT_NEED_DNS_RELOAD_FILE}" >/dev/null 2>&1 || true
-		if [ ! -x "/koolshare/ss/ssconfig.sh" ] || ! sh /koolshare/ss/ssconfig.sh reload_dns_process >/dev/null 2>&1; then
-			hot_log "热切换新域名节点后重载 DNS 进程失败，回退重启路径。"
-			return 1
-		fi
+		sh /koolshare/ss/ssconfig.sh reload_dns_process || return 1
+		rm -f "${HOT_NEED_DNS_RELOAD_FILE}" || return 1
 	fi
-
-	ss_basic_shunt_default_node="${target_node_id}"
-	dbus set ss_basic_shunt_default_node="${target_node_id}" >/dev/null 2>&1 || true
-	ss_basic_shunt_rule_ts="${generation}"
-	dbus set ss_basic_shunt_rule_ts="${generation}" >/dev/null 2>&1 || true
-
-	hot_log "已保序热切换默认出站与 socks-in/dns_udp 入口绑定至 proxy${target_node_id}（Xray 主进程未重启，入口优先级高于全部自定义规则）。"
-	return 0
+	fss_shunt_store_default_node "${target_node_id}" || return 1
+	dbus set ss_basic_shunt_rule_ts="$(date +%s)_$$" || return 1
+	hot_log "默认出站、健康探测与 DNS 中继已切换至 proxy${target_node_id}。"
 }
+
+exec 9>>"${HOT_LOCK_FILE}" || exit 1
+if ! flock -n 9; then
+	hot_log "已有热重载任务在执行或无法获取锁。"
+	exit 1
+fi
+trap 'rm -f "${HOT_NEXT_FILE}" "${HOT_STAGE_FILE}"; flock -u 9' EXIT
+trap 'exit 1' INT TERM
 
 case "$1" in
 apply|"")

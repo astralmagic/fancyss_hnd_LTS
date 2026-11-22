@@ -335,9 +335,15 @@ failover_exec_recovery() {
 	local target_node_id="${2:-}"
 	local basic_mode="$(dbus get ss_basic_mode 2>/dev/null)"
 	failover_mark_separator "${reason}"
-	if [ "${basic_mode}" = "7" ] && [ -n "${target_node_id}" ] && [ -x "/koolshare/scripts/ss_shunt_hot_reload.sh" ]; then
-		if sh /koolshare/scripts/ss_shunt_hot_reload.sh switch_default_node "${target_node_id}" >> "${FAILOVER_SS_LOG_FILE}" 2>&1; then
+	if [ "${basic_mode}" = "7" ] && [ -n "${target_node_id}" ]; then
+		if [ -x /koolshare/scripts/ss_shunt_hot_reload.sh ] &&
+			sh /koolshare/scripts/ss_shunt_hot_reload.sh switch_default_node "${target_node_id}" >> "${FAILOVER_SS_LOG_FILE}" 2>&1; then
 			return 0
+		fi
+		# 当前节点已切换。轻量重载和完整重启均从 DBus 生成默认规则。
+		if ! fss_shunt_store_default_node "${target_node_id}"; then
+			LOGM "$LOGTIME1 fancyss：保存分流兜底节点 ${target_node_id} 失败，中止本次恢复。"
+			return 1
 		fi
 		LOGM "$LOGTIME1 fancyss：分流默认出站热切换未就绪，回退轻量重载代理..."
 	fi
@@ -393,11 +399,11 @@ failover_action(){
 			[ "$FLAG" == "2" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s2_1}个状态中，故障次数超过${ss_failover_s2_2}个，切换到备用节点：[${backup_name}]！同时把主节点降级为备用节点！"
 			[ "$FLAG" == "3" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s3_1}个状态平均延迟:${PING}超过${ss_failover_s3_2} ms，切换到备用节点：[${backup_name}]！同时把主节点降级为备用节点！"
 			# 切换
-			fss_set_current_node_id "${backup_id}"
+			fss_set_current_node_id "${backup_id}" || return 1
 			# 降级
 			fss_set_failover_node_id "${current_id}"
 			# Fail-Closed 轻量恢复（mode 7 优先热切默认出站，不中断独立分流长连接）
-			failover_exec_recovery "switch_backup" "${backup_id}"
+			failover_exec_recovery "switch_backup" "${backup_id}" || return 1
 			dbus set ss_heart_beat="1"
 		elif [ "$ss_failover_s4_2" == "2" ];then
 			NEXT_NODE=$(fss_get_next_node_id_in_order "${current_id}")
@@ -412,19 +418,19 @@ failover_action(){
 			[ "$FLAG" == "2" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s2_1}个状态中，故障次数超过${ss_failover_s2_2}个，切换到节点列表的下个节点：[${NEXT_NAME}]！"
 			[ "$FLAG" == "3" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s3_1}个状态平均延迟:${PING}超过${ss_failover_s3_2} ms，切换到节点列表的下个节点：[${NEXT_NAME}]！"
 			# 切换
-			fss_set_current_node_id "${NEXT_NODE}"
+			fss_set_current_node_id "${NEXT_NODE}" || return 1
 			# Fail-Closed 轻量恢复
 			echo_date "========================================================================" >/tmp/upload/ss_log.txt
 			echo_date "" >>/tmp/upload/ss_log.txt
 			echo_date "故障转移：执行 Fail-Closed 轻量切换！" >>/tmp/upload/ss_log.txt
 			echo_date "" >>/tmp/upload/ss_log.txt
 			echo_date "========================================================================" >>/tmp/upload/ss_log.txt
-			failover_exec_recovery "switch_next" "${NEXT_NODE}"
+			failover_exec_recovery "switch_next" "${NEXT_NODE}" || return 1
 			dbus set ss_heart_beat="1"
 		elif [ "$ss_failover_s4_2" == "3" ];then
 			LOGM "$LOGTIME1 fancyss：切换到web延迟最低节点：[$(get_node_name_by_id "${FAST_NODE}")]..."
-			fss_set_current_node_id "${FAST_NODE}"
-			failover_exec_recovery "switch_fastest" "${FAST_NODE}"
+			fss_set_current_node_id "${FAST_NODE}" || return 1
+			failover_exec_recovery "switch_fastest" "${FAST_NODE}" || return 1
 			dbus set ss_heart_beat="1"
 		fi
 	fi	

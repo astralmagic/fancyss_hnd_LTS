@@ -1789,12 +1789,13 @@ fss_collect_current_static_ip_lists() {
 			esac
 		done
 	fi
-	if type dbus >/dev/null 2>&1; then
-		node_ips="$(dbus list ssconf 2>/dev/null | grep _server_ | awk -F"=" '{print $NF}' | sort -u | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$')"
-		for ip in ${node_ips}; do
-			printf '%s\n' "${ip}" >> "${out_white_v4}"
-		done
-	fi
+	node_ips="$(fss_list_node_server_ips)" || return 1
+	for ip in ${node_ips}; do
+		case "${ip}" in
+		*:*) printf '%s\n' "${ip}" >> "${out_white_v6}" ;;
+		*) printf '%s\n' "${ip}" >> "${out_white_v4}" ;;
+		esac
+	done
 
 	sort -u "${out_black_v4}" -o "${out_black_v4}" 2>/dev/null || true
 	sort -u "${out_black_v6}" -o "${out_black_v6}" 2>/dev/null || true
@@ -1833,10 +1834,18 @@ reconcile_fail_closed_ipsets() {
 	local reset_dynamic_white="0"
 
 	mkdir -p "${tmp_dir}" >/dev/null 2>&1 || return 1
-	fss_collect_current_static_ip_lists "${cur_black_v4}" "${cur_black_v6}" "${cur_white_v4}" "${cur_white_v6}"
+	fss_collect_current_static_ip_lists "${cur_black_v4}" "${cur_black_v6}" "${cur_white_v4}" "${cur_white_v6}" || {
+		rm -rf "${tmp_dir}"
+		return 1
+	}
 
 	cur_white_sig="$(fss_white_domain_sig "${white_domain_file}")"
 	[ -f "${white_sig_file}" ] && prev_white_sig="$(sed -n '1p' "${white_sig_file}" 2>/dev/null)"
+	local legacy_white4="${FSS_STATIC_WHITE_SNAP_V4:-/tmp/fss_static_white_ips.v4}"
+	local legacy_white6="${FSS_STATIC_WHITE_SNAP_V6:-/tmp/fss_static_white_ips.v6}"
+	if [ -f "${legacy_white4}" ] || [ -f "${legacy_white6}" ]; then
+		reset_dynamic_white="1"
+	fi
 	if [ -n "${prev_white_sig}" ] && [ "${prev_white_sig}" != "${cur_white_sig}" ]; then
 		reset_dynamic_white="1"
 	fi
@@ -1909,6 +1918,7 @@ reconcile_fail_closed_ipsets() {
 		return 1
 	fi
 
+	rm -f "${legacy_white4}" "${legacy_white6}" || return 1
 	printf '%s\n' "${cur_white_sig}" > "${white_sig_file}" 2>/dev/null || true
 	rm -rf "${tmp_dir}" >/dev/null 2>&1 || true
 
@@ -3885,10 +3895,10 @@ add_white_black() {
 	# {white_static}, white ip（使用局部变量解码，不原地覆写 ss_wan_white_ip；按地址族分流写入独立静态集合）
 	[ -n "${ISP_DNS1}" ] && ISP_DNS_a="${ISP_DNS1}" || ISP_DNS_a=""
 	[ -n "${ISP_DNS2}" ] && ISP_DNS_b="${ISP_DNS2}" || ISP_DNS_b=""
-	local ALL_NODE_DOMAINS=$(dbus list ssconf|grep _server_|awk -F"=" '{print $NF}'|sort -u|grep -E "([0-9]{1,3}[\.]){3}[0-9]{1,3}")
+	local node_ips="$(fss_list_node_server_ips)"
 	local decoded_white_ips="$(fss_decode_static_ip_list "${ss_wan_white_ip}")"
 	echo_date "应用IP/CIDR白名单"
-	for ip in ${ISP_DNS_a} ${ISP_DNS_b} ${decoded_white_ips} ${ALL_NODE_DOMAINS}
+	for ip in ${ISP_DNS_a} ${ISP_DNS_b} ${decoded_white_ips} ${node_ips}
 	do
 		case "${ip}" in
 		*:*) ipset -! add white_static6 "$ip" >/dev/null 2>&1 ;;
@@ -6405,11 +6415,11 @@ apply_acl_udp_rule() {
 		echo_date "UDP代理规则：【${acl_desc}】开启UDP代理，模式：$(get_mode_name ${proxy_mode})"
 		if [ "${quic_flag}" == "1" ];then
 			echo_date "UDP 443处理：【${acl_desc}】屏蔽QUIC流量，先直连放行至filter表进一步处理。"
-			iptables -t mangle -A SHADOWSOCKS ${source_rule} -p udp --dport 443 -j RETURN
+			iptables -t mangle -A SHADOWSOCKS ${source_rule} -p udp --dport 443 -j RETURN || return 1
 		else
 			echo_date "UDP 443处理：【${acl_desc}】不屏蔽QUIC流量。"
 		fi
-		iptables -t mangle -A SHADOWSOCKS ${source_rule} -p udp $(factor ${ports} "-m multiport --dport") -$(get_jump_mode ${proxy_mode}) $(get_action_chain ${proxy_mode})
+		iptables -t mangle -A SHADOWSOCKS ${source_rule} -p udp $(factor ${ports} "-m multiport --dport") -$(get_jump_mode ${proxy_mode}) $(get_action_chain ${proxy_mode}) || return 1
 	else
 		if [ "${proxy_mode}" == "0" ];then
 			echo_date "UDP代理规则：【${acl_desc}】不通过代理，UDP流量直连。"
@@ -6418,7 +6428,7 @@ apply_acl_udp_rule() {
 		else
 			echo_date "UDP代理规则：【${acl_desc}】关闭UDP代理。"
 		fi
-		iptables -t mangle -A SHADOWSOCKS ${source_rule} -p udp -j RETURN
+		iptables -t mangle -A SHADOWSOCKS ${source_rule} -p udp -j RETURN || return 1
 	fi
 }
 
@@ -6560,17 +6570,17 @@ apply_quic_block() {
 			proxy_mode=$(eval echo \$ss_acl_mode_$acl)
 			udp_flag=$(get_acl_udp_flag ${acl} ${proxy_mode})
 			quic_flag=$(get_acl_quic_flag ${acl} ${proxy_mode} "${udp_flag}")
-			apply_acl_quic_filter_rule "${ipaddr}" "$(get_acl_source_rule4 ${acl})" "${proxy_mode}" "${quic_flag}"
+			apply_acl_quic_filter_rule "${ipaddr}" "$(get_acl_source_rule4 ${acl})" "${proxy_mode}" "${quic_flag}" || return 1
 		done
 		default_mode="$(resolve_acl_default_mode 1)"
 		udp_flag=$(get_acl_udp_flag "" "${default_mode}")
 		quic_flag=$(get_acl_quic_flag "" "${default_mode}" "${udp_flag}")
-		apply_acl_quic_filter_rule "剩余主机" "" "${default_mode}" "${quic_flag}"
+		apply_acl_quic_filter_rule "剩余主机" "" "${default_mode}" "${quic_flag}" || return 1
 	else
 		default_mode="$(resolve_acl_default_mode 0)"
 		udp_flag=$(get_acl_udp_flag "" "${default_mode}")
 		quic_flag=$(get_acl_quic_flag "" "${default_mode}" "${udp_flag}")
-		apply_acl_quic_filter_rule "全部主机" "" "${default_mode}" "${quic_flag}"
+		apply_acl_quic_filter_rule "全部主机" "" "${default_mode}" "${quic_flag}" || return 1
 	fi
 }
 
@@ -6728,13 +6738,13 @@ lan_access_control() {
 				echo_date "加载ACL规则：【$ipaddr】【$ports】模式为：$(get_mode_name $proxy_mode)"
 			fi
 			# 1 acl in SHADOWSOCKS for nat
-			iptables -t nat -A SHADOWSOCKS ${source_rule} -p tcp $(factor $ports "-m multiport --dport") -$(get_jump_mode $proxy_mode) $(get_action_chain $proxy_mode)
+			iptables -t nat -A SHADOWSOCKS ${source_rule} -p tcp $(factor $ports "-m multiport --dport") -$(get_jump_mode $proxy_mode) $(get_action_chain $proxy_mode) || return 1
 			
 			# 2 acl in OUTPUT（used by koolproxy）
-			iptables -t nat -A SHADOWSOCKS_EXT -p tcp $(factor $ports "-m multiport --dport") -m mark --mark "$ipaddr_hex" -$(get_jump_mode $proxy_mode) $(get_action_chain $proxy_mode)
+			iptables -t nat -A SHADOWSOCKS_EXT -p tcp $(factor $ports "-m multiport --dport") -m mark --mark "$ipaddr_hex" -$(get_jump_mode $proxy_mode) $(get_action_chain $proxy_mode) || return 1
 			
 			# 3 acl in SHADOWSOCKS for mangle
-			apply_acl_udp_rule "${ipaddr}" "${source_rule}" "${ports}" "${proxy_mode}" "${udp_flag}" "${quic_flag}"
+			apply_acl_udp_rule "${ipaddr}" "${source_rule}" "${ports}" "${proxy_mode}" "${udp_flag}" "${quic_flag}" || return 1
 		done
 
 		default_mode="$(resolve_acl_default_mode 1)"
@@ -6763,6 +6773,7 @@ lan_access_control() {
 	dbus remove ss_acl_port
 	dbus remove ss_acl_udp
 	dbus remove ss_acl_quic
+	return 0
 }
 
 dns_hijack_control() {
@@ -7110,6 +7121,7 @@ prepare_anytls_merlinbox_compat6() {
 start_ipv6_proxy_rules() {
 	if ipv6_proxy_enabled; then
 		if ! _start_ipv6_iptables || ! prepare_anytls_merlinbox_compat6; then
+			[ "${FSS_FAIL_CLOSED_RESTART}" != "1" ] || return 1
 			fallback_ipv6_proxy_to_ipv4 || return 1
 		fi
 	fi
@@ -7492,24 +7504,24 @@ _start_iptables() {
 	
 	#-------------------------------------------------------
 	# 局域网黑名单（不go proxy）/局域网黑名单（go proxy）
-	lan_access_control $1
+	lan_access_control $1 || return 1
 
 	# Block QUIC(UDP/443) to non-China destinations (HTTP/3) so clients fallback to TCP.
-	apply_quic_block
+	apply_quic_block || return 1
 	
 	# DNS 劫持
 	dns_hijack_control 4
 	#-----------------------FOR ROUTER---------------------
 	# router itself
 	if [ "${ss_basic_mode}" != "6" ];then
-		append_if_not_exists nat -A OUTPUT -p tcp -m set --match-set router dst -j REDIRECT --to-ports 3333
+		append_if_not_exists nat -A OUTPUT -p tcp -m set --match-set router dst -j REDIRECT --to-ports 3333 || return 1
 
 		# make sure these match go proxy inside router
 		if [ "${mangle}" = "1" ]; then
-			append_if_not_exists mangle -A OUTPUT -p udp -m set --match-set router dst -m udp --dport 53 -j MARK --set-mark 0x7/0xffffffff
+			append_if_not_exists mangle -A OUTPUT -p udp -m set --match-set router dst -m udp --dport 53 -j MARK --set-mark 0x7/0xffffffff || return 1
 		fi
 	fi
-	append_if_not_exists nat -A OUTPUT -p tcp -m mark --mark "$ip_prefix_hex" -j SHADOWSOCKS_EXT
+	append_if_not_exists nat -A OUTPUT -p tcp -m mark --mark "$ip_prefix_hex" -j SHADOWSOCKS_EXT || return 1
 
 	# 把最后剩余流量重定向到相应模式的nat表中对应的主模式的链
 	local acl_default_mode_runtime="$(resolve_acl_default_mode "$(if [ -n "${acl_nu}" ];then echo 1; else echo 0; fi)")"
@@ -7522,7 +7534,7 @@ _start_iptables() {
 
 	local default_udp_flag=$(get_acl_udp_flag "" "${acl_default_mode_runtime}")
 	local default_quic_flag=$(get_acl_quic_flag "" "${acl_default_mode_runtime}" "${default_udp_flag}")
-	apply_acl_udp_rule "${acl_default_label}" "" "${acl_default_ports_match}" "${acl_default_mode_runtime}" "${default_udp_flag}" "${default_quic_flag}"
+	apply_acl_udp_rule "${acl_default_label}" "" "${acl_default_ports_match}" "${acl_default_mode_runtime}" "${default_udp_flag}" "${default_quic_flag}" || return 1
 	
 	# 重定所有流量到 SHADOWSOCKS（必须传播关键入口挂载失败）
 	KP_NU=$(iptables -nvL PREROUTING -t nat | sed 1,2d | sed -n '/KOOLPROXY/=' | head -n1)
@@ -7559,7 +7571,7 @@ _start_iptables() {
 		iptables -t mangle -I QOSO0 -m mark --mark "$ip_prefix_hex" -j RETURN
 	fi
 
-	start_ipv6_proxy_rules
+	start_ipv6_proxy_rules || return 1
 	apply_webrtc_block6
 }
 
@@ -8331,7 +8343,7 @@ apply_ss() {
 		fi
 		flush_iptables
 	fi
-	load_iptables
+	load_iptables || return 1
 	if [ "${FSS_FAIL_CLOSED_RESTART}" = "1" ]; then
 		if ! verify_proxy_ingress_rules; then
 			echo_date "错误：未检测到透明代理 PREROUTING 入口跳转，保留 Fail-Closed 保护链不予卸载！"
