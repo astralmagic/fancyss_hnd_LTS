@@ -755,6 +755,7 @@ hot_switch_default_node() {
 		hot_log "整表切换或配置持久化失败，回退重载。"
 		return 1
 	fi
+	[ "${2:-}" != "stage" ] || return 0
 	if [ -f "${HOT_NEED_DNS_RELOAD_FILE}" ]; then
 		sh /koolshare/ss/ssconfig.sh reload_dns_process 9>&- || return 1
 		rm -f "${HOT_NEED_DNS_RELOAD_FILE}" || return 1
@@ -781,6 +782,9 @@ seed)
 	;;
 revert)
 	hot_reload_revert
+	;;
+stage_default_node)
+	hot_switch_default_node "$2" stage
 	;;
 switch_default_node)
 	hot_switch_default_node "$2"

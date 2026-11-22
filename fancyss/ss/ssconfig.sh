@@ -16,6 +16,7 @@ THREAD=""
 LOG_FILE=/tmp/upload/ss_log.txt
 CONFIG_FILE=/koolshare/ss/ssr.json
 LOCK_FILE=/var/lock/koolss.lock
+FIREWALL_PROFILE=/var/run/fancyss_firewall_profile
 WS_PIDFILE=/var/run/fancyss-websocketd.pid
 DNSC_PORT=53
 ISP_DNS1=""
@@ -1488,26 +1489,20 @@ add_current_server_ip_to_ignlist() {
 	esac
 }
 
-fail_closed_guard_has_global_mode() {
-	[ "${ss_basic_mode}" = "5" ] && return 0
-	[ "${ss_basic_mode}" = "7" ] && [ "${ss_basic_shunt_ingress_mode}" = "5" ] && return 0
-	if type get_runtime_proxy_mode >/dev/null 2>&1; then
-		[ "$(get_runtime_proxy_mode 2>/dev/null)" = "5" ] && return 0
-	fi
-	[ "${ss_acl_default_mode}" = "5" ] && return 0
-	local acl_list=""
-	local acl=""
-	local acl_m=""
+fail_closed_guard_has_mode() {
+	local mode="$1" acl="" acl_mode="" rows=""
+	[ "${ss_basic_mode}" = "${mode}" ] && return 0
+	[ "${ss_basic_mode}" = "7" ] && [ "${ss_basic_shunt_ingress_mode}" = "${mode}" ] && return 0
+	[ "${ss_acl_default_mode}" = "${mode}" ] && return 0
 	if [ -n "${acl_nu}" ]; then
-		acl_list="${acl_nu}"
-	elif type dbus >/dev/null 2>&1; then
-		acl_list="$(dbus list ss_acl_mode_ 2>/dev/null | awk -F'=' '$2 == "5" {print $1}')"
-		[ -n "${acl_list}" ] && return 0
+		for acl in ${acl_nu}; do
+			eval "acl_mode=\${ss_acl_mode_${acl}}"
+			[ "${acl_mode}" = "${mode}" ] && return 0
+		done
+	else
+		rows="$(dbus list ss_acl_mode_ 2>/dev/null)" || return 0
+		printf '%s\n' "${rows}" | grep -Eq "^ss_acl_mode_[0-9]+=${mode}$" && return 0
 	fi
-	for acl in ${acl_list}; do
-		eval "acl_m=\${ss_acl_mode_${acl}}"
-		[ "${acl_m}" = "5" ] && return 0
-	done
 	return 1
 }
 
@@ -1541,9 +1536,11 @@ install_fail_closed_guard_family() {
 	local tmp_chain="${chain}_TMP"
 	local out_chain="${chain}_OUT"
 	local out_tmp_chain="${out_chain}_TMP"
-	local is_global="0"
+	local allow_china="1"
 
-	fail_closed_guard_has_global_mode && is_global="1"
+	if fail_closed_guard_has_mode 5 || fail_closed_guard_has_mode 6; then
+		allow_china="0"
+	fi
 
 	# 1) 构建 FORWARD 临时保护链（绝不先对上一代 ${chain} 执行 -F 或删除）
 	if ${cmd} -t filter -L "${tmp_chain}" >/dev/null 2>&1; then
@@ -1564,8 +1561,8 @@ install_fail_closed_guard_family() {
 		return 1
 	fi
 
-	# 非全局模式才放行 chnlist / chnroute；全局模式、分流全局入口或全局 ACL 时大陆地址也必须拦截，不能直连放行
-	if [ "${is_global}" != "1" ]; then
+	# 全局或回国策略可接管大陆地址，保护链需覆盖所有启用的客户端策略。
+	if [ "${allow_china}" = "1" ]; then
 		if ! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "chnlist${sfx}" dst -j RETURN >/dev/null 2>&1 ||
 			! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "chnroute${sfx}" dst -j RETURN >/dev/null 2>&1; then
 			${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
@@ -1681,7 +1678,7 @@ verify_proxy_ingress_rules() {
 		chain_rules="$(iptables -t nat -S "${active_chain}" 2>/dev/null)" || return 1
 		printf '%s\n' "${chain_rules}" | grep -q -- '-j REDIRECT' || return 1
 	fi
-	if fail_closed_guard_has_global_mode; then
+	if fail_closed_guard_has_mode 5; then
 		chain_rules="$(iptables -t nat -S SHADOWSOCKS_GLO 2>/dev/null)" || return 1
 		printf '%s\n' "${chain_rules}" | grep -q -- '-j REDIRECT' || return 1
 	fi
@@ -3784,6 +3781,12 @@ add_white_black() {
 	#	 {chnlist} 	   chn   可信DNS
 	#	 default tag   gfw   本地DNS
 
+	local node_ips=""
+	node_ips="$(fss_list_node_server_ips)" || {
+		echo_date "读取节点白名单失败，中止启动并保留现有规则。"
+		close_in_five flag
+		return 1
+	}
 	# remove 
 	rm -rf /tmp/black_list.txt
 	rm -rf /tmp/white_list.txt
@@ -3895,7 +3898,6 @@ add_white_black() {
 	# {white_static}, white ip（使用局部变量解码，不原地覆写 ss_wan_white_ip；按地址族分流写入独立静态集合）
 	[ -n "${ISP_DNS1}" ] && ISP_DNS_a="${ISP_DNS1}" || ISP_DNS_a=""
 	[ -n "${ISP_DNS2}" ] && ISP_DNS_b="${ISP_DNS2}" || ISP_DNS_b=""
-	local node_ips="$(fss_list_node_server_ips)"
 	local decoded_white_ips="$(fss_decode_static_ip_list "${ss_wan_white_ip}")"
 	echo_date "应用IP/CIDR白名单"
 	for ip in ${ISP_DNS_a} ${ISP_DNS_b} ${decoded_white_ips} ${node_ips}
@@ -7002,8 +7004,7 @@ load_iptables() {
 		usleep 100000
 		local nat_ready=$(iptables -t nat -L PREROUTING -v -n --line-numbers | grep -v PREROUTING | grep -v destination)
 	done
-	# creat_ipset
-	# add_white_black
+	rm -f "${FIREWALL_PROFILE}"
 	if ! _start_iptables; then
 		if [ "${FSS_FAIL_CLOSED_RESTART}" = "1" ]; then
 			echo_date "错误：写入iptables透明代理规则失败，为防止出口IP泄漏，保留现有Fail-Closed拦截状态（如需直连请手动关闭插件）。"
@@ -7015,6 +7016,7 @@ load_iptables() {
 		flush_ipset
 		close_in_five flag
 	fi
+	firewall_profile > "${FIREWALL_PROFILE}" || echo_date "未能记录防火墙配置，下次切换使用完整重启。"
 }
 
 ensure_chain() {
@@ -8195,6 +8197,7 @@ check_status() {
 }
 
 disable_ss() {
+	rm -f "${FIREWALL_PROFILE}"
 	echo_date ======================= 梅林固件 - 【科学上网】 ========================
 	echo_date
 	echo_date ------------------------- 关闭【科学上网】 -----------------------------
@@ -8361,9 +8364,11 @@ apply_ss() {
 	write_numbers
 	finish_start
 	ss_post_start
-	check_status
-	if [ "${ss_basic_mode}" = "7" ] && [ "${ss_basic_shunt_hot_reload}" = "1" ] && [ -x "/koolshare/scripts/ss_shunt_hot_reload.sh" ]; then
-		sh /koolshare/scripts/ss_shunt_hot_reload.sh seed >/dev/null 2>&1 || true
+	if [ -z "${FSS_FAILOVER_TARGET_NODE:-}" ]; then
+		check_status
+		if [ "${ss_basic_mode}" = "7" ] && [ "${ss_basic_shunt_hot_reload}" = "1" ] && [ -x "/koolshare/scripts/ss_shunt_hot_reload.sh" ]; then
+			sh /koolshare/scripts/ss_shunt_hot_reload.sh seed >/dev/null 2>&1 || true
+		fi
 	fi
 	# store current status
 	dbus set ss_basic_status="1"
@@ -8772,6 +8777,20 @@ reload_scopes() {
 	return 0
 }
 
+firewall_profile() {
+	local core="${ss_basic_type}"
+	[ "${ss_basic_mode}" != "7" ] || core=xray
+	printf '%s:%s:%s\n' "${ss_basic_mode}" "${core}" "${mangle}"
+}
+
+firewall_profile_matches() {
+	local active=""
+	[ -r "${FIREWALL_PROFILE}" ] && read -r active < "${FIREWALL_PROFILE}" || return 1
+	[ "${active}" = "$(firewall_profile)" ] || return 1
+	iptables -t nat -C PREROUTING -p tcp -j SHADOWSOCKS >/dev/null 2>&1 || return 1
+	! iptables -t filter -L FSS_FC_GUARD >/dev/null 2>&1
+}
+
 reload_proxy_only() {
 	local FSS_PARTIAL_RELOAD=1
 	local FSS_FAIL_CLOSED_RESTART=1
@@ -8787,7 +8806,11 @@ reload_proxy_only() {
 		return 1
 	fi
 
-	fss_base_load_current_node_env
+	fss_base_load_current_node_env || return 1
+	if ! firewall_profile_matches; then
+		echo_date "[reload-proxy] 当前节点与活动防火墙配置不一致，需完整重启。"
+		return 1
+	fi
 	refresh_runtime_context
 	init_protocol_config_paths
 
@@ -8852,11 +8875,87 @@ reload_proxy_only() {
 
 	get_proxy_server_ip >/dev/null 2>&1 || true
 	write_numbers >/dev/null 2>&1 || true
-	if [ "${ss_basic_mode}" = "7" ] && [ "${ss_basic_shunt_hot_reload}" = "1" ] && [ -x "/koolshare/scripts/ss_shunt_hot_reload.sh" ]; then
+	if [ -z "${FSS_FAILOVER_TARGET_NODE:-}" ] && [ "${ss_basic_mode}" = "7" ] && [ "${ss_basic_shunt_hot_reload}" = "1" ] && [ -x "/koolshare/scripts/ss_shunt_hot_reload.sh" ]; then
 		sh /koolshare/scripts/ss_shunt_hot_reload.sh seed >/dev/null 2>&1 || true
 	fi
 	echo_date "-------------------- [fail-closed] 代理主程序轻量重载完毕 --------------------"
 	return 0
+}
+
+# Run under koolss.lock. Configuration generation reads the candidate locally until recovery succeeds.
+failover_switch() {
+	local reason="$1" previous="$2" target="$3"
+	local FSS_FAILOVER_TARGET_NODE=""
+	local ss_basic_shunt_default_node="${ss_basic_shunt_default_node}"
+	local rollback_ok=1 old_default="" old_identity="" recovery="" hot="/koolshare/scripts/ss_shunt_hot_reload.sh"
+	local dns_flag="/tmp/fancyss_shunt_hot_reload/need_dns_reload"
+	case "${reason}" in switch_backup|switch_next|switch_fastest) ;; *) return 1 ;; esac
+	case "${target}" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$(dbus get ss_basic_enable)" = "1" ] && [ "$(dbus get ss_basic_status)" = "1" ] || return 1
+	[ "$(dbus get ss_basic_mode)" = "${ss_basic_mode}" ] || return 1
+	[ "${previous}" != "${target}" ] && [ "$(fss_get_current_node_id)" = "${previous}" ] || return 1
+	[ "${reason}" != "switch_backup" ] || [ "$(fss_get_failover_node_id)" = "${target}" ] || return 1
+	fss_node_id_exists "${target}" || return 1
+	if [ "${ss_basic_mode}" = "7" ]; then
+		fss_require_shunt_lib && fss_shunt_target_is_proxy_node "${target}" || {
+			echo_date "[failover] 节点 ${target} 不支持当前分流模式，保留主备选择。"
+			return 1
+		}
+		old_default="$(dbus get "${FSS_SHUNT_DEFAULT_NODE_DBUS_KEY}")" || return 1
+		old_identity="$(dbus get "${FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY}")" || return 1
+		ss_basic_shunt_default_node="${target}"
+	fi
+	FSS_FAILOVER_TARGET_NODE="${target}"
+	fss_base_load_current_node_env || return 1
+
+	# close_in_five exits its shell. Only the outer dispatcher may release the transaction lock.
+	if firewall_profile_matches && { [ "${ss_basic_mode}" != "7" ] || [ ! -f "${dns_flag}" ]; }; then
+		if [ "${ss_basic_mode}" = "7" ] && [ -x "${hot}" ] &&
+			sh "${hot}" stage_default_node "${target}"; then
+			if [ ! -f "${dns_flag}" ] || ( unset_lock() { :; }; reload_dns_process ); then
+				recovery=hot
+			fi
+		fi
+		if [ -z "${recovery}" ] && { [ "${ss_basic_mode}" != "7" ] || [ ! -f "${dns_flag}" ]; } &&
+			( unset_lock() { :; }; reload_proxy_only ); then
+			recovery=light
+		fi
+	fi
+	if [ -z "${recovery}" ]; then
+		( unset_lock() { :; }; apply_ss ) || return 2
+		recovery=full
+	fi
+
+	FSS_FAILOVER_TARGET_NODE=""
+	if fss_set_current_node_id "${target}" &&
+		{ [ "${ss_basic_mode}" != "7" ] || fss_shunt_store_default_node "${target}"; } &&
+		{ [ "${reason}" != "switch_backup" ] || fss_set_failover_node_id "${previous}"; }; then
+		if [ "${ss_basic_mode}" = "7" ]; then
+			rm -f "${dns_flag}"
+			dbus set ss_basic_shunt_rule_ts="$(date +%s)_$$"
+			if [ "${ss_basic_shunt_hot_reload}" = "1" ] && [ "${recovery}" != "hot" ]; then
+				sh "${hot}" seed || echo_date "[failover] 分流热更新基线需重建。"
+			fi
+		fi
+		[ "${recovery}" != "full" ] || check_status
+		dbus set ss_heart_beat=1
+		echo_date "[failover] 已切换至节点 ${target}（${recovery}）。"
+		return 0
+	fi
+
+	echo_date "[failover] 节点选择写入失败，恢复原配置并重新启动。"
+	fss_set_current_node_id "${previous}" || rollback_ok=0
+	[ "${reason}" != "switch_backup" ] || fss_set_failover_node_id "${target}" || rollback_ok=0
+	if [ "${ss_basic_mode}" = "7" ]; then
+		dbus set "${FSS_SHUNT_DEFAULT_NODE_DBUS_KEY}=${old_default}" || rollback_ok=0
+		dbus set "${FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY}=${old_identity}" || rollback_ok=0
+	fi
+	if [ "${rollback_ok}" != "1" ]; then
+		echo_date "[failover] DBus 回滚未完成，保留保护链并等待恢复。"
+		install_fail_closed_guard || echo_date "[failover] 无法安装保护链，请检查现有防火墙。"
+		return 1
+	fi
+	return 2
 }
 
 pick_start_stop_daemon(){
@@ -9039,6 +9138,17 @@ reload_scopes)
 	reload_rc=0
 	reload_scopes "$2" || reload_rc=$?
 	unset_lock
+	exit ${reload_rc}
+	;;
+failover_switch)
+	set_lock
+	reload_rc=0
+	failover_switch "$2" "$3" "$4" >> "${LOG_FILE}" 2>&1 || reload_rc=$?
+	unset_lock
+	if [ "${reload_rc}" = "2" ]; then
+		# 配置仍指向原选择，重新读取 DBus，在保护链下恢复。
+		sh /koolshare/ss/ssconfig.sh restart >> "${LOG_FILE}" 2>&1
+	fi
 	exit ${reload_rc}
 	;;
 reload_proxy_only)

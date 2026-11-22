@@ -54,7 +54,7 @@ pick_fastest_webtest_node() {
 	' "${result_file}" 2>/dev/null | sort -n -k1,1 -k2,2n | while read -r latency node_id
 	do
 		[ -n "${node_id}" ] || continue
-		if fss_node_id_exists "${node_id}";then
+		if fss_node_id_exists "${node_id}" && { [ "${ss_basic_mode}" != "7" ] || fss_shunt_target_is_proxy_node "${node_id}"; }; then
 			printf '%s\n' "${node_id}"
 			return 0
 		fi
@@ -330,34 +330,38 @@ failover_mark_separator() {
 	printf '%s === failover %s ===\n' "${LOGTIME1}" "${reason}" >> "${LOGFILE_F}" 2>/dev/null || true
 }
 
+failover_next_node() {
+	local current="$1" next="" ids=""
+	if [ "${ss_basic_mode}" != "7" ]; then
+		fss_get_next_node_id_in_order "${current}"
+		return $?
+	fi
+	ids="$(fss_list_node_ids)" || return 1
+	printf '%s\n' "${ids}" | awk -v current="${current}" '
+		NF { nodes[++n]=$0; if ($0==current) pos=n }
+		END { for (i=1; i<=n; i++) print nodes[(pos+i-1)%n+1] }
+	' | while IFS= read -r next; do
+		if [ "${next}" != "${current}" ] && fss_shunt_target_is_proxy_node "${next}"; then
+			printf '%s\n' "${next}"
+			return 0
+		fi
+	done
+}
+
 failover_exec_recovery() {
 	local reason="${1:-restart}"
 	local target_node_id="${2:-}"
-	local basic_mode="$(dbus get ss_basic_mode 2>/dev/null)"
-	local need_dns_reload_file="${HOT_NEED_DNS_RELOAD_FILE:-${HOT_STATE_DIR:-/tmp/fancyss_shunt_hot_reload}/need_dns_reload}"
-	local skip_proxy_only="0"
+	[ "${reason}" = "restart" ] || [ -n "${target_node_id}" ] || return 1
 	failover_mark_separator "${reason}"
-	if [ "${basic_mode}" = "7" ] && [ -n "${target_node_id}" ]; then
-		if [ -x /koolshare/scripts/ss_shunt_hot_reload.sh ] &&
-			sh /koolshare/scripts/ss_shunt_hot_reload.sh switch_default_node "${target_node_id}" >> "${FAILOVER_SS_LOG_FILE}" 2>&1; then
-			return 0
-		fi
-		# 当前节点已切换。轻量重载和完整重启均从 DBus 生成默认规则。
-		if ! fss_shunt_store_default_node "${target_node_id}"; then
-			LOGM "$LOGTIME1 fancyss：保存分流兜底节点 ${target_node_id} 失败，中止本次恢复。"
-			return 1
-		fi
-		if [ -f "${need_dns_reload_file}" ]; then
-			skip_proxy_only="1"
-			LOGM "$LOGTIME1 fancyss：检测到热切换期间 DNS 待重载或启动失败，跳过轻量代理重载，直接执行 Fail-Closed 安全重启..."
-		else
-			LOGM "$LOGTIME1 fancyss：分流默认出站热切换未就绪，回退轻量重载代理..."
-		fi
+	if [ -n "${target_node_id}" ]; then
+		# 完整重启会停止状态监测，切换事务须由独立持锁进程执行。
+		run start-stop-daemon -S -q -b -x /koolshare/ss/ssconfig.sh -- failover_switch "${reason}" "$3" "${target_node_id}"
+		return $?
 	fi
-	if [ "${skip_proxy_only}" != "1" ] && sh /koolshare/ss/ssconfig.sh reload_proxy_only >> "${FAILOVER_SS_LOG_FILE}" 2>&1; then
+	if sh /koolshare/ss/ssconfig.sh reload_proxy_only >> "${FAILOVER_SS_LOG_FILE}" 2>&1; then
 		return 0
 	fi
-	[ "${skip_proxy_only}" = "1" ] || LOGM "$LOGTIME1 fancyss：轻量重载代理未就绪，回退 Fail-Closed 安全重启..."
+	LOGM "$LOGTIME1 fancyss：轻量重载代理未就绪，回退 Fail-Closed 安全重启..."
 	run start-stop-daemon -S -q -b -x /koolshare/ss/ssconfig.sh -- restart
 }
 
@@ -406,18 +410,13 @@ failover_action(){
 			[ "$FLAG" == "2" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s2_1}个状态中，故障次数超过${ss_failover_s2_2}个，切换到备用节点：[${backup_name}]！同时把主节点降级为备用节点！"
 			[ "$FLAG" == "3" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s3_1}个状态平均延迟:${PING}超过${ss_failover_s3_2} ms，切换到备用节点：[${backup_name}]！同时把主节点降级为备用节点！"
 			# 切换
-			fss_set_current_node_id "${backup_id}" || return 1
-			# 降级
-			fss_set_failover_node_id "${current_id}"
-			# Fail-Closed 轻量恢复（mode 7 优先热切默认出站，不中断独立分流长连接）
-			failover_exec_recovery "switch_backup" "${backup_id}" || return 1
-			dbus set ss_heart_beat="1"
+			failover_exec_recovery "switch_backup" "${backup_id}" "${current_id}" || return 1
 		elif [ "$ss_failover_s4_2" == "2" ];then
-			NEXT_NODE=$(fss_get_next_node_id_in_order "${current_id}")
+			NEXT_NODE=$(failover_next_node "${current_id}")
 			local NEXT_NAME=$(get_node_name_by_id "${NEXT_NODE}")
 			local NODE_COUNT=$(fss_get_node_count)
-			if [ "${NODE_COUNT}" -le "1" ];then
-				LOGM "$LOGTIME1 fancyss：检测到仅剩 1 个节点无法切换！为防止出口 IP 泄漏，保持 Fail-Closed 拦截状态并告警（如需恢复直连请手动关闭插件）。"
+			if [ "${NODE_COUNT}" -le "1" ] || [ -z "${NEXT_NODE}" ];then
+				LOGM "$LOGTIME1 fancyss：没有可切换的兼容节点！为防止出口 IP 泄漏，保持 Fail-Closed 拦截状态并告警（如需恢复直连请手动关闭插件）。"
 				failover_mark_separator "single_node_hold"
 				return
 			fi
@@ -425,20 +424,10 @@ failover_action(){
 			[ "$FLAG" == "2" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s2_1}个状态中，故障次数超过${ss_failover_s2_2}个，切换到节点列表的下个节点：[${NEXT_NAME}]！"
 			[ "$FLAG" == "3" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s3_1}个状态平均延迟:${PING}超过${ss_failover_s3_2} ms，切换到节点列表的下个节点：[${NEXT_NAME}]！"
 			# 切换
-			fss_set_current_node_id "${NEXT_NODE}" || return 1
-			# Fail-Closed 轻量恢复
-			echo_date "========================================================================" >/tmp/upload/ss_log.txt
-			echo_date "" >>/tmp/upload/ss_log.txt
-			echo_date "故障转移：执行 Fail-Closed 轻量切换！" >>/tmp/upload/ss_log.txt
-			echo_date "" >>/tmp/upload/ss_log.txt
-			echo_date "========================================================================" >>/tmp/upload/ss_log.txt
-			failover_exec_recovery "switch_next" "${NEXT_NODE}" || return 1
-			dbus set ss_heart_beat="1"
+			failover_exec_recovery "switch_next" "${NEXT_NODE}" "${current_id}" || return 1
 		elif [ "$ss_failover_s4_2" == "3" ];then
 			LOGM "$LOGTIME1 fancyss：切换到web延迟最低节点：[$(get_node_name_by_id "${FAST_NODE}")]..."
-			fss_set_current_node_id "${FAST_NODE}" || return 1
-			failover_exec_recovery "switch_fastest" "${FAST_NODE}" || return 1
-			dbus set ss_heart_beat="1"
+			failover_exec_recovery "switch_fastest" "${FAST_NODE}" "${current_id}" || return 1
 		fi
 	fi	
 }

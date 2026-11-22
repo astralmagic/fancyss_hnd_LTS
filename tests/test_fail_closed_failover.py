@@ -254,10 +254,12 @@ apply_ss
             self.assertEqual(idx_verify + 1, idx_guard_off)
 
     def test_client_acl_write_failure_stops_firewall_reload(self):
-        code = functions(SSCONFIG_PATH, "load_iptables", "_start_iptables", "lan_access_control",
+        code = functions(SSCONFIG_PATH, "load_iptables", "firewall_profile", "_start_iptables", "lan_access_control",
                          "apply_acl_udp_rule", "apply_quic_block", "apply_acl_quic_filter_rule",
                          "start_ipv6_proxy_rules", "get_shunt_ingress_mode")
         script = """
+FIREWALL_PROFILE=$(mktemp) || exit 1
+trap 'rm -f "$FIREWALL_PROFILE"' EXIT
 FSS_FAIL_CLOSED_RESTART=1
 ss_basic_mode=7
 ss_acl_ip_1=192.0.2.3
@@ -319,7 +321,7 @@ close_in_five() { echo "HALT:$1"; }
         # Review #1, #2, #3, #5 probes (incl. PR #43 #1 global ACL, #2 OUTPUT guard, #3 ingress verification)
         fn_code = functions(
             SSCONFIG_PATH,
-            "fail_closed_guard_has_global_mode",
+            "fail_closed_guard_has_mode",
             "install_fail_closed_guard_chain_hook",
             "install_fail_closed_guard_family",
             "remove_fail_closed_guard_chain_hook",
@@ -392,6 +394,9 @@ install_fail_closed_guard
 
         # 2b) P1 #2 probe: mode 7 with ss_basic_shunt_ingress_mode=5 (no explicit global ACL) & global ACL must NOT RETURN on chnlist/chnroute.
         for label, extra_env in (
+            ("home_mode", "ss_basic_mode=6"),
+            ("home_default", "ss_basic_mode=2\nss_acl_default_mode=6"),
+            ("home_acl", "ss_basic_mode=2\nacl_nu=1\nss_acl_mode_1=6"),
             ("global_acl", 'ss_basic_mode=2\nacl_nu="1"\nss_acl_mode_1=5\n'),
             ("shunt_global_ingress", 'ss_basic_mode=7\nss_basic_shunt_ingress_mode=5\n'),
         ):
@@ -794,6 +799,53 @@ fss_list_node_server_ips
         self.assertEqual(res_domain_only.returncode, 0, res_domain_only.stderr)
         self.assertEqual(res_domain_only.stdout.strip(), "")
 
+    def test_real_node_enumeration_propagates_dbus_failure(self):
+        common = ROOT / "fancyss/scripts/ss_node_common.sh"
+        for schema in ("1", "2"):
+            result = run_bash(f"""
+source '{common}'
+FSS_STORAGE_SCHEMA_CACHE={schema}
+dbus() {{ return 1; }}
+fss_list_node_server_ips
+""")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, "")
+
+    def test_partial_dbus_list_requires_every_ordered_node(self):
+        common = ROOT / "fancyss/scripts/ss_node_common.sh"
+        result = run_bash(f"""
+source '{common}'
+FSS_STORAGE_SCHEMA_CACHE=2
+blob=$(printf '%s' '{{"type":"0","server":"192.0.2.1","_identity":"one"}}' | base64)
+dbus() {{
+    case "$1 $2" in
+    'get fss_node_order') echo 1,2 ;;
+    'list fss_node_') echo "fss_node_1=$blob" ;;
+    'get fss_node_1') echo "$blob" ;;
+    *) return 1 ;;
+    esac
+}}
+fss_list_node_server_ips
+""")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+    def test_shunt_candidates_skip_incompatible_nodes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            times = Path(tmp, "latency")
+            times.write_text("1>10\n2>20\n3>30\n")
+            code = functions(STATUS_MAIN_SCRIPT, "failover_next_node", "pick_fastest_webtest_node")
+            result = run_bash(code + f"""
+ss_basic_mode=7
+fss_list_node_ids() {{ printf '%s\\n' 1 2 3; }}
+fss_node_id_exists() {{ :; }}
+fss_shunt_target_is_proxy_node() {{ [ "$1" = 2 ]; }}
+failover_next_node 3
+pick_fastest_webtest_node 3 '{times}'
+""")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines(), ["2", "2"])
+
     def test_creat_ipset_preserves_all_live_sets_and_swaps_chnroute_in_fail_closed_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -892,6 +944,7 @@ ss_basic_server="node.example.com"
 ss_basic_shunt_hot_reload=0
 echo_date() {{ :; }}
 unset_lock() {{ :; }}
+firewall_profile_matches() {{ return 0; }}
 iptables() {{ return 0; }}
 fss_base_load_current_node_env() {{ :; }}
 refresh_runtime_context() {{ :; }}
@@ -979,6 +1032,7 @@ class SafeFailoverPolicyTests(unittest.TestCase):
             "failover_record_probe_health",
             "failover_should_throttle",
             "failover_mark_separator",
+            "failover_next_node",
             "failover_exec_recovery",
             "failover_action",
             "failover_check_1",
@@ -1118,30 +1172,17 @@ failover_action 2
             self.assertNotIn("DBUS:set ss_basic_enable=0", out)
             self.assertNotIn("ssconfig.sh -- stop", out)
 
-    def test_mode7_switch_prefers_hot_switch_default_node_without_restarting_xray(self):
-        # Issue #7 probe: mode 7 node switch calls switch_default_node first, keeping xray alive.
+    def test_backup_dispatch_does_not_change_selection(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            fake_hot = root / "ss_shunt_hot_reload.sh"
-            fake_hot.write_text("#!/bin/sh\nexit 0\n")
-            fake_hot.chmod(0o755)
-            harness = self._status_harness(root).replace(
-                "/koolshare/scripts/ss_shunt_hot_reload.sh", str(fake_hot)
-            )
-            script = harness + f"""
-TEST_BASIC_MODE=7
+            result = run_bash(self._status_harness(Path(tmp)) + """
 ss_failover_s4_1=2
 ss_failover_s4_2=1
-sh() {{ echo "SH:$*"; return 0; }}
-failover_now_epoch() {{ echo 1000; }}
 failover_action 2
-"""
-            res = run_bash(script)
-            self.assertEqual(res.returncode, 0, res.stderr)
-            ss_log = (root / "ss_log.txt").read_text()
-            self.assertIn(f"SH:{fake_hot} switch_default_node 34", ss_log)
-            self.assertNotIn("reload_proxy_only", ss_log)
-            self.assertNotIn("ssconfig.sh -- restart", res.stdout)
+""")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("failover_switch switch_backup 24 34", result.stdout)
+            self.assertNotIn("SET_NODE:", result.stdout)
+            self.assertNotIn("SET_BACKUP:", result.stdout)
 
     def test_hot_switch_default_node_preserves_webrtc_custom_rules_and_other_helpers(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1303,57 +1344,6 @@ hot_bypass_new_outbound_server '{ob}'
                     self.assertFalse((root / "legacy6").exists())
                     self.assertNotEqual(run_bash(f"fail_set=white_static{suffix}\n" + script).returncode, 0)
 
-    def test_mode7_fallback_reloads_saved_default(self):
-        store = functions(SHUNT_SCRIPT, "fss_shunt_store_default_node", "fss_shunt_get_configured_default_target")
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            hot = root / "hot"
-            hot.touch(mode=0o755)
-            harness = self._status_harness(root).replace("/koolshare/scripts/ss_shunt_hot_reload.sh", str(hot))
-            for light_ok, store_ok in ((True, True), (False, True), (False, False)):
-                with self.subTest(light_ok=light_ok, store_ok=store_ok):
-                    (root / "default").write_text("24")
-                    (root / "identity").write_text("id-24")
-                    res = run_bash(harness + store + f"""
-HOT_STATE_DIR='{root}/hot_state'
-FSS_SHUNT_DEFAULT_NODE_DBUS_KEY=default
-FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY=identity
-fss_shunt_target_is_proxy_node() {{ [ "$1" = 34 ]; }}
-fss_shunt_target_is_direct() {{ return 1; }}
-fss_shunt_target_is_reject() {{ return 1; }}
-fss_get_node_identity_by_id() {{ echo "id-$1"; }}
-dbus() {{
-    case "$1:$2" in
-        get:ss_basic_mode) echo 7 ;;
-        set:default=34) [ "{int(store_ok)}" = 1 ] && echo 34 > '{root}/default' ;;
-        get:*) cat '{root}'/"$2" ;;
-        set:*) echo "${{2#*=}}" > '{root}'/"${{2%%=*}}" ;;
-    esac
-}}
-sh() {{
-    [ "$1" != '{hot}' ] || return 1
-    unset ss_basic_shunt_default_node
-    echo "LIGHT:$(fss_shunt_get_configured_default_target)" >> '{root}/trace'
-    return {0 if light_ok else 1}
-}}
-run() {{
-    unset ss_basic_shunt_default_node
-    echo "FULL:$(fss_shunt_get_configured_default_target)" >> '{root}/trace'
-}}
-: > '{root}/trace'
-failover_exec_recovery switch 34
-""")
-                    if not store_ok:
-                        self.assertNotEqual(res.returncode, 0)
-                        self.assertEqual((root / "trace").read_text(), "")
-                        self.assertEqual((root / "identity").read_text().strip(), "id-24")
-                        self.assertEqual((root / "default").read_text().strip(), "24")
-                        continue
-                    self.assertEqual(res.returncode, 0, res.stderr)
-                    self.assertEqual((root / "identity").read_text().strip(), "id-34")
-                    self.assertEqual((root / "trace").read_text().splitlines(),
-                                     ["LIGHT:34"] if light_ok else ["LIGHT:34", "FULL:34"])
-
     def test_reload_proxy_only_failure_falls_back_to_fail_closed_restart(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1370,50 +1360,76 @@ failover_action 1
             self.assertIn("SH_FAIL:/koolshare/ss/ssconfig.sh reload_proxy_only", ss_log)
             self.assertIn("RUN:start-stop-daemon -S -q -b -x /koolshare/ss/ssconfig.sh -- restart", res.stdout)
 
-    def test_mode7_hot_switch_dns_reload_failure_skips_proxy_only_and_restarts_fail_closed(self):
-        store = functions(SHUNT_SCRIPT, "fss_shunt_store_default_node")
+    def test_switch_validates_target_and_commits_after_recovery(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             hot = root / "hot"
             hot.touch(mode=0o755)
-            hot_state = root / "hot_state"
-            hot_state.mkdir()
-            need_dns = hot_state / "need_dns_reload"
-            harness = self._status_harness(root).replace("/koolshare/scripts/ss_shunt_hot_reload.sh", str(hot))
-            res = run_bash(
-                harness
-                + store
-                + f"""
-HOT_STATE_DIR='{hot_state}'
-FSS_SHUNT_DEFAULT_NODE_DBUS_KEY=ss_basic_shunt_default_node
-FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY=ss_basic_shunt_default_node_identity
-fss_shunt_target_is_proxy_node() {{ [ "$1" = 34 ]; }}
-fss_get_node_identity_by_id() {{ echo "id-$1"; }}
-dbus() {{
-    case "$1:$2" in
-        get:ss_basic_mode) echo 7 ;;
-        *) return 0 ;;
-    esac
-}}
+            switch = functions(SSCONFIG_PATH, "failover_switch").replace(
+                "/koolshare/scripts/ss_shunt_hot_reload.sh", str(hot)
+            ).replace("/tmp/fancyss_shunt_hot_reload/need_dns_reload", str(root / "dns"))
+            for scenario, expected, rc in (
+                ("invalid", [], 1),
+                ("hot", ["hot", "current:34", "default:34", "backup:24"], 0),
+                ("light", ["hot", "light:34", "current:34", "default:34", "backup:24"], 0),
+                ("full", ["full:34", "current:34", "default:34", "backup:24"], 0),
+                ("dns", ["hot", "dns", "full:34", "current:34", "default:34", "backup:24"], 0),
+                ("failed", ["full:34"], 2),
+                ("dbus", ["full:34", "current:34", "default:34", "backup:24",
+                          "current:24", "backup:34"], 2),
+            ):
+                with self.subTest(scenario=scenario):
+                    (root / "dns").unlink(missing_ok=True)
+                    result = run_bash(switch + f"""
+ss_basic_enable=1
+ss_basic_status=1
+ss_basic_mode=7
+scenario={scenario}
+echo_date() {{ :; }}
+fss_get_current_node_id() {{ echo 24; }}
+fss_get_failover_node_id() {{ echo 34; }}
+fss_set_current_node_id() {{ echo current:$1; }}
+fss_set_failover_node_id() {{ echo backup:$1; [ "$scenario:$1" != dbus:24 ]; }}
+fss_shunt_store_default_node() {{ echo default:$1; }}
+fss_base_load_current_node_env() {{ [ "$FSS_FAILOVER_TARGET_NODE" = 34 ]; }}
+fss_node_id_exists() {{ :; }}
+fss_require_shunt_lib() {{ :; }}
+fss_shunt_target_is_proxy_node() {{ [ "$scenario" != invalid ]; }}
+firewall_profile_matches() {{ case "$scenario" in hot|light|dns) return 0;; *) return 1;; esac; }}
 sh() {{
-    if [ "$1" = '{hot}' ]; then
-        echo "new_outbound_domain:node34.example.com" > '{need_dns}'
-        return 1
-    fi
-    echo "LIGHT_PROXY_ONLY_FORBIDDEN:$*" >> '{root}/trace'
-    return 0
+    echo hot
+    [ "$scenario" != dns ] || touch '{root}/dns'
+    [ "$scenario" != light ]
 }}
-run() {{
-    echo "FULL_RESTART:$*" >> '{root}/trace'
-}}
-: > '{root}/trace'
-failover_exec_recovery switch_backup 34
-"""
-            )
-            self.assertEqual(res.returncode, 0, res.stderr)
-            trace = (root / "trace").read_text().splitlines()
-            self.assertEqual(trace, ["FULL_RESTART:start-stop-daemon -S -q -b -x /koolshare/ss/ssconfig.sh -- restart"])
+reload_dns_process() {{ echo dns; return 1; }}
+reload_proxy_only() {{ echo light:$FSS_FAILOVER_TARGET_NODE; }}
+apply_ss() {{ echo full:$FSS_FAILOVER_TARGET_NODE; [ "$scenario" != failed ]; }}
+check_status() {{ :; }}
+dbus() {{ if [ "$1" = get ]; then case "$2" in ss_basic_enable|ss_basic_status) echo 1;; ss_basic_mode) echo 7;; esac; fi; }}
+failover_switch switch_backup 24 34
+""")
+                    self.assertEqual(result.returncode, rc, result.stderr)
+                    self.assertEqual(result.stdout.splitlines(), expected)
 
+    def test_cross_protocol_and_missing_firewall_baseline_force_full_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_bash(functions(SSCONFIG_PATH, "firewall_profile", "firewall_profile_matches") + f"""
+FIREWALL_PROFILE='{tmp}/firewall'
+iptables() {{ [ "$2" = nat ]; }}
+ss_basic_mode=2
+ss_basic_type=4
+mangle=1
+firewall_profile_matches && exit 1
+echo 2:9:0 > "$FIREWALL_PROFILE"
+firewall_profile_matches && exit 2
+echo 2:4:1 > "$FIREWALL_PROFILE"
+firewall_profile_matches || exit 3
+iptables() {{ return 1; }}
+firewall_profile_matches && exit 4
+iptables() {{ return 0; }}
+! firewall_profile_matches
+""")
+            self.assertEqual(result.returncode, 0, result.stderr)
 
 if __name__ == "__main__":
     unittest.main()
