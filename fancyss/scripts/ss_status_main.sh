@@ -11,6 +11,11 @@ LOGSTREAM_C=/tmp/upload/ssc_status.stream
 STATUS_FRONT_CACHE=/tmp/upload/ss_status_front.txt
 STATUS_BACK_CACHE=/tmp/upload/ss_status.txt
 STATUS_STATE_FILE=/tmp/upload/ss_status_daemon.json
+FAILOVER_STATE_FILE="${FAILOVER_STATE_FILE:-/tmp/fss_failover_state}"
+FAILOVER_LOCK_FILE="${FAILOVER_LOCK_FILE:-/var/lock/koolss.lock}"
+FAILOVER_SS_LOG_FILE="${FAILOVER_SS_LOG_FILE:-/tmp/upload/ss_log.txt}"
+FAILOVER_MAX_STREAK="${FAILOVER_MAX_STREAK:-3}"
+FAILOVER_RECOVERY_RESET="${FAILOVER_RECOVERY_RESET:-10}"
 #LOGTIME1=📅$(TZ=UTC-8 date -R "+%m-%d/%H:%M:%S")
 LOGTIME1=⌚$(TZ=UTC-8 date -R "+%H:%M:%S")
 CURRENT=$(fss_get_current_node_id)
@@ -221,26 +226,153 @@ _get_interval() {
 	esac
 }
 
+failover_now_epoch() {
+	date +%s 2>/dev/null || echo 0
+}
+
+failover_state_read() {
+	FAILOVER_LAST_TS=0
+	FAILOVER_STREAK=0
+	FAILOVER_OK_STREAK=0
+	FAILOVER_LAST_OK_SIG=""
+	if [ -f "${FAILOVER_STATE_FILE}" ]; then
+		read -r FAILOVER_LAST_TS FAILOVER_STREAK FAILOVER_OK_STREAK FAILOVER_LAST_OK_SIG < "${FAILOVER_STATE_FILE}" 2>/dev/null || true
+	fi
+	case "${FAILOVER_LAST_TS}" in ''|*[!0-9]*) FAILOVER_LAST_TS=0 ;; esac
+	case "${FAILOVER_STREAK}" in ''|*[!0-9]*) FAILOVER_STREAK=0 ;; esac
+	case "${FAILOVER_OK_STREAK}" in ''|*[!0-9]*) FAILOVER_OK_STREAK=0 ;; esac
+}
+
+failover_state_write() {
+	printf '%s %s %s %s\n' "${1:-0}" "${2:-0}" "${3:-0}" "${4:-}" > "${FAILOVER_STATE_FILE}" 2>/dev/null || true
+}
+
+failover_cooldown_seconds() {
+	local streak="${1:-0}"
+	if [ "${streak}" -le 0 ]; then
+		echo 0
+	elif [ "${streak}" -eq 1 ]; then
+		echo 60
+	elif [ "${streak}" -eq 2 ]; then
+		echo 180
+	else
+		echo 300
+	fi
+}
+
+failover_is_ssconfig_locked() {
+	if command -v flock >/dev/null 2>&1; then
+		[ -f "${FAILOVER_LOCK_FILE}" ] || return 1
+		if ( exec 9>"${FAILOVER_LOCK_FILE}" && flock -n 9 ) >/dev/null 2>&1; then
+			return 1
+		fi
+		return 0
+	fi
+	ps 2>/dev/null | grep -E "ssconfig\.sh" | grep -v grep >/dev/null 2>&1
+}
+
+failover_record_probe_health() {
+	[ -f "${LOGFILE_F}" ] || return 0
+	failover_state_read
+	[ "${FAILOVER_STREAK}" -gt 0 ] || return 0
+	# 仅统计过滤掉 fancyss 诊断日志与 === 分隔标记后的有效探测记录数，避免分隔标记引起误计数
+	local probe_count="$(sed '/fancyss/d; /===/d; /^[[:space:]]*$/d' "${LOGFILE_F}" 2>/dev/null | wc -l | tr -d ' ')"
+	local last_line="$(sed '/fancyss/d; /===/d; /^[[:space:]]*$/d' "${LOGFILE_F}" 2>/dev/null | tail -n 1)"
+	[ -n "${last_line}" ] || return 0
+	local line_sig="${probe_count}:$(printf '%s' "${last_line}" | cksum | awk '{print $1}')"
+	if [ "${line_sig}" = "${FAILOVER_LAST_OK_SIG}" ]; then
+		return 0
+	fi
+	if echo "${last_line}" | grep -Eq "200 OK|204 OK"; then
+		local next_ok=$((FAILOVER_OK_STREAK + 1))
+		if [ "${next_ok}" -ge "${FAILOVER_RECOVERY_RESET}" ]; then
+			failover_state_write 0 0 0 "${line_sig}"
+			LOGM "$LOGTIME1 fancyss：节点已连续恢复正常 ${next_ok} 次，重置故障转移退避计数。"
+		else
+			failover_state_write "${FAILOVER_LAST_TS}" "${FAILOVER_STREAK}" "${next_ok}" "${line_sig}"
+		fi
+	elif [ "${FAILOVER_OK_STREAK}" -gt 0 ]; then
+		failover_state_write "${FAILOVER_LAST_TS}" "${FAILOVER_STREAK}" 0 "${line_sig}"
+	fi
+}
+
+failover_should_throttle() {
+	local action_kind="${1:-restart}"
+	local now="$(failover_now_epoch)"
+	failover_state_read
+
+	if failover_is_ssconfig_locked; then
+		LOGM "$LOGTIME1 fancyss：检测到 ssconfig 正在执行，跳过本次故障转移以避免并发冲突。"
+		return 0
+	fi
+
+	if [ "${action_kind}" = "restart" ] && [ "${FAILOVER_STREAK}" -ge "${FAILOVER_MAX_STREAK}" ]; then
+		LOGM "$LOGTIME1 fancyss：故障自动重启已达连续上限（${FAILOVER_MAX_STREAK} 次），停止循环重启并保持 Fail-Closed 拦截状态（防出口 IP 泄漏），请检查节点或手动切换。"
+		return 0
+	fi
+
+	local cooldown="$(failover_cooldown_seconds "${FAILOVER_STREAK}")"
+	local elapsed=$((now - FAILOVER_LAST_TS))
+	if [ "${FAILOVER_LAST_TS}" -gt 0 ] && [ "${cooldown}" -gt 0 ] && [ "${elapsed}" -lt "${cooldown}" ]; then
+		local remain=$((cooldown - elapsed))
+		LOGM "$LOGTIME1 fancyss：故障转移处于退避冷却期（剩余 ${remain}s，第 ${FAILOVER_STREAK} 次连续故障），暂不重复触发。"
+		return 0
+	fi
+
+	local next_streak=$((FAILOVER_STREAK + 1))
+	failover_state_write "${now}" "${next_streak}" 0 "${FAILOVER_LAST_OK_SIG}"
+	return 1
+}
+
+failover_mark_separator() {
+	local reason="${1:-recovery}"
+	# 注意：此处不含 "fancyss" 字样，避免被 failover_check_1/2/3 的 sed '/fancyss/d' 过滤
+	printf '%s === failover %s ===\n' "${LOGTIME1}" "${reason}" >> "${LOGFILE_F}" 2>/dev/null || true
+}
+
+failover_exec_recovery() {
+	local reason="${1:-restart}"
+	local target_node_id="${2:-}"
+	local basic_mode="$(dbus get ss_basic_mode 2>/dev/null)"
+	failover_mark_separator "${reason}"
+	if [ "${basic_mode}" = "7" ] && [ -n "${target_node_id}" ] && [ -x "/koolshare/scripts/ss_shunt_hot_reload.sh" ]; then
+		if sh /koolshare/scripts/ss_shunt_hot_reload.sh switch_default_node "${target_node_id}" >> "${FAILOVER_SS_LOG_FILE}" 2>&1; then
+			return 0
+		fi
+		LOGM "$LOGTIME1 fancyss：分流默认出站热切换未就绪，回退轻量重载代理..."
+	fi
+	if sh /koolshare/ss/ssconfig.sh reload_proxy_only >> "${FAILOVER_SS_LOG_FILE}" 2>&1; then
+		return 0
+	fi
+	LOGM "$LOGTIME1 fancyss：轻量重载代理未就绪，回退 Fail-Closed 安全重启..."
+	run start-stop-daemon -S -q -b -x /koolshare/ss/ssconfig.sh -- restart
+}
+
 failover_action(){
 	FLAG=$1
 	PING=$2
 	local current_id=$(fss_get_current_node_id)
 	local current_name=$(get_node_name_by_id "${current_id}")
 	if [ "$ss_failover_s4_1" == "0" ];then
-		[ "$FLAG" == "1" ] && LOGM "$LOGTIME1 fancyss：检测到连续$ss_failover_s1个状态故障，关闭插件！"
-		[ "$FLAG" == "2" ] && LOGM "$LOGTIME1 fancyss：检测到最近$ss_failover_s2_1个状态中，故障次数超过$ss_failover_s2_2个，关闭插件！"
-		[ "$FLAG" == "3" ] && LOGM "$LOGTIME1 fancyss：检测到最近$ss_failover_s3_1个状态平均延迟:$PING超过$ss_failover_s3_2 ms，关闭插件！"
+		[ "$FLAG" == "1" ] && LOGM "$LOGTIME1 fancyss：检测到连续${ss_failover_s1}个状态故障，按配置关闭插件（注意：将恢复直连）！"
+		[ "$FLAG" == "2" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s2_1}个状态中，故障次数超过${ss_failover_s2_2}个，按配置关闭插件（注意：将恢复直连）！"
+		[ "$FLAG" == "3" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s3_1}个状态平均延迟:${PING}超过${ss_failover_s3_2} ms，按配置关闭插件（注意：将恢复直连）！"
 		dbus set ss_basic_enable="0"
 		# 关闭
 		dbus set ss_heart_beat="1"
 		run start-stop-daemon -S -q -b -x /koolshare/ss/ssconfig.sh -- stop
 	elif [ "$ss_failover_s4_1" == "1" ];then
-		[ "$FLAG" == "1" ] && LOGM "$LOGTIME1 fancyss：检测到连续$ss_failover_s1个状态故障，重启插件！"
-		[ "$FLAG" == "2" ] && LOGM "$LOGTIME1 fancyss：检测到最近$ss_failover_s2_1个状态中，故障次数超过$ss_failover_s2_2个，重启插件！"
-		[ "$FLAG" == "3" ] && LOGM "$LOGTIME1 fancyss：检测到最近$ss_failover_s3_1个状态平均延迟:$PING超过$ss_failover_s3_2 ms，重启插件！"
-		# 重启
-		run start-stop-daemon -S -q -b -x /koolshare/ss/ssconfig.sh -- restart
+		if failover_should_throttle "restart"; then
+			return
+		fi
+		[ "$FLAG" == "1" ] && LOGM "$LOGTIME1 fancyss：检测到连续${ss_failover_s1}个状态故障，执行 Fail-Closed 轻量重启！"
+		[ "$FLAG" == "2" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s2_1}个状态中，故障次数超过${ss_failover_s2_2}个，执行 Fail-Closed 轻量重启！"
+		[ "$FLAG" == "3" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s3_1}个状态平均延迟:${PING}超过${ss_failover_s3_2} ms，执行 Fail-Closed 轻量重启！"
+		failover_exec_recovery "restart"
 	elif [ "$ss_failover_s4_1" == "2" ];then
+		if failover_should_throttle "switch"; then
+			return
+		fi
 		if [ "$ss_failover_s4_2" == "3" ];then
 			if [ ! -f "/tmp/upload/webtest_bakcup.txt" ];then
 				LOGM "$LOGTIME1 fancyss：没有找到web延迟测试结果，采取切换到下个节点的策略..."
@@ -257,45 +389,42 @@ failover_action(){
 		if [ "$ss_failover_s4_2" == "1" ];then
 			local backup_id=$(fss_get_failover_node_id)
 			local backup_name=$(get_node_name_by_id "${backup_id}")
-			[ "$FLAG" == "1" ] && LOGM "$LOGTIME1 fancyss：检测到连续$ss_failover_s1个状态故障，切换到备用节点：[${backup_name}]！同时把主节点降级为备用节点！"
-			[ "$FLAG" == "2" ] && LOGM "$LOGTIME1 fancyss：检测到最近$ss_failover_s2_1个状态中，故障次数超过$ss_failover_s2_2个，切换到备用节点：[${backup_name}]！同时把主节点降级为备用节点！"
-			[ "$FLAG" == "3" ] && LOGM "$LOGTIME1 fancyss：检测到最近$ss_failover_s3_1个状态平均延迟:$PING超过$ss_failover_s3_2 ms，切换到备用节点：[${backup_name}]！同时把主节点降级为备用节点！"
+			[ "$FLAG" == "1" ] && LOGM "$LOGTIME1 fancyss：检测到连续${ss_failover_s1}个状态故障，切换到备用节点：[${backup_name}]！同时把主节点降级为备用节点！"
+			[ "$FLAG" == "2" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s2_1}个状态中，故障次数超过${ss_failover_s2_2}个，切换到备用节点：[${backup_name}]！同时把主节点降级为备用节点！"
+			[ "$FLAG" == "3" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s3_1}个状态平均延迟:${PING}超过${ss_failover_s3_2} ms，切换到备用节点：[${backup_name}]！同时把主节点降级为备用节点！"
 			# 切换
 			fss_set_current_node_id "${backup_id}"
 			# 降级
 			fss_set_failover_node_id "${current_id}"
-			# 重启
-			run start-stop-daemon -S -q -b -x /koolshare/ss/ssconfig.sh -- restart
+			# Fail-Closed 轻量恢复（mode 7 优先热切默认出站，不中断独立分流长连接）
+			failover_exec_recovery "switch_backup" "${backup_id}"
 			dbus set ss_heart_beat="1"
 		elif [ "$ss_failover_s4_2" == "2" ];then
 			NEXT_NODE=$(fss_get_next_node_id_in_order "${current_id}")
 			local NEXT_NAME=$(get_node_name_by_id "${NEXT_NODE}")
 			local NODE_COUNT=$(fss_get_node_count)
-			[ "$FLAG" == "1" ] && LOGM "$LOGTIME1 fancyss：检测到连续$ss_failover_s1个状态故障，切换到节点列表的下个节点：[${NEXT_NAME}]！"
-			[ "$FLAG" == "2" ] && LOGM "$LOGTIME1 fancyss：检测到最近$ss_failover_s2_1个状态中，故障次数超过$ss_failover_s2_2个，切换到节点列表的下个节点：[${NEXT_NAME}]！"
-			[ "$FLAG" == "3" ] && LOGM "$LOGTIME1 fancyss：检测到最近$ss_failover_s3_1个状态平均延迟:$PING超过$ss_failover_s3_2 ms，切换到节点列表的下个节点：[${NEXT_NAME}]！"
 			if [ "${NODE_COUNT}" -le "1" ];then
-				LOGM "$LOGTIME1 fancyss：检测到你只有一个节点！无法切换到下一个节点！只好关闭插件了！"
-				dbus set ss_basic_enable="0"
-				run start-stop-daemon -S -q -b -x /koolshare/ss/ssconfig.sh -- stop
+				LOGM "$LOGTIME1 fancyss：检测到仅剩 1 个节点无法切换！为防止出口 IP 泄漏，保持 Fail-Closed 拦截状态并告警（如需恢复直连请手动关闭插件）。"
+				failover_mark_separator "single_node_hold"
 				return
 			fi
+			[ "$FLAG" == "1" ] && LOGM "$LOGTIME1 fancyss：检测到连续${ss_failover_s1}个状态故障，切换到节点列表的下个节点：[${NEXT_NAME}]！"
+			[ "$FLAG" == "2" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s2_1}个状态中，故障次数超过${ss_failover_s2_2}个，切换到节点列表的下个节点：[${NEXT_NAME}]！"
+			[ "$FLAG" == "3" ] && LOGM "$LOGTIME1 fancyss：检测到最近${ss_failover_s3_1}个状态平均延迟:${PING}超过${ss_failover_s3_2} ms，切换到节点列表的下个节点：[${NEXT_NAME}]！"
 			# 切换
 			fss_set_current_node_id "${NEXT_NODE}"
-			# 重启
-			#start-stop-daemon -S -q -b -x /koolshare/ss/ssconfig.sh -- restart
+			# Fail-Closed 轻量恢复
 			echo_date "========================================================================" >/tmp/upload/ss_log.txt
 			echo_date "" >>/tmp/upload/ss_log.txt
-			echo_date "故障转移：重启fancyss！" >>/tmp/upload/ss_log.txt
+			echo_date "故障转移：执行 Fail-Closed 轻量切换！" >>/tmp/upload/ss_log.txt
 			echo_date "" >>/tmp/upload/ss_log.txt
 			echo_date "========================================================================" >>/tmp/upload/ss_log.txt
-			run start-stop-daemon -S -q -x /koolshare/ss/ssconfig.sh -- restart >>/tmp/upload/ss_log.txt
-			
+			failover_exec_recovery "switch_next" "${NEXT_NODE}"
 			dbus set ss_heart_beat="1"
 		elif [ "$ss_failover_s4_2" == "3" ];then
 			LOGM "$LOGTIME1 fancyss：切换到web延迟最低节点：[$(get_node_name_by_id "${FAST_NODE}")]..."
 			fss_set_current_node_id "${FAST_NODE}"
-			run start-stop-daemon -S -q -b -x /koolshare/ss/ssconfig.sh -- restart
+			failover_exec_recovery "switch_fastest" "${FAST_NODE}"
 			dbus set ss_heart_beat="1"
 		fi
 	fi	
@@ -351,6 +480,8 @@ heath_check(){
 	[ "${ss_failover_enable}" != "1" ] && return
 	[ "${COUNT}" -eq "2" ] && echo "${LOGTIME1} fancyss：跳过刚提交后的2个状态，从此处开始的状态用于故障检测"
 	[ "${COUNT}" -le "2" ] && return
+
+	failover_record_probe_health
 
 	[ "${ss_failover_c1}" == "1" ] && failover_check_1
 	[ "${ss_failover_c2}" == "1" ] && failover_check_2

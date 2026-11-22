@@ -116,7 +116,9 @@ hot_node_needs_helper() {
 hot_bypass_new_outbound_server() {
 	local outbound_file="$1"
 	local white_list_file="${HOT_WHITE_LIST_FILE:-/tmp/white_list.txt}"
+	local node_domains_file="${HOT_NODE_DOMAINS_FILE:-/tmp/ss_node_domains.txt}"
 	local addr=""
+	local resolved_ip=""
 
 	[ -s "${outbound_file}" ] || return 0
 	addr="$(run jq -r '[.settings.vnext[]?.address, .settings.servers[]?.address, .settings.address] | map(select(type == "string" and length > 0)) | .[0] // empty' "${outbound_file}" 2>/dev/null)"
@@ -127,11 +129,24 @@ hot_bypass_new_outbound_server() {
 		;;
 	esac
 	if printf '%s' "${addr}" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+		ipset -! add ignlist "${addr}" >/dev/null 2>&1 || true
 		ipset -! add white_list "${addr}" >/dev/null 2>&1 || true
+	elif printf '%s' "${addr}" | grep -Fq ':'; then
+		ipset -! add ignlist6 "${addr}" >/dev/null 2>&1 || true
+		ipset -! add white_list6 "${addr}" >/dev/null 2>&1 || true
 	else
+		if [ ! -f "${node_domains_file}" ] || ! grep -Fxq "${addr}" "${node_domains_file}" 2>/dev/null; then
+			printf '%s\n' "${addr}" >> "${node_domains_file}" 2>/dev/null || true
+		fi
 		if [ ! -f "${white_list_file}" ] || ! grep -Fxq "${addr}" "${white_list_file}" 2>/dev/null; then
-			hot_log "新节点域名 ${addr} 不在当前白名单中，热更新后将自动联动重载 DNS。"
+			printf '%s\n' "${addr}" >> "${white_list_file}" 2>/dev/null || true
+			hot_log "新节点域名 ${addr} 已加入节点直连与白名单，热更新后联动刷新 DNS。"
 			hot_mark_need_dns_reload "new_outbound_domain:${addr}"
+		fi
+		if command -v nslookup >/dev/null 2>&1; then
+			for resolved_ip in $(nslookup "${addr}" 2>/dev/null | awk '/^Address [0-9]+: /{print $3}' | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | grep -v '^127\.'); do
+				ipset -! add ignlist "${resolved_ip}" >/dev/null 2>&1 || true
+			done
 		fi
 	fi
 	return 0
@@ -351,7 +366,22 @@ hot_remove_rules_from_file() {
 }
 
 hot_runtime_managed_rule_tags() {
-	run "${XAPI_TOOL_BIN}" routing-list-rule --server "${XRAY_API_SERVER}" 2>/dev/null | run jq -r '.rules[]? | (.rule_tag // empty)' 2>/dev/null | awk '/^fss_/'
+	local raw_file="${HOT_STATE_DIR}/.routing_list_raw.$$"
+	local tags_file="${HOT_STATE_DIR}/.routing_list_tags.$$"
+
+	hot_ensure_state_dir >/dev/null 2>&1 || return 1
+	if ! run "${XAPI_TOOL_BIN}" routing-list-rule --server "${XRAY_API_SERVER}" > "${raw_file}" 2>/dev/null; then
+		rm -f "${raw_file}" "${tags_file}" >/dev/null 2>&1 || true
+		return 1
+	fi
+	if ! run jq -r '.rules[]? | (.rule_tag // empty)' "${raw_file}" > "${tags_file}" 2>/dev/null; then
+		rm -f "${raw_file}" "${tags_file}" >/dev/null 2>&1 || true
+		return 1
+	fi
+	awk '/^fss_/' "${tags_file}"
+	local awk_rc=$?
+	rm -f "${raw_file}" "${tags_file}" >/dev/null 2>&1 || true
+	return "${awk_rc}"
 }
 
 hot_remove_runtime_rules_except() {
@@ -614,6 +644,158 @@ hot_reload_revert() {
 	return 0
 }
 
+hot_ensure_single_target_loaded() {
+	local target_id="$1"
+	local missing_ids_file="${HOT_STATE_DIR}/single_missing.$$"
+	local outbound_file=""
+
+	[ -n "${target_id}" ] || return 1
+	if hot_target_loaded "${target_id}"; then
+		return 0
+	fi
+	if fss_shunt_target_is_direct "${target_id}" || fss_shunt_target_is_reject "${target_id}"; then
+		return 1
+	fi
+	hot_ensure_state_dir || return 1
+	printf '%s\n' "${target_id}" > "${missing_ids_file}" || return 1
+	if ! fss_shunt_try_prepare_webtest_outbounds "${missing_ids_file}"; then
+		rm -f "${missing_ids_file}" >/dev/null 2>&1 || true
+		return 1
+	fi
+	rm -f "${missing_ids_file}" >/dev/null 2>&1 || true
+
+	outbound_file="${FSS_SHUNT_RUNTIME_OUTBOUND_DIR}/${target_id}_outbounds.json"
+	[ -s "${outbound_file}" ] || return 1
+	if hot_node_needs_helper "${target_id}"; then
+		return 1
+	fi
+	hot_bypass_new_outbound_server "${outbound_file}"
+	if ! hot_add_outbound_from_file "${target_id}" "${outbound_file}"; then
+		return 1
+	fi
+	hot_append_outbound_to_runtime_conf "${outbound_file}" || {
+		hot_remove_outbound "proxy${target_id}" >/dev/null 2>&1 || true
+		return 1
+	}
+	return 0
+}
+
+hot_switch_default_node() {
+	local target_node_id="$1"
+	local generation=""
+	local new_default_tag=""
+	local new_probe_tag=""
+	local old_tag=""
+	local existing_tags=""
+	local probe_domains=""
+	local host=""
+	local has_probe="0"
+
+	[ -n "${target_node_id}" ] || {
+		hot_log "缺少目标默认节点 ID，无法热切换。"
+		return 1
+	}
+	[ -f "${HOT_LOCK_FILE}" ] && {
+		hot_log "已有热重载任务在执行。"
+		return 1
+	}
+	hot_ensure_state_dir || return 1
+	touch "${HOT_LOCK_FILE}" || return 1
+	trap 'rm -f "${HOT_LOCK_FILE}" >/dev/null 2>&1' EXIT INT TERM
+
+	rm -f "${HOT_NEED_DNS_RELOAD_FILE}" >/dev/null 2>&1 || true
+	hot_require_ready || return 1
+	if hot_node_needs_helper "${target_node_id}"; then
+		hot_log "目标默认节点 ${target_node_id} 依赖外部 helper 进程，回退重启路径。"
+		return 1
+	fi
+
+	# 严禁调用 hot_build_next_state / fss_shunt_cleanup_runtime，避免执行其他分流节点的 *_stop.sh！
+	hot_ensure_single_target_loaded "${target_node_id}" || {
+		hot_log "热切换默认节点时注入出站 proxy${target_node_id} 失败。"
+		return 1
+	}
+
+	generation="$(date +%s)_$$"
+	new_default_tag="fss_default_s_${generation}"
+	new_probe_tag="fss_status_probe_s_${generation}"
+	existing_tags="$(hot_runtime_managed_rule_tags)" || {
+		hot_log "热切换默认节点枚举当前运行规则失败，中止并回退。"
+		return 1
+	}
+
+	# 1) 无论是否存在自定义分流规则，始终先写入新默认规则 fss_default_s_<gen>
+	if ! hot_add_rule "${new_default_tag}" "${target_node_id}" "" "" "" ""; then
+		hot_log "热切换默认节点写入新默认规则 ${new_default_tag} 失败。"
+		return 1
+	fi
+
+	# 2) 若运行中存在 fss_status_probe*，同步写入新探测规则指向新默认节点
+	if printf '%s\n' "${existing_tags}" | grep -Eq '^fss_status_probe($|_s_)'; then
+		has_probe="1"
+		for url in "${ss_basic_furl}" "${ss_basic_curl}"; do
+			host="$(fss_shunt_host_from_url "${url}" 2>/dev/null)" || host=""
+			[ -n "${host}" ] || continue
+			if [ -z "${probe_domains}" ]; then
+				probe_domains="${host}"
+			else
+				probe_domains="${probe_domains},${host}"
+			fi
+		done
+		if [ -n "${probe_domains}" ]; then
+			if ! hot_add_rule "${new_probe_tag}" "${target_node_id}" "" "" "${probe_domains}" ""; then
+				hot_remove_rule "${new_default_tag}" >/dev/null 2>&1 || true
+				hot_log "热切换默认节点写入新探测规则 ${new_probe_tag} 失败，已回滚。"
+				return 1
+			fi
+		else
+			has_probe="0"
+		fi
+	fi
+
+	# 3) 仅删除旧的 fss_default* 与（已替换的）fss_status_probe*，严禁删除 fss_webrtc 或任何自定义分流规则；
+	# 任一旧规则删除失败必须回滚新增规则并返回非零，防止旧 match-all 规则继续优先命中！
+	for old_tag in ${existing_tags}; do
+		case "${old_tag}" in
+		fss_default|fss_default_s_*)
+			[ "${old_tag}" = "${new_default_tag}" ] && continue
+			if ! hot_remove_rule "${old_tag}"; then
+				hot_remove_rule "${new_default_tag}" >/dev/null 2>&1 || true
+				[ "${has_probe}" = "1" ] && hot_remove_rule "${new_probe_tag}" >/dev/null 2>&1 || true
+				hot_log "热切换默认节点删除旧默认规则 ${old_tag} 失败，已回滚新规则并回退重启路径。"
+				return 1
+			fi
+			;;
+		fss_status_probe|fss_status_probe_s_*)
+			[ "${has_probe}" = "1" ] || continue
+			[ "${old_tag}" = "${new_probe_tag}" ] && continue
+			if ! hot_remove_rule "${old_tag}"; then
+				hot_remove_rule "${new_default_tag}" >/dev/null 2>&1 || true
+				hot_remove_rule "${new_probe_tag}" >/dev/null 2>&1 || true
+				hot_log "热切换默认节点删除旧探测规则 ${old_tag} 失败，已回滚新规则并回退重启路径。"
+				return 1
+			fi
+			;;
+		esac
+	done
+
+	if [ -f "${HOT_NEED_DNS_RELOAD_FILE}" ]; then
+		rm -f "${HOT_NEED_DNS_RELOAD_FILE}" >/dev/null 2>&1 || true
+		if [ ! -x "/koolshare/ss/ssconfig.sh" ] || ! sh /koolshare/ss/ssconfig.sh reload_dns_process >/dev/null 2>&1; then
+			hot_log "热切换新域名节点后重载 DNS 进程失败，回退重启路径。"
+			return 1
+		fi
+	fi
+
+	ss_basic_shunt_default_node="${target_node_id}"
+	dbus set ss_basic_shunt_default_node="${target_node_id}" >/dev/null 2>&1 || true
+	ss_basic_shunt_rule_ts="${generation}"
+	dbus set ss_basic_shunt_rule_ts="${generation}" >/dev/null 2>&1 || true
+
+	hot_log "已热切换默认出站至 proxy${target_node_id}（Xray 主进程未重启，其他分流规则/helper/WebRTC 规则保持不变）。"
+	return 0
+}
+
 case "$1" in
 apply|"")
 	hot_reload_apply
@@ -624,12 +806,15 @@ seed)
 revert)
 	hot_reload_revert
 	;;
+switch_default_node)
+	hot_switch_default_node "$2"
+	;;
 clear)
 	hot_clear_state
 	hot_log "已清理热重载状态。"
 	;;
 *)
-	echo "Usage: $0 [apply|seed|revert|clear]"
+	echo "Usage: $0 [apply|seed|revert|switch_default_node <node_id>|clear]"
 	exit 1
 	;;
 esac

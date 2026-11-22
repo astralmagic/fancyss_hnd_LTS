@@ -1166,6 +1166,8 @@ fss_shunt_rebuild_proxy_domains() {
 	fi
 	awk -F'|' '
 	{
+		target = toupper($2)
+		if (target == "" || target == "DIRECT" || target == "REJECT") next
 		file = $3
 		if (file == "") next
 		while ((getline line < file) > 0) {
@@ -1268,19 +1270,32 @@ fss_shunt_prepare_runtime() {
 	while IFS="${sep}" read -r rule_id source_type preset custom_b64 target_id remark
 	do
 		[ -n "${target_id}" ] || continue
+		case "$(printf '%s' "${target_id}" | tr '[:lower:]' '[:upper:]')" in
+		DIRECT)
+			target_id="DIRECT"
+			;;
+		REJECT)
+			target_id="REJECT"
+			;;
+		esac
 		if ! fss_shunt_target_is_special "${target_id}"; then
 			fss_shunt_target_is_proxy_node "${target_id}" || continue
 		fi
 		domain_file="${FSS_SHUNT_RUNTIME_RULE_DIR}/${rule_id}.domains"
 		ip_file="${FSS_SHUNT_RUNTIME_RULE_DIR}/${rule_id}.ips"
 		geoip_file="${FSS_SHUNT_RUNTIME_RULE_DIR}/${rule_id}.geoips"
-		rm -f "${domain_file}" "${ip_file}" "${geoip_file}" >/dev/null 2>&1
-		count="$(fss_shunt_materialize_rule_domains "${source_type}" "${preset}" "${custom_b64}" "${domain_file}" "${proxy_tmp}" 2>/dev/null)"
+		local rule_proxy_tmp="${tmp_dir}/rule_proxy.txt"
+		rm -f "${domain_file}" "${ip_file}" "${geoip_file}" "${rule_proxy_tmp}" >/dev/null 2>&1
+		count="$(fss_shunt_materialize_rule_domains "${source_type}" "${preset}" "${custom_b64}" "${domain_file}" "${rule_proxy_tmp}" 2>/dev/null)"
 		[ -n "${count}" ] || count=0
 		if [ "${count}" -le 0 ] 2>/dev/null; then
-			rm -f "${domain_file}" "${ip_file}" "${geoip_file}" >/dev/null 2>&1
+			rm -f "${domain_file}" "${ip_file}" "${geoip_file}" "${rule_proxy_tmp}" >/dev/null 2>&1
 			continue
 		fi
+		if [ -s "${rule_proxy_tmp}" ] && ! fss_shunt_target_is_special "${target_id}"; then
+			cat "${rule_proxy_tmp}" >> "${proxy_tmp}"
+		fi
+		rm -f "${rule_proxy_tmp}" >/dev/null 2>&1
 		echo "${rule_id}|${target_id}|${domain_file}|${source_type}|${preset}|${remark}" >> "${active_tmp}"
 		fss_shunt_target_is_special "${target_id}" || echo "${target_id}" >> "${targets_tmp}"
 	done < "${tmp_dir}/rules.txt"
@@ -1299,7 +1314,7 @@ fss_shunt_prepare_runtime() {
 		rebuild_runtime_lists=1
 	fi
 	if [ "${rebuild_runtime_lists}" = "1" ]; then
-		awk -F '|' 'NF >= 2 && $2 != "DIRECT" && $2 != "REJECT" && !seen[$2]++ {print $2}' "${active_tmp}" > "${targets_tmp}"
+		awk -F '|' 'NF >= 2 { t = toupper($2); if (t != "DIRECT" && t != "REJECT" && !seen[$2]++) print $2 }' "${active_tmp}" > "${targets_tmp}"
 		target_count=$(wc -l < "${targets_tmp}" 2>/dev/null | tr -d ' ')
 		[ -n "${target_count}" ] || target_count=0
 	fi
@@ -1307,7 +1322,7 @@ fss_shunt_prepare_runtime() {
 		head -n "${FSS_SHUNT_MAX_TARGETS}" "${targets_tmp}" > "${targets_tmp}.limit"
 		mv -f "${targets_tmp}.limit" "${targets_tmp}"
 		target_count="${FSS_SHUNT_MAX_TARGETS}"
-		awk -F '|' 'NR==FNR {keep[$1]=1; next} keep[$2] || $2 == "DIRECT" || $2 == "REJECT"' "${targets_tmp}" "${active_tmp}" > "${active_tmp}.keep"
+		awk -F '|' 'NR==FNR {keep[$1]=1; next} { t = toupper($2) } keep[$2] || t == "DIRECT" || t == "REJECT"' "${targets_tmp}" "${active_tmp}" > "${active_tmp}.keep"
 		mv -f "${active_tmp}.keep" "${active_tmp}"
 		rebuild_runtime_lists=1
 	fi

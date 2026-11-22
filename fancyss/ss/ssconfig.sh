@@ -1406,6 +1406,301 @@ kill_process() {
 	fi
 }
 
+kill_proxy_only() {
+	local v2ray_process=$(pidof v2ray)
+	if [ -n "$v2ray_process" ]; then
+		echo_date "关闭V2Ray进程..."
+		killall v2ray >/dev/null 2>&1
+		kill -9 "$v2ray_process" >/dev/null 2>&1
+	fi
+
+	local xray_process=$(pidof xray)
+	if [ -n "$xray_process" ]; then
+		echo_date "关闭xray进程..."
+		if [ -d "/koolshare/perp/xray" ];then
+			perpctl d xray >/dev/null 2>&1
+			rm -rf /koolshare/perp/xray >/dev/null 2>&1
+		fi
+		killall xray >/dev/null 2>&1
+		kill -9 "$xray_process" >/dev/null 2>&1
+	fi
+
+	local rssredir=$(pidof rss-redir)
+	if [ -n "$rssredir" ]; then
+		echo_date "关闭ssr-redir进程..."
+		killall rss-redir >/dev/null 2>&1
+	fi
+
+	local ssrlocal=$(ps | grep -w rss-local | grep -v "grep" | grep -w "23456" | awk '{print $1}')
+	if [ -n "$ssrlocal" ]; then
+		echo_date "关闭ssr-local进程:23456端口..."
+		kill $ssrlocal >/dev/null 2>&1
+	fi
+
+	local IPT2SOCKS_PID=$(ps | grep "ipt2socks" | grep -v grep | awk '{print $1}')
+	if [ -n "${IPT2SOCKS_PID}" ];then
+		echo_date "关闭ipt2socks进程..."
+		killall ipt2socks >/dev/null 2>&1
+	fi
+
+	local NAIVE_PID=$(ps | grep "naive" | grep -v grep | awk '{print $1}')
+	if [ -n "${NAIVE_PID}" ];then
+		echo_date "关闭naive进程..."
+		killall naive >/dev/null 2>&1
+	fi
+
+	local TUIC_PID=$(ps | grep "tuic-client" | grep -v grep | awk '{print $1}')
+	if [ -n "${TUIC_PID}" ];then
+		echo_date "关闭tuic-client进程..."
+		killall tuic-client >/dev/null 2>&1
+	fi
+
+	local ANYTLS_PID=$(ps | grep "anytls-zig" | grep -v grep | awk '{print $1}')
+	if [ -n "${ANYTLS_PID}" ];then
+		echo_date "关闭anytls-zig进程..."
+		killall anytls-zig >/dev/null 2>&1
+	fi
+
+	local OBFSLOCAL_PID=$(ps | grep "obfs-local" | grep -v grep | awk '{print $1}')
+	if [ -n "${OBFSLOCAL_PID}" ];then
+		echo_date "关闭obfs-local进程..."
+		killall obfs-local >/dev/null 2>&1
+	fi
+}
+
+add_current_server_ip_to_ignlist() {
+	local ip="${1:-${CURRENT_NODE_SERVER_RESOLVED_IP:-${ss_basic_server_ip}}}"
+	if [ -z "${ip}" ] && [ -n "${ss_basic_server}" ]; then
+		case "${ss_basic_server}" in
+		*[!0-9.:]*|"")
+			;;
+		*)
+			ip="${ss_basic_server}"
+			;;
+		esac
+	fi
+	[ -n "${ip}" ] || return 0
+	case "${ip}" in
+	*:*)
+		ipset -! add ignlist6 "${ip}" >/dev/null 2>&1 || true
+		;;
+	*)
+		ipset -! add ignlist "${ip}" >/dev/null 2>&1 || true
+		;;
+	esac
+}
+
+install_fail_closed_guard_family() {
+	local cmd="$1"
+	local chain="$2"
+	local sfx="$3"
+	local tmp_chain="${chain}_TMP"
+
+	# 严禁对已存在的上一代 ${chain} 执行 -F 或删除：先在独立临时链 ${tmp_chain} 完成全部规则构建，
+	# 挂载成功后再原子替换旧链；任一步骤失败仅清理 ${tmp_chain}，上一代保护链保持完好。
+	if ${cmd} -t filter -L "${tmp_chain}" >/dev/null 2>&1; then
+		while ${cmd} -t filter -C FORWARD -j "${tmp_chain}" >/dev/null 2>&1; do
+			${cmd} -t filter -D FORWARD -j "${tmp_chain}" >/dev/null 2>&1 || return 1
+		done
+		${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || return 1
+		${cmd} -t filter -X "${tmp_chain}" >/dev/null 2>&1 || return 1
+	fi
+
+	${cmd} -t filter -N "${tmp_chain}" >/dev/null 2>&1 || return 1
+	if ! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "ignlist${sfx}" dst -j RETURN >/dev/null 2>&1 ||
+		! ( ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "black_list${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "black_list${sfx}" dst -j DROP >/dev/null 2>&1 ) ||
+		! ( ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "gfwlist${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "gfwlist${sfx}" dst -j DROP >/dev/null 2>&1 ) ||
+		! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "chnlist${sfx}" dst -j RETURN >/dev/null 2>&1 ||
+		! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "chnroute${sfx}" dst -j RETURN >/dev/null 2>&1 ||
+		! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "white_list${sfx}" dst -j RETURN >/dev/null 2>&1 ||
+		! ( ${cmd} -t filter -A "${tmp_chain}" -p tcp -j REJECT --reject-with tcp-reset >/dev/null 2>&1 || ${cmd} -t filter -A "${tmp_chain}" -p tcp -j DROP >/dev/null 2>&1 ) ||
+		! ( ${cmd} -t filter -A "${tmp_chain}" -p udp -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1 || ${cmd} -t filter -A "${tmp_chain}" -p udp -j DROP >/dev/null 2>&1 ); then
+		${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
+		${cmd} -t filter -X "${tmp_chain}" >/dev/null 2>&1 || true
+		return 1
+	fi
+
+	if ! ${cmd} -t filter -I FORWARD 1 -j "${tmp_chain}" >/dev/null 2>&1; then
+		${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
+		${cmd} -t filter -X "${tmp_chain}" >/dev/null 2>&1 || true
+		return 1
+	fi
+
+	# 新临时保护链已在 FORWARD 1 生效，此时再安全移除上一代旧链并原子重命名
+	if ${cmd} -t filter -L "${chain}" >/dev/null 2>&1; then
+		while ${cmd} -t filter -C FORWARD -j "${chain}" >/dev/null 2>&1; do
+			${cmd} -t filter -D FORWARD -j "${chain}" >/dev/null 2>&1 || break
+		done
+		${cmd} -t filter -F "${chain}" >/dev/null 2>&1 || true
+		${cmd} -t filter -X "${chain}" >/dev/null 2>&1 || true
+	fi
+	${cmd} -t filter -E "${tmp_chain}" "${chain}" >/dev/null 2>&1 || true
+	return 0
+}
+
+remove_fail_closed_guard_family() {
+	local cmd="$1"
+	local chain="$2"
+	local target=""
+	local rc=0
+
+	for target in "${chain}" "${chain}_TMP"; do
+		while ${cmd} -t filter -C FORWARD -j "${target}" >/dev/null 2>&1; do
+			${cmd} -t filter -D FORWARD -j "${target}" >/dev/null 2>&1 || { rc=1; break; }
+		done
+		if ${cmd} -t filter -L "${target}" >/dev/null 2>&1; then
+			${cmd} -t filter -F "${target}" >/dev/null 2>&1 || rc=1
+			${cmd} -t filter -X "${target}" >/dev/null 2>&1 || rc=1
+		fi
+		# 显式核验跳转与链均已彻底移除，不静默忽略残留
+		if ${cmd} -t filter -C FORWARD -j "${target}" >/dev/null 2>&1 || ${cmd} -t filter -L "${target}" >/dev/null 2>&1; then
+			rc=1
+		fi
+	done
+	return "${rc}"
+}
+
+install_fail_closed_guard() {
+	# 在 filter/FORWARD 顶部挂载临时 Fail-Closed 保护链（不含 SHADOWSOCKS/3333 字样，不受 flush_iptables 影响）。
+	# 任一关键步骤失败立即中止并返回非零（不破坏上一代既有保护链），调用方禁止继续 flush_iptables。
+	local had_v4_prev="0"
+	iptables -t filter -L FSS_FC_GUARD >/dev/null 2>&1 && had_v4_prev="1"
+
+	if ! install_fail_closed_guard_family iptables FSS_FC_GUARD ""; then
+		return 1
+	fi
+	if [ "${ss_basic_proxy_ipv6}" = "1" ] || ip6tables -t mangle -L SHADOWSOCKS6 >/dev/null 2>&1 || ip6tables -t filter -L SHADOWSOCKS6 >/dev/null 2>&1; then
+		if ! install_fail_closed_guard_family ip6tables FSS_FC_GUARD6 "6"; then
+			[ "${had_v4_prev}" = "1" ] || remove_fail_closed_guard_family iptables FSS_FC_GUARD >/dev/null 2>&1 || true
+			return 1
+		fi
+	fi
+	return 0
+}
+
+remove_fail_closed_guard() {
+	local rc=0
+	remove_fail_closed_guard_family iptables FSS_FC_GUARD || rc=1
+	remove_fail_closed_guard_family ip6tables FSS_FC_GUARD6 || rc=1
+	return "${rc}"
+}
+
+fss_static_ignlist_v4() {
+	printf '%s\n' \
+		0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 \
+		169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 192.18.0.0/15 \
+		224.0.0.0/4 240.0.0.0/4 \
+		223.5.5.5 223.6.6.6 114.114.114.114 114.114.115.115 \
+		1.2.4.8 210.2.4.8 117.50.11.11 117.50.22.22 \
+		180.76.76.76 119.29.29.29
+}
+
+fss_static_ignlist_v6() {
+	printf '%s\n' ::1/128 fc00::/7 fe80::/10
+}
+
+reconcile_fail_closed_ipsets() {
+	# 在 FSS_FC_GUARD 保护下通过临时集合 + ipset swap 原子重建：
+	# 1) ignlist/ignlist6（复用唯一静态来源 fss_static_ignlist_v4/v6，清除旧节点残留 IP）
+	# 2) white_list/white_list6 与 black_list/black_list6（清除已删除的旧白/黑名单 IP，同时保留静态项）
+	# 严禁清空正在被客户端 DNS 缓存依赖的 gfwlist/chnlist/router 动态集合！
+	# 任一步骤失败立即返回非零，保留 FSS_FC_GUARD 并中止后续步骤。
+	local ip=""
+	local black_ips=""
+	local white_ips=""
+
+	{
+		echo "create ignlist nethash -exist"
+		echo "create ignlist_fc_tmp nethash -exist"
+		echo "flush ignlist_fc_tmp"
+		for ip in $(fss_static_ignlist_v4); do
+			echo "add ignlist_fc_tmp ${ip}"
+		done
+		echo "swap ignlist ignlist_fc_tmp"
+		echo "destroy ignlist_fc_tmp"
+
+		echo "create ignlist6 nethash family inet6 -exist"
+		echo "create ignlist6_fc_tmp nethash family inet6 -exist"
+		echo "flush ignlist6_fc_tmp"
+		for ip in $(fss_static_ignlist_v6); do
+			echo "add ignlist6_fc_tmp ${ip}"
+		done
+		echo "swap ignlist6 ignlist6_fc_tmp"
+		echo "destroy ignlist6_fc_tmp"
+
+		echo "create black_list nethash -exist"
+		echo "create black_list_fc_tmp nethash -exist"
+		echo "flush black_list_fc_tmp"
+		if [ "${ss_basic_mode}" != "6" ]; then
+			for ip in 149.154.0.0/16 91.108.4.0/22 91.108.56.0/24 109.239.140.0/24 67.198.55.0/24; do
+				echo "add black_list_fc_tmp ${ip}"
+			done
+		fi
+		if [ -n "${ss_wan_black_ip}" ]; then
+			black_ips="$(printf '%s' "${ss_wan_black_ip}" | base64_decode 2>/dev/null | sed '/\#/d')"
+			for ip in ${black_ips}; do
+				case "${ip}" in
+				*:*) ;;
+				*) [ -n "${ip}" ] && echo "add black_list_fc_tmp ${ip}" ;;
+				esac
+			done
+		fi
+		echo "swap black_list black_list_fc_tmp"
+		echo "destroy black_list_fc_tmp"
+
+		echo "create black_list6 nethash family inet6 -exist"
+		echo "create black_list6_fc_tmp nethash family inet6 -exist"
+		echo "flush black_list6_fc_tmp"
+		if [ -n "${black_ips}" ]; then
+			for ip in ${black_ips}; do
+				case "${ip}" in
+				*:*) echo "add black_list6_fc_tmp ${ip}" ;;
+				esac
+			done
+		fi
+		echo "swap black_list6 black_list6_fc_tmp"
+		echo "destroy black_list6_fc_tmp"
+
+		echo "create white_list nethash -exist"
+		echo "create white_list_fc_tmp nethash -exist"
+		echo "flush white_list_fc_tmp"
+		[ -n "${ISP_DNS1}" ] && echo "add white_list_fc_tmp ${ISP_DNS1}"
+		[ -n "${ISP_DNS2}" ] && echo "add white_list_fc_tmp ${ISP_DNS2}"
+		if [ -n "${ss_wan_white_ip}" ]; then
+			white_ips="$(printf '%s' "${ss_wan_white_ip}" | base64_decode 2>/dev/null | sed '/\#/d')"
+			for ip in ${white_ips}; do
+				case "${ip}" in
+				*:*) ;;
+				*) [ -n "${ip}" ] && echo "add white_list_fc_tmp ${ip}" ;;
+				esac
+			done
+		fi
+		echo "swap white_list white_list_fc_tmp"
+		echo "destroy white_list_fc_tmp"
+
+		echo "create white_list6 nethash family inet6 -exist"
+		echo "create white_list6_fc_tmp nethash family inet6 -exist"
+		echo "flush white_list6_fc_tmp"
+		if [ -n "${white_ips}" ]; then
+			for ip in ${white_ips}; do
+				case "${ip}" in
+				*:*) echo "add white_list6_fc_tmp ${ip}" ;;
+				esac
+			done
+		fi
+		echo "swap white_list6 white_list6_fc_tmp"
+		echo "destroy white_list6_fc_tmp"
+
+		echo "COMMIT"
+	} | ipset -R >/dev/null 2>&1 || return 1
+
+	if type add_wan_bypass_ips_to_ignlist >/dev/null 2>&1; then
+		add_wan_bypass_ips_to_ignlist || return 1
+	fi
+	add_current_server_ip_to_ignlist "${CURRENT_NODE_SERVER_RESOLVED_IP:-${ss_basic_server_ip}}" || return 1
+	return 0
+}
+
 shunt_hot_restart_eligible() {
 	[ "${ss_basic_status}" = "1" ] || return 1
 	[ "${ss_basic_mode}" = "7" ] || return 1
@@ -3298,16 +3593,17 @@ add_white_black() {
 	ipset -! add router 149.112.112.11 >/dev/null 2>&1
 	ipset -! add router 149.112.112.10 >/dev/null 2>&1
 
-	# {ignlist},ip: reserve ip
-	local ip_lan="0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 192.18.0.0/15 224.0.0.0/4 240.0.0.0/4 223.5.5.5 223.6.6.6 114.114.114.114 114.114.115.115 1.2.4.8 210.2.4.8 117.50.11.11 117.50.22.22 180.76.76.76 119.29.29.29"
+	# {ignlist},ip: reserve ip (单一静态数据源 fss_static_ignlist_v4 / v6)
 	echo_date "应用ignlist"
-	for ip in ${ip_lan}
+	for ip in $(fss_static_ignlist_v4)
 	do
-		ipset -! add ignlist $ip >/dev/null 2>&1
+		ipset -! add ignlist "$ip" >/dev/null 2>&1
 	done
 
-	ipset -! add ignlist6 ::1/128 >/dev/null 2>&1
-	ipset -! add ignlist6 fe80::/10 >/dev/null 2>&1
+	for ip in $(fss_static_ignlist_v6)
+	do
+		ipset -! add ignlist6 "$ip" >/dev/null 2>&1
+	done
 	add_wan_bypass_ips_to_ignlist
 	
 	# {black_list}, telegram ip
@@ -5592,45 +5888,51 @@ creat_ipset() {
 		[ -n "${runtime_chnroute6}" ] && chnroute6_file="${runtime_chnroute6}"
 	fi
 
-	# 使用ipset restore批量创建/清空并导入网段，减少大量 ipset 子进程调用，加快启动速度
+	# 使用ipset restore批量创建/原子替换网段；Fail-Closed 重启期间不清空正在被防火墙链引用的既有集合，防止 GFWList/黑名单瞬间变空导致流量直连放行
 	{
 		echo "create ignlist nethash -exist"
-		echo "flush ignlist"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush ignlist"
 		echo "create ignlist6 nethash family inet6 -exist"
-		echo "flush ignlist6"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush ignlist6"
 
 		echo "create white_list nethash -exist"
-		echo "flush white_list"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush white_list"
 		echo "create white_list6 nethash family inet6 -exist"
-		echo "flush white_list6"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush white_list6"
 
 		echo "create black_list nethash -exist"
-		echo "flush black_list"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush black_list"
 		echo "create black_list6 nethash family inet6 -exist"
-		echo "flush black_list6"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush black_list6"
 
 		echo "create chnlist nethash -exist"
-		echo "flush chnlist"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush chnlist"
 		echo "create chnlist6 nethash family inet6 -exist"
-		echo "flush chnlist6"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush chnlist6"
 
 		echo "create gfwlist nethash -exist"
-		echo "flush gfwlist"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush gfwlist"
 		echo "create gfwlist6 nethash family inet6 -exist"
-		echo "flush gfwlist6"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush gfwlist6"
 
 		echo "create router nethash -exist"
-		echo "flush router"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush router"
 		echo "create router6 nethash family inet6 -exist"
-		echo "flush router6"
+		[ "${FSS_FAIL_CLOSED_RESTART}" = "1" ] || echo "flush router6"
 
 		echo "create chnroute nethash -exist"
-		echo "flush chnroute"
-		sed -e "s/^/add chnroute &/g" "${chnroute4_file}"
+		echo "create chnroute_tmp nethash -exist"
+		echo "flush chnroute_tmp"
+		sed -e "s/^/add chnroute_tmp &/g" "${chnroute4_file}"
+		echo "swap chnroute chnroute_tmp"
+		echo "destroy chnroute_tmp"
 
 		echo "create chnroute6 nethash family inet6 -exist"
-		echo "flush chnroute6"
-		sed -e "s/^/add chnroute6 &/g" "${chnroute6_file}"
+		echo "create chnroute6_tmp nethash family inet6 -exist"
+		echo "flush chnroute6_tmp"
+		sed -e "s/^/add chnroute6_tmp &/g" "${chnroute6_file}"
+		echo "swap chnroute6 chnroute6_tmp"
+		echo "destroy chnroute6_tmp"
 
 		echo "COMMIT"
 	} | ipset -R
@@ -6456,6 +6758,11 @@ load_iptables() {
 	# creat_ipset
 	# add_white_black
 	if ! _start_iptables; then
+		if [ "${FSS_FAIL_CLOSED_RESTART}" = "1" ]; then
+			echo_date "错误：写入iptables透明代理规则失败，为防止出口IP泄漏，保留现有Fail-Closed拦截状态（如需直连请手动关闭插件）。"
+			close_in_five flag
+			return 1
+		fi
 		echo_date "错误：写入iptables透明代理规则失败，正在回滚..."
 		flush_iptables
 		flush_ipset
@@ -7583,6 +7890,20 @@ disable_ss() {
 	remove_ss_reboot_job
 	restore_conf
 	restart_dnsmasq
+	local guard_try=0
+	local guard_removed=0
+	while [ "${guard_try}" -lt 3 ]; do
+		if remove_fail_closed_guard; then
+			guard_removed=1
+			break
+		fi
+		guard_try=$((guard_try + 1))
+		sleep 1
+	done
+	if [ "${guard_removed}" != "1" ]; then
+		echo_date "错误：关闭插件时卸载 Fail-Closed 保护链失败！为避免清空 ipset 后残留保护链锁死全部流量，已中止清理 ipset，请检查 iptables 状态。"
+		return 1
+	fi
 	flush_iptables
 	flush_ipset
 	kill_cron_job
@@ -7598,11 +7919,13 @@ disable_ss() {
 apply_ss() {
 	local shunt_hot_restart="0"
 	local shunt_prev_xray_json=""
+	local FSS_FAIL_CLOSED_RESTART="0"
 
 	echo_date ======================= 梅林固件 - 【科学上网】 ========================
 	echo_date
 	refresh_runtime_context
 	if [ "${ss_basic_status}" == "1" ];then
+		FSS_FAIL_CLOSED_RESTART="1"
 		if shunt_hot_restart_eligible; then
 			shunt_prev_xray_json="/tmp/fss_shunt_prev_xray.json.$$"
 			cp -f /koolshare/ss/xray.json "${shunt_prev_xray_json}" >/dev/null 2>&1 || shunt_prev_xray_json=""
@@ -7611,7 +7934,8 @@ apply_ss() {
 				echo_date "[hot-reload] 检测到 xray 分流热重载已启用，将在新配置生成后判断是否可保留当前 xray 进程。"
 			fi
 		fi
-		echo_date ------------------------- 关闭【科学上网】 -----------------------------
+		echo_date ------------------------- 重启【科学上网】 -----------------------------
+		echo_date "🛡️ 启用 Fail-Closed 无泄漏重启：重启期间保留现有防火墙劫持与 DNS 分流，避免出口 IP 直连泄漏。"
 		ss_pre_stop
 		stop_status
 		if [ "${shunt_hot_restart}" != "1" ]; then
@@ -7619,10 +7943,6 @@ apply_ss() {
 		fi
 		remove_ss_trigger_job
 		remove_ss_reboot_job
-		restore_conf
-		restart_dnsmasq
-		flush_iptables
-		flush_ipset
 		kill_cron_job
 	fi
 	# pre-start
@@ -7632,6 +7952,9 @@ apply_ss() {
 	[ "${shunt_hot_restart}" = "1" ] && FSS_SKIP_XRAY_PORT_CLEANUP="1"
 	prepare_system
 	resolv_server_ip
+	if [ "${FSS_FAIL_CLOSED_RESTART}" = "1" ]; then
+		add_current_server_ip_to_ignlist "${CURRENT_NODE_SERVER_RESOLVED_IP:-${ss_basic_server_ip}}"
+	fi
 	load_module
 	creat_ipset
 	create_dnsmasq_conf
@@ -7655,6 +7978,8 @@ apply_ss() {
 		start_dns_x
 		if ! refresh_current_node_server_ip_runtime; then
 			echo_date "节点服务器域名运行时解析失败，将继续启动代理主程序，并等待客户端后续自行解析。"
+		elif [ "${FSS_FAIL_CLOSED_RESTART}" = "1" ]; then
+			add_current_server_ip_to_ignlist "${CURRENT_NODE_SERVER_RESOLVED_IP:-${ss_basic_server_ip}}"
 		fi
 	fi
 
@@ -7688,7 +8013,25 @@ apply_ss() {
 	fi
 
 	get_proxy_server_ip
+	if [ "${FSS_FAIL_CLOSED_RESTART}" = "1" ]; then
+		# 先在 filter/FORWARD 顶部挂载 FSS_FC_GUARD（及 IPv6 FSS_FC_GUARD6），挂载或原子重建 ignlist 失败则严禁继续 flush_iptables
+		if ! install_fail_closed_guard; then
+			echo_date "错误：安装 Fail-Closed 保护链失败，中止规则替换以保留既有防火墙拦截状态。"
+			close_in_five flag
+		fi
+		if ! reconcile_fail_closed_ipsets; then
+			echo_date "错误：原子重建 ignlist 失败，保留 Fail-Closed 保护链并中止规则替换。"
+			close_in_five flag
+		fi
+		flush_iptables
+	fi
 	load_iptables
+	if [ "${FSS_FAIL_CLOSED_RESTART}" = "1" ]; then
+		if ! remove_fail_closed_guard; then
+			echo_date "警告：卸载临时 Fail-Closed 保护链失败，检测到残留规则！"
+			close_in_five flag
+		fi
+	fi
 	#restart_dnsmasq
 	auto_start
 	write_cron_job
@@ -8090,6 +8433,92 @@ reload_scopes() {
 	return 0
 }
 
+reload_proxy_only() {
+	local FSS_PARTIAL_RELOAD=1
+	local FSS_FAIL_CLOSED_RESTART=1
+	local backup_xray_json="/tmp/fss_reload_proxy_prev_xray.json.$$"
+
+	echo_date "-------------------- [fail-closed] 轻量重载代理主程序 --------------------"
+	if [ "${ss_basic_status}" != "1" ]; then
+		echo_date "[reload-proxy] 服务未处于运行状态，回退 Fail-Closed 重启。"
+		return 1
+	fi
+	if ! iptables -t nat -L SHADOWSOCKS >/dev/null 2>&1; then
+		echo_date "[reload-proxy] 未检测到在位的 SHADOWSOCKS 防火墙链，回退 Fail-Closed 重启。"
+		return 1
+	fi
+
+	fss_base_load_current_node_env
+	refresh_runtime_context
+
+	# 依赖外部 helper 进程（如 SS TLS obfs-local）的节点回退 Fail-Closed 完整重启，避免 helper 丢失
+	if [ "${ss_basic_mode}" != "7" ] && [ "${ss_basic_type}" = "0" ] && [ "${ss_basic_ss_obfs}" = "tls" ]; then
+		echo_date "[reload-proxy] 检测到 SS TLS obfs 节点依赖外部 helper，回退 Fail-Closed 完整重启。"
+		return 1
+	fi
+
+	resolv_server_ip || true
+	if [ -z "${CURRENT_NODE_SERVER_RESOLVED_IP}" ] && [ -n "${ss_basic_server}" ] && is_domain "${ss_basic_server}" >/dev/null 2>&1; then
+		if type refresh_current_node_server_ip_runtime >/dev/null 2>&1; then
+			refresh_current_node_server_ip_runtime >/dev/null 2>&1 || true
+		fi
+	fi
+	add_current_server_ip_to_ignlist "${CURRENT_NODE_SERVER_RESOLVED_IP:-${ss_basic_server_ip}}"
+	if [ -n "${ss_basic_server}" ] && is_domain "${ss_basic_server}" >/dev/null 2>&1; then
+		if [ -f /tmp/ss_node_domains.txt ] && ! grep -Fxq "${ss_basic_server}" /tmp/ss_node_domains.txt 2>/dev/null; then
+			printf '%s\n' "${ss_basic_server}" >> /tmp/ss_node_domains.txt
+		fi
+	fi
+
+	[ -f /koolshare/ss/xray.json ] && cp -f /koolshare/ss/xray.json "${backup_xray_json}" >/dev/null 2>&1 || true
+
+	# 在子 shell 中执行配置生成，避免内部 close_in_five 触发 exit 1 绕过备份恢复
+	local gen_rc=0
+	if [ "${ss_basic_mode}" = "7" ]; then
+		( creat_shunt_json ) || gen_rc=$?
+	else
+		case "${ss_basic_type}" in
+		0) ( creat_xray_ss_json ) || gen_rc=$? ;;
+		1) ( creat_ssr_json ) || gen_rc=$? ;;
+		3) ( creat_vmess_json ) || gen_rc=$? ;;
+		4) ( creat_vless_json ) || gen_rc=$? ;;
+		5) ( creat_trojan_json ) || gen_rc=$? ;;
+		8) ( creat_hy2_json ) || gen_rc=$? ;;
+		esac
+	fi
+	if [ "${gen_rc}" != "0" ]; then
+		[ -f "${backup_xray_json}" ] && mv -f "${backup_xray_json}" /koolshare/ss/xray.json >/dev/null 2>&1
+		echo_date "[reload-proxy] 生成或校验代理配置失败（rc=${gen_rc}），已恢复旧配置并保留当前运行进程。"
+		return 1
+	fi
+	rm -f "${backup_xray_json}" >/dev/null 2>&1
+
+	kill_proxy_only
+
+	if [ "${ss_basic_mode}" = "7" ]; then
+		start_xray || return 1
+	else
+		case "${ss_basic_type}" in
+		0|3|4) start_xray || return 1 ;;
+		1) start_ssr_redir || return 1 ;;
+		5) start_trojan || return 1 ;;
+		6) start_naive || return 1 ;;
+		7) start_tuic || return 1 ;;
+		8) start_hy2 || return 1 ;;
+		9) start_anytls || return 1 ;;
+		*) return 1 ;;
+		esac
+	fi
+
+	get_proxy_server_ip >/dev/null 2>&1 || true
+	write_numbers >/dev/null 2>&1 || true
+	if [ "${ss_basic_mode}" = "7" ] && [ "${ss_basic_shunt_hot_reload}" = "1" ] && [ -x "/koolshare/scripts/ss_shunt_hot_reload.sh" ]; then
+		sh /koolshare/scripts/ss_shunt_hot_reload.sh seed >/dev/null 2>&1 || true
+	fi
+	echo_date "-------------------- [fail-closed] 代理主程序轻量重载完毕 --------------------"
+	return 0
+}
+
 pick_start_stop_daemon(){
 	for candidate in /sbin/start-stop-daemon /usr/sbin/start-stop-daemon /bin/start-stop-daemon /usr/bin/start-stop-daemon
 	do
@@ -8248,6 +8677,19 @@ start_nat)
 restart_chinadns_ng)
 	start_chinadns_ng
 	;;
+reload_dns_process)
+	set_lock
+	reload_rc=0
+	(
+		FSS_PARTIAL_RELOAD=1
+		FSS_FAIL_CLOSED_RESTART=1
+		export FSS_PARTIAL_RELOAD FSS_FAIL_CLOSED_RESTART
+		stop_dns_process
+		start_dns_x
+	) || reload_rc=$?
+	unset_lock
+	exit ${reload_rc}
+	;;
 refresh_node_direct_dns)
 	set_lock
 	refresh_node_direct_dns
@@ -8257,6 +8699,13 @@ reload_scopes)
 	set_lock
 	reload_rc=0
 	reload_scopes "$2" || reload_rc=$?
+	unset_lock
+	exit ${reload_rc}
+	;;
+reload_proxy_only)
+	set_lock
+	reload_rc=0
+	reload_proxy_only || reload_rc=$?
 	unset_lock
 	exit ${reload_rc}
 	;;
