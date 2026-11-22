@@ -1,5 +1,10 @@
 fancyss Changelog
 
+3.6.1（20261123）
+   - fix	修复 Xray 分流多规则生成时代理域名文件被逐条覆盖及 `DIRECT`/`REJECT` 目标域名误并入 `/tmp/black_list.txt` 的问题，统一大小写归一化与裁剪重建逻辑（#41）。
+   - fix	实现 Fail-Closed 无直连泄漏重启与安全故障转移：重启期间挂载 IPv4/IPv6 `FORWARD`+`OUTPUT` 临时保护链、拆分静态/动态 ipset 原子替换、异常中止时不自动关闭插件恢复直连；故障转移支持指数退避、连续上限保持拦截与非阻塞锁，Xray 分流模式优先整表原子热切默认出站（不中断独立分流长连接）并补齐 DNS 重载上下文初始化（#42）。
+   - update	刷新 `rules_ng` 传统规则资产（2026-11-22）。
+
 3.6.0（20261121）
    - add	新增按变更域分级局部重载（L0–L4）与 Xray 分流热重载动态新增 outbound（`xray api ado` + DNS 联动），修改规则、ACL、WebRTC 或分流节点时无需整套重启插件。
    - add	新增游戏平台与 AI 细分分流预设：游戏平台拆出 `steam`、`nintendo`、`xbox`、`playstation`、`games-other`；AI 拆出 `claude`、`gemini`、`ai-other`，并补充 `intercomassets.com`、`hcaptcha.com`、`challenges.cloudflare.com` 等伴生风控/验证域名。
