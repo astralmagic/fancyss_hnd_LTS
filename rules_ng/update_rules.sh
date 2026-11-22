@@ -211,57 +211,60 @@ update_generated_gz_rule() {
 
 update_gfwlist() {
 	local tmpdir="$1"
-	local raw1="${tmpdir}/gfwlist_b64.txt"
-	local list1="${tmpdir}/gfwlist_1.txt"
-	local raw2="${tmpdir}/gfwlist_loyalsoldier.txt"
-	local list2="${tmpdir}/gfwlist_2.txt"
 	local merged="${tmpdir}/gfwlist_merged.txt"
+	curl_download "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt" "${tmpdir}/official" "download gfwlist (official)"
+	curl_download "https://raw.githubusercontent.com/Loukky/gfwlist-by-loukky/master/gfwlist.txt" "${tmpdir}/loukky" "download gfwlist (Loukky)"
+	curl_download "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/gfw.txt" "${tmpdir}/loyal" "download domains (Loyalsoldier)"
+	curl_download "https://raw.githubusercontent.com/pexcn/daily/gh-pages/gfwlist/gfwlist.txt" "${tmpdir}/pexcn" "download domains (pexcn)"
 
-	curl_download "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt" "$raw1" "download gfwlist (official)"
-	python3 - "$raw1" >"$list1" <<'PY'
-import base64, re, sys
+	python3 - "$tmpdir" >"$merged" <<'PY'
+import base64
+import binascii
+from pathlib import Path
+import re
+import sys
 
-raw = open(sys.argv[1], "rb").read()
-try:
-    decoded = base64.b64decode(raw)
-    text = decoded.decode("utf-8", "ignore")
-    if not text.lstrip().startswith("[AutoProxy"):
-        text = raw.decode("utf-8", "ignore")
-except Exception:
-    text = raw.decode("utf-8", "ignore")
+root = Path(sys.argv[1])
+domain_rule = re.compile(r"([\w-]+\.[\w.-]+)", re.ASCII)
+plain_domain = re.compile(r"[a-z0-9._-]+\.[a-z0-9_-]+")
+ipv4 = re.compile(r"(?:[0-9]{1,3}\.){3}[0-9]{1,3}")
+# Preserve the exclusions used by the router rules.
+excluded = ("hasi.", "v2ex", "apple.com", "m-team", "windowsupdate")
 
-comment_re = re.compile(r"^\!|\[|^@@|^\d+\.\d+\.\d+\.\d+")
-domain_re = re.compile(r"([\w\-\_]+\.[\w\.\-\_]+)[\/\*]*")
-seen = set()
-for line in text.splitlines():
-    line = line.strip()
-    if comment_re.search(line):
-        continue
-    m = domain_re.search(line)
-    if not m:
-        continue
-    seen.add(m.group(1).lower().lstrip("."))
-for d in sorted(seen):
-    sys.stdout.write(d + "\n")
+def autoproxy_domains(path):
+    raw = path.read_bytes().strip()
+    if not raw.startswith(b"[AutoProxy"):
+        try:
+            raw = base64.b64decode(b"".join(raw.split()), validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise SystemExit(f"{path.name}: invalid AutoProxy encoding") from exc
+    if not raw.startswith(b"[AutoProxy"):
+        raise SystemExit(f"{path.name}: missing AutoProxy header")
+    for line in raw.decode("utf-8").splitlines():
+        line = line.strip()
+        if line.startswith(("!", "@@")) or "[" in line or ipv4.match(line):
+            continue
+        match = domain_rule.search(line)
+        if match:
+            yield match.group(1)
+
+def plain_domains(path):
+    for line in path.read_text(encoding="utf-8").splitlines():
+        domain = line.strip().lower().lstrip(".")
+        if plain_domain.fullmatch(domain):
+            yield domain
+
+merged = set()
+for name, reader in (("official", autoproxy_domains), ("loukky", autoproxy_domains),
+                     ("loyal", plain_domains), ("pexcn", plain_domains)):
+    domains = {value.lower().lstrip(".") for value in reader(root / name)}
+    domains = {d for d in domains if not ipv4.search(d) and not any(x in d for x in excluded)}
+    if not domains:
+        raise SystemExit(f"{name}: no usable domains")
+    merged.update(domains)
+for domain in sorted(merged):
+    print(domain)
 PY
-
-	curl_download "https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/gfw.txt" "$raw2" "download gfwlist extra (Loyalsoldier)"
-	tr -d '\r' <"$raw2" \
-		| sed '/^#/d; s/^\.//; /^$/d' \
-		| tr 'A-Z' 'a-z' \
-		| grep -E '^[a-z0-9._-]+$' >"$list2"
-
-	cat "$list1" "$list2" \
-		| grep -Ev "([0-9]{1,3}[\\.]){3}[0-9]{1,3}" \
-		| sed '/^$/d' \
-		| sort -u >"$merged"
-
-	# asus asd detect these domains
-	sed_inplace '/hasi\./d' "$merged"
-	sed_inplace '/v2ex/d' "$merged"
-	sed_inplace '/apple\.com/d' "$merged"
-	sed_inplace '/m-team/d' "$merged"
-	sed_inplace '/windowsupdate/d' "$merged"
 
 	update_generated_gz_rule "gfwlist" "gfwlist.gz" "$merged"
 	rm -f "${CURR_PATH}/gfwlist.txt" || true
@@ -411,6 +414,8 @@ clean_generated() {
 		"${CURR_PATH}/google_china.txt" \
 		"${CURR_PATH}/cdn_test.txt"
 }
+
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
 case "${1:-update}" in
 	update)
