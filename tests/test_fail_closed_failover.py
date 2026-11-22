@@ -188,8 +188,9 @@ remove_ss_reboot_job() {{ :; }}
 restore_conf() {{ log_event RESTORE_CONF_FORBIDDEN; }}
 restart_dnsmasq() {{ log_event restart_dnsmasq; }}
 install_fail_closed_guard() {{ log_event install_fail_closed_guard; return 0; }}
-reconcile_fail_closed_ipsets() {{ log_event reconcile_fail_closed_ipsets; }}
-remove_fail_closed_guard() {{ log_event remove_fail_closed_guard; }}
+reconcile_fail_closed_ipsets() {{ log_event reconcile_fail_closed_ipsets; return 0; }}
+verify_proxy_ingress_rules() {{ log_event verify_proxy_ingress_rules; return 0; }}
+remove_fail_closed_guard() {{ log_event remove_fail_closed_guard; return 0; }}
 flush_iptables() {{ log_event flush_iptables; }}
 flush_ipset() {{ log_event FLUSH_IPSET_FORBIDDEN; }}
 kill_cron_job() {{ :; }}
@@ -242,22 +243,28 @@ apply_ss
             idx_reconcile = events.index("reconcile_fail_closed_ipsets")
             idx_flush_ipt = events.index("flush_iptables")
             idx_load_ipt = events.index("load_iptables")
+            idx_verify = events.index("verify_proxy_ingress_rules")
             idx_guard_off = events.index("remove_fail_closed_guard")
 
             self.assertGreater(idx_guard_on, idx_xray)
             self.assertEqual(idx_guard_on + 1, idx_reconcile)
             self.assertEqual(idx_reconcile + 1, idx_flush_ipt)
             self.assertEqual(idx_flush_ipt + 1, idx_load_ipt)
-            self.assertEqual(idx_load_ipt + 1, idx_guard_off)
+            self.assertEqual(idx_load_ipt + 1, idx_verify)
+            self.assertEqual(idx_verify + 1, idx_guard_off)
 
     def test_guard_install_failure_aborts_before_flush_and_covers_ipv6_full_udp_and_black_priority(self):
-        # Review #1 & #2 probes
+        # Review #1, #2, #3, #5 probes (incl. PR #43 #1 global ACL, #2 OUTPUT guard, #3 ingress verification)
         fn_code = functions(
             SSCONFIG_PATH,
+            "fail_closed_guard_has_global_mode",
+            "install_fail_closed_guard_chain_hook",
             "install_fail_closed_guard_family",
+            "remove_fail_closed_guard_chain_hook",
             "remove_fail_closed_guard_family",
             "install_fail_closed_guard",
             "remove_fail_closed_guard",
+            "verify_proxy_ingress_rules",
         )
         # 1) All iptables calls fail -> install_fail_closed_guard MUST return non-zero.
         res_fail = run_bash(
@@ -270,21 +277,28 @@ install_fail_closed_guard
         )
         self.assertNotEqual(res_fail.returncode, 0)
 
-        # 2) Verify rule ordering & coverage: black_list/gfwlist before chnlist/chnroute, full UDP, IPv6 guard.
+        # 2) Verify rule ordering & coverage: black_list/gfwlist before chnlist/chnroute, full UDP, IPv6 guard, OUTPUT guard.
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "ipt.log"
             res_ok = run_bash(
                 fn_code
                 + f"""
+ss_basic_mode=2
 ss_basic_proxy_ipv6=1
+ip_prefix_hex=0xc0a80a00
+dbus() {{ :; }}
 iptables() {{
     echo "v4:$*" >> '{log}'
-    [ "$3" = "-C" ] && return 1
+    case "$3" in
+    -C|-L) return 1 ;;
+    esac
     return 0
 }}
 ip6tables() {{
     echo "v6:$*" >> '{log}'
-    [ "$3" = "-C" ] && return 1
+    case "$3" in
+    -C|-L) return 1 ;;
+    esac
     return 0
 }}
 install_fail_closed_guard
@@ -294,7 +308,14 @@ install_fail_closed_guard
             lines = log.read_text().splitlines()
             v4_rules = [l for l in lines if l.startswith("v4:-t filter -A FSS_FC_GUARD_TMP ")]
             v6_rules = [l for l in lines if l.startswith("v6:-t filter -A FSS_FC_GUARD6_TMP ")]
+            v4_out_rules = [l for l in lines if l.startswith("v4:-t filter -A FSS_FC_GUARD_OUT_TMP ")]
+            v6_out_rules = [l for l in lines if l.startswith("v6:-t filter -A FSS_FC_GUARD6_OUT_TMP ")]
             self.assertTrue(v6_rules, "IPv6 guard chain FSS_FC_GUARD6_TMP must be installed")
+            self.assertTrue(v4_out_rules, "IPv4 OUTPUT guard chain FSS_FC_GUARD_OUT_TMP must be installed")
+            self.assertTrue(v6_out_rules, "IPv6 OUTPUT guard chain FSS_FC_GUARD6_OUT_TMP must be installed")
+            self.assertIn("v4:-t filter -I OUTPUT 1 -j FSS_FC_GUARD_OUT_TMP", lines)
+            self.assertTrue(any("--match-set router dst -j REJECT" in l for l in v4_out_rules))
+            self.assertTrue(any("--mark 0xc0a80a00/0xffffff00" in l for l in v4_out_rules))
 
             idx_black = next(i for i, l in enumerate(v4_rules) if "black_list" in l)
             idx_gfw = next(i for i, l in enumerate(v4_rules) if "gfwlist" in l)
@@ -305,12 +326,56 @@ install_fail_closed_guard
             self.assertTrue(any("-p udp -j REJECT" in l for l in v4_rules), "must block all overseas UDP, not just 443")
             self.assertTrue(any("-p udp -j REJECT" in l for l in v6_rules), "must block all overseas IPv6 UDP")
 
+        # 2b) PR #43 #1 probe: global mode or global ACL (mode=5) must NOT RETURN on chnlist/chnroute.
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "global_acl.log"
+            res_global = run_bash(
+                fn_code
+                + f"""
+ss_basic_mode=2
+acl_nu="1"
+ss_acl_mode_1=5
+ss_basic_proxy_ipv6=0
+dbus() {{ :; }}
+iptables() {{
+    echo "$*" >> '{log}'
+    case "$3" in
+    -C|-L) return 1 ;;
+    esac
+    return 0
+}}
+ip6tables() {{ return 1; }}
+install_fail_closed_guard
+"""
+            )
+            self.assertEqual(res_global.returncode, 0, res_global.stderr)
+            g_rules = [l for l in log.read_text().splitlines() if l.startswith("-t filter -A FSS_FC_GUARD_TMP ")]
+            self.assertFalse(any("chnlist" in l for l in g_rules), "global ACL guard must not RETURN on chnlist")
+            self.assertFalse(any("chnroute" in l for l in g_rules), "global ACL guard must not RETURN on chnroute")
+            self.assertTrue(any("white_list" in l for l in g_rules))
+
+        # 2c) PR #43 #3 probe: verify_proxy_ingress_rules fails when nat/PREROUTING jump is absent.
+        res_verify_fail = run_bash(
+            fn_code
+            + """
+iptables() { return 1; }
+verify_proxy_ingress_rules
+"""
+        )
+        self.assertNotEqual(res_verify_fail.returncode, 0)
+        self.assertIn(
+            'iptables -t nat -I PREROUTING "${INSET_NU}" -p tcp -j SHADOWSOCKS || return 1',
+            SSCONFIG_PATH.read_text(),
+        )
+
         # 3) Review #3 probe: retry install fails mid-way -> MUST NOT flush or delete previous live FSS_FC_GUARD.
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "retry.log"
             res_retry = run_bash(
                 fn_code
                 + f"""
+ss_basic_mode=2
+dbus() {{ :; }}
 iptables() {{
     echo "$*" >> '{log}'
     case "$*" in
@@ -351,26 +416,52 @@ remove_fail_closed_guard
         self.assertNotEqual(res_rem_fail.returncode, 0)
 
     def test_reconcile_fail_closed_ipsets_preserves_dynamic_sets_and_propagates_failure(self):
-        # Review #2, #3, #4 probes:
+        # PR #43 #4, #5, #8 probes:
         # - atomically swaps ignlist/ignlist6 using single static source (incl. 192.18.0.0/15 & public DNS)
-        # - atomically swaps white_list/black_list (pruning deleted entries while preserving static items)
+        # - preserves dynamic members in black_list/white_list (NO full swap/flush), prunes only removed static IPs
+        # - does NOT double-decode ss_wan_black_ip / ss_wan_white_ip after add_white_black
+        # - routes IPv6 ISP_DNS to white_list6 instead of IPv4 white_list
         # - never flushes dynamic gfwlist/chnlist/router sets
         # - propagates ipset -R failure
+        import base64
         fn_code = functions(
             SSCONFIG_PATH,
             "fss_static_ignlist_v4",
             "fss_static_ignlist_v6",
+            "fss_decode_static_ip_list",
+            "fss_collect_current_static_ip_lists",
             "reconcile_fail_closed_ipsets",
             "add_current_server_ip_to_ignlist",
         )
+        black_b64 = base64.b64encode(b"198.51.100.20\n2001:db8::20\n").decode()
+        white_b64 = base64.b64encode(b"198.51.100.30\n2001:db8::30\n").decode()
+
         with tempfile.TemporaryDirectory() as tmp:
-            captured = Path(tmp) / "ipset_restore.txt"
+            root = Path(tmp)
+            captured = root / "ipset_restore.txt"
+            snap_b4 = root / "snap_b.v4"
+            snap_b6 = root / "snap_b.v6"
+            snap_w4 = root / "snap_w.v4"
+            snap_w6 = root / "snap_w.v6"
+            # Seed previous static snapshots containing removed static entries
+            snap_b4.write_text("198.51.100.99\n198.51.100.20\n")
+            snap_w4.write_text("198.51.100.88\n198.51.100.30\n")
+
             res_ok = run_bash(
                 fn_code
                 + f"""
 ss_basic_mode=7
 ISP_DNS1="202.96.134.133"
+ISP_DNS2="2400:3200::1"
+ss_wan_black_ip="{black_b64}"
+ss_wan_white_ip="{white_b64}"
 CURRENT_NODE_SERVER_RESOLVED_IP="203.0.113.10"
+FSS_STATIC_BLACK_SNAP_V4="{snap_b4}"
+FSS_STATIC_BLACK_SNAP_V6="{snap_b6}"
+FSS_STATIC_WHITE_SNAP_V4="{snap_w4}"
+FSS_STATIC_WHITE_SNAP_V6="{snap_w6}"
+base64_decode() {{ python3 -c 'import base64,sys; print(base64.b64decode(sys.stdin.read()).decode())'; }}
+dbus() {{ :; }}
 add_wan_bypass_ips_to_ignlist() {{ return 0; }}
 ipset() {{
     if [ "$1" = "-R" ]; then
@@ -386,20 +477,43 @@ reconcile_fail_closed_ipsets
             body = captured.read_text()
             self.assertIn("swap ignlist ignlist_fc_tmp", body)
             self.assertIn("swap ignlist6 ignlist6_fc_tmp", body)
-            self.assertIn("swap white_list white_list_fc_tmp", body)
-            self.assertIn("swap black_list black_list_fc_tmp", body)
-            # Review #4: verify complete static ignlist entries from single source
+            # PR #43 #4: black_list & white_list must NOT be flushed/swapped (preserves ChinaDNS dynamic IPs)
+            self.assertNotIn("swap black_list", body)
+            self.assertNotIn("swap white_list", body)
+            self.assertNotIn("flush black_list", body)
+            self.assertNotIn("flush white_list", body)
+            # Removed static entries must be incrementally deleted, current static entries preserved
+            self.assertIn("del black_list 198.51.100.99 -exist", body)
+            self.assertIn("del white_list 198.51.100.88 -exist", body)
+            self.assertIn("add black_list 198.51.100.20 -exist", body)
+            self.assertIn("add black_list6 2001:db8::20 -exist", body)
+            self.assertIn("add white_list 198.51.100.30 -exist", body)
+            self.assertIn("add white_list6 2001:db8::30 -exist", body)
+            # PR #43 #8: IPv6 ISP_DNS2 goes to white_list6, NEVER IPv4 white_list
+            self.assertIn("add white_list 202.96.134.133 -exist", body)
+            self.assertIn("add white_list6 2400:3200::1 -exist", body)
+            self.assertNotIn("add white_list 2400:3200::1", body)
+            # Static ignlist single-source completeness
             for required_entry in ("192.18.0.0/15", "223.5.5.5", "114.114.114.114", "1.2.4.8", "180.76.76.76", "119.29.29.29"):
                 self.assertIn(f"add ignlist_fc_tmp {required_entry}", body)
-            self.assertIn("add white_list_fc_tmp 202.96.134.133", body)
             for dynamic_set in ("gfwlist", "gfwlist6", "chnlist", "chnlist6", "router", "router6"):
                 self.assertNotIn(f"flush {dynamic_set}", body)
+
+            # PR #43 #5: verify add_white_black does not clobber ss_wan_black_ip / ss_wan_white_ip in place
+            awb_src = extract_shell_function(SSCONFIG_PATH, "add_white_black")
+            self.assertNotIn("ss_wan_black_ip=$(echo", awb_src)
+            self.assertNotIn("ss_wan_white_ip=$(echo", awb_src)
 
             # Failure propagation probe: ipset -R fails -> reconcile_fail_closed_ipsets MUST return non-zero.
             res_fail = run_bash(
                 fn_code
-                + """
-ipset() { return 1; }
+                + f"""
+FSS_STATIC_BLACK_SNAP_V4="{snap_b4}"
+FSS_STATIC_BLACK_SNAP_V6="{snap_b6}"
+FSS_STATIC_WHITE_SNAP_V4="{snap_w4}"
+FSS_STATIC_WHITE_SNAP_V6="{snap_w6}"
+dbus() {{ :; }}
+ipset() {{ return 1; }}
 reconcile_fail_closed_ipsets
 """
             )
@@ -538,16 +652,18 @@ load_iptables
             xray_conf = root / "xray.json"
             event_log = root / "reload_events.log"
             xray_conf.write_text('{"old": true}\n')
+            # PR #43 #9 fix: replace /tmp/ FIRST, then /koolshare/ss/xray.json, so TMPDIR=/tmp never double-rewrites!
             fn_code = (
                 functions(BASE_SCRIPT, "close_in_five")
                 + "\n"
                 + functions(
                     SSCONFIG_PATH,
+                    "init_protocol_config_paths",
                     "reload_proxy_only",
                     "add_current_server_ip_to_ignlist",
                     "clear_current_node_server_ip",
                     "record_current_node_server_ip",
-                ).replace("/koolshare/ss/xray.json", str(xray_conf)).replace("/tmp/", str(root) + "/")
+                ).replace("/tmp/", str(root) + "/").replace("/koolshare/ss/xray.json", str(xray_conf))
             )
 
             base_mocks = f"""
@@ -612,6 +728,24 @@ dbus() {{ :; }}
             )
             self.assertNotEqual(res_obfs.returncode, 0)
             self.assertNotIn("kill_proxy_only", event_log.read_text())
+
+            # 4) PR #43 #7 probe: standalone non-shunt VLESS reload initializes VLESS_CONFIG_FILE/TEMP without prepare_system.
+            event_log.write_text("")
+            res_vless = run_bash(
+                base_mocks
+                + f"""
+ss_basic_mode=2
+ss_basic_type=4
+unset VLESS_CONFIG_FILE VLESS_CONFIG_TEMP
+creat_vless_json() {{
+    echo "VLESS_PATHS:${{VLESS_CONFIG_FILE}}|${{VLESS_CONFIG_TEMP}}" >> '{event_log}'
+    [ -n "${{VLESS_CONFIG_FILE}}" ] && [ -n "${{VLESS_CONFIG_TEMP}}" ]
+}}
+reload_proxy_only
+"""
+            )
+            self.assertEqual(res_vless.returncode, 0, res_vless.stderr)
+            self.assertIn(f"VLESS_PATHS:{xray_conf}|{root}/xray_tmp.json", event_log.read_text())
 
 
 class SafeFailoverPolicyTests(unittest.TestCase):
@@ -805,13 +939,17 @@ failover_action 2
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             rm_log = root / "removed.log"
+            rt_conf = root / "xray.json"
+            rt_conf.write_text('{"inbounds":[{"tag":"socks-in"},{"tag":"dns_udp_1055"}]}\n')
             hot_code = functions(HOT_RELOAD_SCRIPT, "hot_switch_default_node")
             base_script = f"""
 HOT_STATE_DIR='{root}/hot_state'
 HOT_LOCK_FILE='{root}/hot.lock'
 HOT_NEED_DNS_RELOAD_FILE='{root}/need_dns'
+XRAY_RUNTIME_CONF='{rt_conf}'
 ss_basic_furl='http://www.google.com/generate_204'
 ss_basic_curl='http://connectivitycheck.platform.hicloud.com/generate_204'
+run() {{ "$@"; }}
 hot_ensure_state_dir() {{ mkdir -p "${{HOT_STATE_DIR}}"; }}
 hot_log() {{ echo "LOG:$*"; }}
 hot_require_ready() {{ return 0; }}
@@ -820,6 +958,8 @@ fss_shunt_cleanup_runtime() {{ echo "CLEANUP_RUNTIME_FORBIDDEN"; }}
 hot_build_next_state() {{ echo "BUILD_NEXT_FORBIDDEN"; }}
 hot_ensure_single_target_loaded() {{ echo "ensure_single:$1"; return 0; }}
 hot_runtime_managed_rule_tags() {{ printf 'fss_status_probe\\nfss_webrtc\\nfss_rule_claude\\nfss_default\\n'; }}
+hot_runtime_inbound_rule_tags() {{ printf 'fss_in_socks\\nfss_in_dns_udp\\n'; }}
+hot_add_inbound_rule() {{ echo "ADD_IN:$1:$2:$3"; return 0; }}
 fss_shunt_host_from_url() {{
     case "$1" in
     *google*) echo "www.google.com" ;;
@@ -831,7 +971,7 @@ dbus() {{ echo "DBUS:$*"; }}
 killall() {{ echo "KILL_FORBIDDEN"; }}
 {hot_code}
 """
-            # 1) Happy path
+            # 1) Happy path: updates socks-in + dns_udp + status_probe + default, preserves webrtc & custom rules
             res = run_bash(
                 base_script
                 + f"""
@@ -846,14 +986,30 @@ hot_switch_default_node 34
             self.assertNotIn("CLEANUP_RUNTIME_FORBIDDEN", out)
             self.assertNotIn("BUILD_NEXT_FORBIDDEN", out)
             self.assertNotIn("KILL_FORBIDDEN", out)
+            self.assertIn('ADD_IN:fss_in_socks_s_', out)
+            self.assertIn('ADD_IN:fss_in_dns_udp_s_', out)
             self.assertIn("ADD:fss_default_s_", out)
             self.assertIn("ADD:fss_status_probe_s_", out)
+            self.assertIn("REMOVE:fss_in_socks", removed)
+            self.assertIn("REMOVE:fss_in_dns_udp", removed)
             self.assertIn("REMOVE:fss_default", removed)
             self.assertIn("REMOVE:fss_status_probe", removed)
             self.assertNotIn("REMOVE:fss_webrtc", removed)
             self.assertNotIn("REMOVE:fss_rule_claude", removed)
 
-            # 2) Fault injection: deleting old fss_default fails -> must rollback new rules and return non-zero.
+            # 1b) PR #43 #6 probe: missing fss_in_socks tag (legacy static binding) MUST fail & fallback.
+            res_no_socks_tag = run_bash(
+                base_script
+                + """
+hot_runtime_inbound_rule_tags() { printf ''; }
+hot_remove_rule() { return 0; }
+hot_switch_default_node 34
+"""
+            )
+            self.assertNotEqual(res_no_socks_tag.returncode, 0)
+            self.assertNotIn("ADD:fss_default_s_", res_no_socks_tag.stdout)
+
+            # 2) Fault injection: deleting old fss_default fails -> must rollback ALL new rules and return non-zero.
             rm_log.write_text("")
             res_rm_fail = run_bash(
                 base_script
@@ -868,6 +1024,8 @@ hot_switch_default_node 34
             )
             self.assertNotEqual(res_rm_fail.returncode, 0)
             rm_fail_lines = rm_log.read_text()
+            self.assertIn("REMOVE:fss_in_socks_s_", rm_fail_lines)
+            self.assertIn("REMOVE:fss_in_dns_udp_s_", rm_fail_lines)
             self.assertIn("REMOVE:fss_default_s_", rm_fail_lines)
             self.assertIn("REMOVE:fss_status_probe_s_", rm_fail_lines)
 
@@ -890,7 +1048,13 @@ hot_switch_default_node 34
             self.assertIn("reload_dns_process", sh_log.read_text())
 
             # 4) Review #1 probe: REAL hot_runtime_managed_rule_tags with failing API -> must fail BEFORE adding rule.
-            real_enum_code = functions(HOT_RELOAD_SCRIPT, "hot_runtime_managed_rule_tags", "hot_switch_default_node")
+            real_enum_code = functions(
+                HOT_RELOAD_SCRIPT,
+                "hot_list_all_runtime_rule_tags",
+                "hot_runtime_managed_rule_tags",
+                "hot_runtime_inbound_rule_tags",
+                "hot_switch_default_node",
+            )
             res_api_fail = run_bash(
                 f"""
 HOT_STATE_DIR='{root}/hot_state'
@@ -905,21 +1069,24 @@ hot_node_needs_helper() {{ return 1; }}
 hot_ensure_single_target_loaded() {{ return 0; }}
 run() {{ return 1; }}
 hot_add_rule() {{ echo "ADD_FORBIDDEN:$1"; return 0; }}
+hot_add_inbound_rule() {{ echo "ADD_IN_FORBIDDEN:$1"; return 0; }}
 {real_enum_code}
 hot_switch_default_node 34
 """
             )
             self.assertNotEqual(res_api_fail.returncode, 0)
             self.assertNotIn("ADD_FORBIDDEN", res_api_fail.stdout)
+            self.assertNotIn("ADD_IN_FORBIDDEN", res_api_fail.stdout)
 
-            # 5) Review #3 probe: hot_bypass_new_outbound_server adds node IP to ignlist (and white_list for compat;
-            # reconcile_fail_closed_ipsets atomically swaps both ignlist and white_list on full restart).
+            # 5) Review #3 probe: hot_bypass_new_outbound_server adds node IP to ignlist & white_list + records snapshot.
             bypass_code = functions(HOT_RELOAD_SCRIPT, "hot_bypass_new_outbound_server")
             ob_file = root / "ob.json"
             ob_file.write_text('{"settings":{"vnext":[{"address":"203.0.113.55"}]}}')
             ipset_log = root / "bypass_ipset.log"
+            white_snap = root / "snap_white.v4"
             res_bypass = run_bash(
                 f"""
+FSS_STATIC_WHITE_SNAP_V4='{white_snap}'
 run() {{ "$@"; }}
 ipset() {{ echo "ipset:$*" >> '{ipset_log}'; return 0; }}
 {bypass_code}
@@ -930,6 +1097,7 @@ hot_bypass_new_outbound_server '{ob_file}'
             bypass_ops = ipset_log.read_text()
             self.assertIn("ipset:-! add ignlist 203.0.113.55", bypass_ops)
             self.assertIn("ipset:-! add white_list 203.0.113.55", bypass_ops)
+            self.assertIn("203.0.113.55", white_snap.read_text())
 
     def test_reload_proxy_only_failure_falls_back_to_fail_closed_restart(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1371,7 +1371,7 @@ fss_shunt_emit_dns_relay_route_rule() {
 	$(iter_dns_udp_relay_targets)
 EOF2
 	[ -n "${tags}" ] || return 0
-	printf '        {"type":"field","inboundTag":[%s],"outboundTag":"proxy%s"}' "${tags}" "$1"
+	printf '        {"type":"field","ruleTag":"fss_in_dns_udp","inboundTag":[%s],"outboundTag":"proxy%s"}' "${tags}" "$1"
 }
 
 fss_shunt_host_from_url() {
@@ -2163,7 +2163,7 @@ EOF2
 	  "routing": {
 	    "domainStrategy": "AsIs",
 	    "rules": [
-	      {"type":"field","inboundTag":["socks-in"],"outboundTag":"${current_tag}"},
+	      {"type":"field","ruleTag":"fss_in_socks","inboundTag":["socks-in"],"outboundTag":"${current_tag}"},
 	      {"type":"field","inboundTag":["api-in"],"outboundTag":"api"}
 EOF2
 	dns_rule="$(fss_shunt_emit_dns_relay_route_rule "${current_id}")"

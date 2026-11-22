@@ -709,12 +709,37 @@ check_chn_public_ip(){
 	fi
 }
 
+init_protocol_config_paths() {
+	if [ "${ss_basic_type}" == "0" ];then
+		SS_CONFIG_TEMP="/tmp/xray_tmp.json"
+		SS_CONFIG_FILE="/koolshare/ss/xray.json"
+	fi
+	if [ "${ss_basic_type}" == "3" ];then
+		VCORE_NAME=Xray
+		VMESS_CONFIG_TEMP="/tmp/xray_tmp.json"
+		VMESS_CONFIG_FILE="/koolshare/ss/xray.json"
+	fi
+	if [ "${ss_basic_type}" == "4" ];then
+		VLESS_CONFIG_TEMP="/tmp/xray_tmp.json"
+		VLESS_CONFIG_FILE="/koolshare/ss/xray.json"
+	fi
+	if [ "${ss_basic_type}" == "5" ];then
+		TROJAN_CONFIG_TEMP="/tmp/xray_tmp.json"
+		TROJAN_CONFIG_FILE="/koolshare/ss/xray.json"
+	fi
+	if [ "${ss_basic_type}" == "8" ];then
+		HY2_CONFIG_TEMP="/tmp/xray_tmp.json"
+		HY2_CONFIG_FILE="/koolshare/ss/xray.json"
+	fi
+}
+
 prepare_system() {
 	# prepare system
 	echo_date "🛠️ 一些准备工作，请稍后..."
 	echo_date "准备工作：加载当前节点和运行环境..."
 	fss_base_load_current_node_env
 	refresh_runtime_context
+	init_protocol_config_paths
 	normalize_ss2022_password
 	# Default enabled in UI: block QUIC to avoid HTTP/3 direct-connect bypassing TCP-only proxy.
 	set_default "ss_basic_block_quic" "1"
@@ -855,38 +880,11 @@ prepare_system() {
 		nvram commit
 	fi
 
-	if [ "${ss_basic_type}" == "0" ];then
-		echo_date "ℹ️使用Xray-core运行ss协议节点..."
-		SS_CONFIG_TEMP="/tmp/xray_tmp.json"
-		SS_CONFIG_FILE="/koolshare/ss/xray.json"
-	fi
-
-	
-	if [ "${ss_basic_type}" == "3" ];then
-		echo_date "ℹ️使用Xray-core运行vmess协议节点..."
-		VCORE_NAME=Xray
-		VMESS_CONFIG_TEMP="/tmp/xray_tmp.json"
-		VMESS_CONFIG_FILE="/koolshare/ss/xray.json"
-	fi
-
-	if [ "${ss_basic_type}" == "4" ];then
-		VLESS_CONFIG_TEMP="/tmp/xray_tmp.json"
-		VLESS_CONFIG_FILE="/koolshare/ss/xray.json"
-	fi
-
-	# 11. set tcore (trojan core) name
-	if [ "${ss_basic_type}" == "5" ];then
-		echo_date "ℹ️使用Xray-core运行trojan协议节点..."
-		TROJAN_CONFIG_TEMP="/tmp/xray_tmp.json"
-		TROJAN_CONFIG_FILE="/koolshare/ss/xray.json"
-	fi
-
-	# 11. set hy2 core name
-	if [ "${ss_basic_type}" == "8" ];then
-		echo_date "ℹ️使用Xray-core运行hysteia2协议节点..."
-		HY2_CONFIG_TEMP="/tmp/xray_tmp.json"
-		HY2_CONFIG_FILE="/koolshare/ss/xray.json"
-	fi
+	init_protocol_config_paths
+	[ "${ss_basic_type}" == "0" ] && echo_date "ℹ️使用Xray-core运行ss协议节点..."
+	[ "${ss_basic_type}" == "3" ] && echo_date "ℹ️使用Xray-core运行vmess协议节点..."
+	[ "${ss_basic_type}" == "5" ] && echo_date "ℹ️使用Xray-core运行trojan协议节点..."
+	[ "${ss_basic_type}" == "8" ] && echo_date "ℹ️使用Xray-core运行hysteia2协议节点..."
 
 	if ! proxy_core_supports_udp && [ "${ss_basic_mode}" == "3" ];then
 		echo_date "$(proxy_core_udp_unsupported_name)不支持udp代理，因此不支持游戏模式，自动切换为大陆白名单模式！"
@@ -1490,14 +1488,60 @@ add_current_server_ip_to_ignlist() {
 	esac
 }
 
+fail_closed_guard_has_global_mode() {
+	[ "${ss_basic_mode}" = "5" ] && return 0
+	[ "${ss_acl_default_mode}" = "5" ] && return 0
+	local acl_list=""
+	local acl=""
+	local acl_m=""
+	if [ -n "${acl_nu}" ]; then
+		acl_list="${acl_nu}"
+	elif type dbus >/dev/null 2>&1; then
+		acl_list="$(dbus list ss_acl_mode_ 2>/dev/null | awk -F'=' '$2 == "5" {print $1}')"
+		[ -n "${acl_list}" ] && return 0
+	fi
+	for acl in ${acl_list}; do
+		eval "acl_m=\${ss_acl_mode_${acl}}"
+		[ "${acl_m}" = "5" ] && return 0
+	done
+	return 1
+}
+
+install_fail_closed_guard_chain_hook() {
+	local cmd="$1"
+	local hook="$2"
+	local chain="$3"
+	local tmp_chain="${chain}_TMP"
+
+	if ! ${cmd} -t filter -I "${hook}" 1 -j "${tmp_chain}" >/dev/null 2>&1; then
+		${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
+		${cmd} -t filter -X "${tmp_chain}" >/dev/null 2>&1 || true
+		return 1
+	fi
+
+	if ${cmd} -t filter -L "${chain}" >/dev/null 2>&1; then
+		while ${cmd} -t filter -C "${hook}" -j "${chain}" >/dev/null 2>&1; do
+			${cmd} -t filter -D "${hook}" -j "${chain}" >/dev/null 2>&1 || break
+		done
+		${cmd} -t filter -F "${chain}" >/dev/null 2>&1 || true
+		${cmd} -t filter -X "${chain}" >/dev/null 2>&1 || true
+	fi
+	${cmd} -t filter -E "${tmp_chain}" "${chain}" >/dev/null 2>&1 || true
+	return 0
+}
+
 install_fail_closed_guard_family() {
 	local cmd="$1"
 	local chain="$2"
 	local sfx="$3"
 	local tmp_chain="${chain}_TMP"
+	local out_chain="${chain}_OUT"
+	local out_tmp_chain="${out_chain}_TMP"
+	local is_global="0"
 
-	# 严禁对已存在的上一代 ${chain} 执行 -F 或删除：先在独立临时链 ${tmp_chain} 完成全部规则构建，
-	# 挂载成功后再原子替换旧链；任一步骤失败仅清理 ${tmp_chain}，上一代保护链保持完好。
+	fail_closed_guard_has_global_mode && is_global="1"
+
+	# 1) 构建 FORWARD 临时保护链（绝不先对上一代 ${chain} 执行 -F 或删除）
 	if ${cmd} -t filter -L "${tmp_chain}" >/dev/null 2>&1; then
 		while ${cmd} -t filter -C FORWARD -j "${tmp_chain}" >/dev/null 2>&1; do
 			${cmd} -t filter -D FORWARD -j "${tmp_chain}" >/dev/null 2>&1 || return 1
@@ -1509,10 +1553,23 @@ install_fail_closed_guard_family() {
 	${cmd} -t filter -N "${tmp_chain}" >/dev/null 2>&1 || return 1
 	if ! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "ignlist${sfx}" dst -j RETURN >/dev/null 2>&1 ||
 		! ( ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "black_list${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "black_list${sfx}" dst -j DROP >/dev/null 2>&1 ) ||
-		! ( ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "gfwlist${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "gfwlist${sfx}" dst -j DROP >/dev/null 2>&1 ) ||
-		! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "chnlist${sfx}" dst -j RETURN >/dev/null 2>&1 ||
-		! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "chnroute${sfx}" dst -j RETURN >/dev/null 2>&1 ||
-		! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "white_list${sfx}" dst -j RETURN >/dev/null 2>&1 ||
+		! ( ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "gfwlist${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "gfwlist${sfx}" dst -j DROP >/dev/null 2>&1 ); then
+		${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
+		${cmd} -t filter -X "${tmp_chain}" >/dev/null 2>&1 || true
+		return 1
+	fi
+
+	# 非全局模式才放行 chnlist / chnroute；全局模式或存在全局 ACL 时大陆地址也必须拦截，不能直连放行
+	if [ "${is_global}" != "1" ]; then
+		if ! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "chnlist${sfx}" dst -j RETURN >/dev/null 2>&1 ||
+			! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "chnroute${sfx}" dst -j RETURN >/dev/null 2>&1; then
+			${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
+			${cmd} -t filter -X "${tmp_chain}" >/dev/null 2>&1 || true
+			return 1
+		fi
+	fi
+
+	if ! ${cmd} -t filter -A "${tmp_chain}" -m set --match-set "white_list${sfx}" dst -j RETURN >/dev/null 2>&1 ||
 		! ( ${cmd} -t filter -A "${tmp_chain}" -p tcp -j REJECT --reject-with tcp-reset >/dev/null 2>&1 || ${cmd} -t filter -A "${tmp_chain}" -p tcp -j DROP >/dev/null 2>&1 ) ||
 		! ( ${cmd} -t filter -A "${tmp_chain}" -p udp -j REJECT --reject-with icmp-port-unreachable >/dev/null 2>&1 || ${cmd} -t filter -A "${tmp_chain}" -p udp -j DROP >/dev/null 2>&1 ); then
 		${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
@@ -1520,44 +1577,91 @@ install_fail_closed_guard_family() {
 		return 1
 	fi
 
-	if ! ${cmd} -t filter -I FORWARD 1 -j "${tmp_chain}" >/dev/null 2>&1; then
-		${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
-		${cmd} -t filter -X "${tmp_chain}" >/dev/null 2>&1 || true
-		return 1
+	# 2) 构建路由器本机 OUTPUT 临时保护链（防止 flush_iptables 清除 OUTPUT 后 router/DNS 标记流量直出 WAN）
+	if ${cmd} -t filter -L "${out_tmp_chain}" >/dev/null 2>&1; then
+		while ${cmd} -t filter -C OUTPUT -j "${out_tmp_chain}" >/dev/null 2>&1; do
+			${cmd} -t filter -D OUTPUT -j "${out_tmp_chain}" >/dev/null 2>&1 || {
+				${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
+				${cmd} -t filter -X "${tmp_chain}" >/dev/null 2>&1 || true
+				return 1
+			}
+		done
+		${cmd} -t filter -F "${out_tmp_chain}" >/dev/null 2>&1 || return 1
+		${cmd} -t filter -X "${out_tmp_chain}" >/dev/null 2>&1 || return 1
 	fi
 
-	# 新临时保护链已在 FORWARD 1 生效，此时再安全移除上一代旧链并原子重命名
-	if ${cmd} -t filter -L "${chain}" >/dev/null 2>&1; then
-		while ${cmd} -t filter -C FORWARD -j "${chain}" >/dev/null 2>&1; do
-			${cmd} -t filter -D FORWARD -j "${chain}" >/dev/null 2>&1 || break
-		done
-		${cmd} -t filter -F "${chain}" >/dev/null 2>&1 || true
-		${cmd} -t filter -X "${chain}" >/dev/null 2>&1 || true
+	if ! ${cmd} -t filter -N "${out_tmp_chain}" >/dev/null 2>&1 ||
+		! ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "ignlist${sfx}" dst -j RETURN >/dev/null 2>&1 ||
+		! ( ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "router${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "router${sfx}" dst -j DROP >/dev/null 2>&1 ) ||
+		! ( ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "black_list${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "black_list${sfx}" dst -j DROP >/dev/null 2>&1 ) ||
+		! ( ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "gfwlist${sfx}" dst -j REJECT >/dev/null 2>&1 || ${cmd} -t filter -A "${out_tmp_chain}" -m set --match-set "gfwlist${sfx}" dst -j DROP >/dev/null 2>&1 ); then
+		${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
+		${cmd} -t filter -X "${tmp_chain}" >/dev/null 2>&1 || true
+		${cmd} -t filter -F "${out_tmp_chain}" >/dev/null 2>&1 || true
+		${cmd} -t filter -X "${out_tmp_chain}" >/dev/null 2>&1 || true
+		return 1
 	fi
-	${cmd} -t filter -E "${tmp_chain}" "${chain}" >/dev/null 2>&1 || true
+	if [ -z "${sfx}" ] && [ -n "${ip_prefix_hex}" ]; then
+		if ! ( ${cmd} -t filter -A "${out_tmp_chain}" -p tcp -m mark --mark "${ip_prefix_hex}/0xffffff00" -j REJECT --reject-with tcp-reset >/dev/null 2>&1 || ${cmd} -t filter -A "${out_tmp_chain}" -p tcp -m mark --mark "${ip_prefix_hex}/0xffffff00" -j DROP >/dev/null 2>&1 ); then
+			${cmd} -t filter -F "${tmp_chain}" >/dev/null 2>&1 || true
+			${cmd} -t filter -X "${tmp_chain}" >/dev/null 2>&1 || true
+			${cmd} -t filter -F "${out_tmp_chain}" >/dev/null 2>&1 || true
+			${cmd} -t filter -X "${out_tmp_chain}" >/dev/null 2>&1 || true
+			return 1
+		fi
+	fi
+
+	# 3) 两条保护链均构建完毕后一次性挂载并原子替换旧链
+	if ! install_fail_closed_guard_chain_hook "${cmd}" FORWARD "${chain}"; then
+		${cmd} -t filter -F "${out_tmp_chain}" >/dev/null 2>&1 || true
+		${cmd} -t filter -X "${out_tmp_chain}" >/dev/null 2>&1 || true
+		return 1
+	fi
+	if ! install_fail_closed_guard_chain_hook "${cmd}" OUTPUT "${out_chain}"; then
+		return 1
+	fi
 	return 0
 }
 
-remove_fail_closed_guard_family() {
+remove_fail_closed_guard_chain_hook() {
 	local cmd="$1"
-	local chain="$2"
+	local hook="$2"
+	local chain="$3"
 	local target=""
 	local rc=0
 
 	for target in "${chain}" "${chain}_TMP"; do
-		while ${cmd} -t filter -C FORWARD -j "${target}" >/dev/null 2>&1; do
-			${cmd} -t filter -D FORWARD -j "${target}" >/dev/null 2>&1 || { rc=1; break; }
+		while ${cmd} -t filter -C "${hook}" -j "${target}" >/dev/null 2>&1; do
+			${cmd} -t filter -D "${hook}" -j "${target}" >/dev/null 2>&1 || { rc=1; break; }
 		done
 		if ${cmd} -t filter -L "${target}" >/dev/null 2>&1; then
 			${cmd} -t filter -F "${target}" >/dev/null 2>&1 || rc=1
 			${cmd} -t filter -X "${target}" >/dev/null 2>&1 || rc=1
 		fi
-		# 显式核验跳转与链均已彻底移除，不静默忽略残留
-		if ${cmd} -t filter -C FORWARD -j "${target}" >/dev/null 2>&1 || ${cmd} -t filter -L "${target}" >/dev/null 2>&1; then
+		if ${cmd} -t filter -C "${hook}" -j "${target}" >/dev/null 2>&1 || ${cmd} -t filter -L "${target}" >/dev/null 2>&1; then
 			rc=1
 		fi
 	done
 	return "${rc}"
+}
+
+remove_fail_closed_guard_family() {
+	local cmd="$1"
+	local chain="$2"
+	local rc=0
+
+	remove_fail_closed_guard_chain_hook "${cmd}" FORWARD "${chain}" || rc=1
+	remove_fail_closed_guard_chain_hook "${cmd}" OUTPUT "${chain}_OUT" || rc=1
+	return "${rc}"
+}
+
+verify_proxy_ingress_rules() {
+	# 卸载临时保护链前，显式核验实际透明代理入口跳转已成功挂入 PREROUTING
+	iptables -t nat -C PREROUTING -p tcp -j SHADOWSOCKS >/dev/null 2>&1 || return 1
+	if [ "${ss_basic_proxy_ipv6}" = "1" ] && ip6tables -t nat -L SHADOWSOCKS6 >/dev/null 2>&1; then
+		ip6tables -t nat -C PREROUTING -p tcp -j SHADOWSOCKS6 >/dev/null 2>&1 || return 1
+	fi
+	return 0
 }
 
 install_fail_closed_guard() {
@@ -1599,17 +1703,94 @@ fss_static_ignlist_v6() {
 	printf '%s\n' ::1/128 fc00::/7 fe80::/10
 }
 
-reconcile_fail_closed_ipsets() {
-	# 在 FSS_FC_GUARD 保护下通过临时集合 + ipset swap 原子重建：
-	# 1) ignlist/ignlist6（复用唯一静态来源 fss_static_ignlist_v4/v6，清除旧节点残留 IP）
-	# 2) white_list/white_list6 与 black_list/black_list6（清除已删除的旧白/黑名单 IP，同时保留静态项）
-	# 严禁清空正在被客户端 DNS 缓存依赖的 gfwlist/chnlist/router 动态集合！
-	# 任一步骤失败立即返回非零，保留 FSS_FC_GUARD 并中止后续步骤。
+fss_decode_static_ip_list() {
+	local raw="$1"
+	[ -n "${raw}" ] || return 0
+	printf '%s' "${raw}" | base64_decode 2>/dev/null | tr '\r' '\n' | sed '/^[[:space:]]*#/d; s/#.*//' | awk '{for (i=1; i<=NF; i++) print $i}'
+}
+
+fss_collect_current_static_ip_lists() {
+	local out_black_v4="$1"
+	local out_black_v6="$2"
+	local out_white_v4="$3"
+	local out_white_v6="$4"
 	local ip=""
 	local black_ips=""
 	local white_ips=""
+	local node_ips=""
 
-	{
+	: > "${out_black_v4}"
+	: > "${out_black_v6}"
+	: > "${out_white_v4}"
+	: > "${out_white_v6}"
+
+	if [ "${ss_basic_mode}" != "6" ]; then
+		for ip in 149.154.0.0/16 91.108.4.0/22 91.108.56.0/24 109.239.140.0/24 67.198.55.0/24; do
+			printf '%s\n' "${ip}" >> "${out_black_v4}"
+		done
+	fi
+	if [ -n "${ss_wan_black_ip}" ]; then
+		black_ips="$(fss_decode_static_ip_list "${ss_wan_black_ip}")"
+		for ip in ${black_ips}; do
+			case "${ip}" in
+			*:*) printf '%s\n' "${ip}" >> "${out_black_v6}" ;;
+			*) [ -n "${ip}" ] && printf '%s\n' "${ip}" >> "${out_black_v4}" ;;
+			esac
+		done
+	fi
+
+	# 按地址族分流 ISP DNS，避免 IPv6 WAN DNS 写入 IPv4 white_list 导致 ipset restore 失败
+	for ip in "${ISP_DNS1}" "${ISP_DNS2}"; do
+		[ -n "${ip}" ] || continue
+		case "${ip}" in
+		*:*) printf '%s\n' "${ip}" >> "${out_white_v6}" ;;
+		*) printf '%s\n' "${ip}" >> "${out_white_v4}" ;;
+		esac
+	done
+	if [ -n "${ss_wan_white_ip}" ]; then
+		white_ips="$(fss_decode_static_ip_list "${ss_wan_white_ip}")"
+		for ip in ${white_ips}; do
+			case "${ip}" in
+			*:*) printf '%s\n' "${ip}" >> "${out_white_v6}" ;;
+			*) [ -n "${ip}" ] && printf '%s\n' "${ip}" >> "${out_white_v4}" ;;
+			esac
+		done
+	fi
+	if type dbus >/dev/null 2>&1; then
+		node_ips="$(dbus list ssconf 2>/dev/null | grep _server_ | awk -F"=" '{print $NF}' | sort -u | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$')"
+		for ip in ${node_ips}; do
+			printf '%s\n' "${ip}" >> "${out_white_v4}"
+		done
+	fi
+
+	sort -u "${out_black_v4}" -o "${out_black_v4}" 2>/dev/null || true
+	sort -u "${out_black_v6}" -o "${out_black_v6}" 2>/dev/null || true
+	sort -u "${out_white_v4}" -o "${out_white_v4}" 2>/dev/null || true
+	sort -u "${out_white_v6}" -o "${out_white_v6}" 2>/dev/null || true
+}
+
+reconcile_fail_closed_ipsets() {
+	# 在 FSS_FC_GUARD 保护下：
+	# 1) 纯静态 ignlist/ignlist6 通过临时集合 + ipset swap 原子重建（清除旧节点残留 IP）；
+	# 2) 共享动态集合 black_list*/white_list* 不整体 swap（保留 ChinaDNS 动态解析出的域名 IP，
+	#    防止客户端缓存期在 GFWList 模式下漏直连），而是对比静态快照增量删除已移除的静态 IP 并幂等添加当前静态项；
+	# 3) 绝不清空 gfwlist*/chnlist*/router* 动态集合；
+	# 4) 任一步骤失败立即返回非零，保留保护链并中止后续步骤。
+	local ip=""
+	local tmp_dir="${TMPDIR:-/tmp}/fss_reconcile.$$"
+	local cur_black_v4="${tmp_dir}/black.v4"
+	local cur_black_v6="${tmp_dir}/black.v6"
+	local cur_white_v4="${tmp_dir}/white.v4"
+	local cur_white_v6="${tmp_dir}/white.v6"
+	local snap_black_v4="${FSS_STATIC_BLACK_SNAP_V4:-/tmp/fss_static_black_ips.v4}"
+	local snap_black_v6="${FSS_STATIC_BLACK_SNAP_V6:-/tmp/fss_static_black_ips.v6}"
+	local snap_white_v4="${FSS_STATIC_WHITE_SNAP_V4:-/tmp/fss_static_white_ips.v4}"
+	local snap_white_v6="${FSS_STATIC_WHITE_SNAP_V6:-/tmp/fss_static_white_ips.v6}"
+
+	mkdir -p "${tmp_dir}" >/dev/null 2>&1 || return 1
+	fss_collect_current_static_ip_lists "${cur_black_v4}" "${cur_black_v6}" "${cur_white_v4}" "${cur_white_v6}"
+
+	if ! {
 		echo "create ignlist nethash -exist"
 		echo "create ignlist_fc_tmp nethash -exist"
 		echo "flush ignlist_fc_tmp"
@@ -1629,70 +1810,52 @@ reconcile_fail_closed_ipsets() {
 		echo "destroy ignlist6_fc_tmp"
 
 		echo "create black_list nethash -exist"
-		echo "create black_list_fc_tmp nethash -exist"
-		echo "flush black_list_fc_tmp"
-		if [ "${ss_basic_mode}" != "6" ]; then
-			for ip in 149.154.0.0/16 91.108.4.0/22 91.108.56.0/24 109.239.140.0/24 67.198.55.0/24; do
-				echo "add black_list_fc_tmp ${ip}"
-			done
-		fi
-		if [ -n "${ss_wan_black_ip}" ]; then
-			black_ips="$(printf '%s' "${ss_wan_black_ip}" | base64_decode 2>/dev/null | sed '/\#/d')"
-			for ip in ${black_ips}; do
-				case "${ip}" in
-				*:*) ;;
-				*) [ -n "${ip}" ] && echo "add black_list_fc_tmp ${ip}" ;;
-				esac
-			done
-		fi
-		echo "swap black_list black_list_fc_tmp"
-		echo "destroy black_list_fc_tmp"
-
 		echo "create black_list6 nethash family inet6 -exist"
-		echo "create black_list6_fc_tmp nethash family inet6 -exist"
-		echo "flush black_list6_fc_tmp"
-		if [ -n "${black_ips}" ]; then
-			for ip in ${black_ips}; do
-				case "${ip}" in
-				*:*) echo "add black_list6_fc_tmp ${ip}" ;;
-				esac
-			done
-		fi
-		echo "swap black_list6 black_list6_fc_tmp"
-		echo "destroy black_list6_fc_tmp"
-
 		echo "create white_list nethash -exist"
-		echo "create white_list_fc_tmp nethash -exist"
-		echo "flush white_list_fc_tmp"
-		[ -n "${ISP_DNS1}" ] && echo "add white_list_fc_tmp ${ISP_DNS1}"
-		[ -n "${ISP_DNS2}" ] && echo "add white_list_fc_tmp ${ISP_DNS2}"
-		if [ -n "${ss_wan_white_ip}" ]; then
-			white_ips="$(printf '%s' "${ss_wan_white_ip}" | base64_decode 2>/dev/null | sed '/\#/d')"
-			for ip in ${white_ips}; do
-				case "${ip}" in
-				*:*) ;;
-				*) [ -n "${ip}" ] && echo "add white_list_fc_tmp ${ip}" ;;
-				esac
-			done
-		fi
-		echo "swap white_list white_list_fc_tmp"
-		echo "destroy white_list_fc_tmp"
-
 		echo "create white_list6 nethash family inet6 -exist"
-		echo "create white_list6_fc_tmp nethash family inet6 -exist"
-		echo "flush white_list6_fc_tmp"
-		if [ -n "${white_ips}" ]; then
-			for ip in ${white_ips}; do
-				case "${ip}" in
-				*:*) echo "add white_list6_fc_tmp ${ip}" ;;
-				esac
-			done
+
+		# 增量删除已从静态配置中移除的旧条目（不动 ChinaDNS 动态写入的域名 IP）
+		if [ -f "${snap_black_v4}" ]; then
+			while IFS= read -r ip; do
+				[ -n "${ip}" ] || continue
+				grep -Fxq "${ip}" "${cur_black_v4}" 2>/dev/null || echo "del black_list ${ip} -exist"
+			done < "${snap_black_v4}"
 		fi
-		echo "swap white_list6 white_list6_fc_tmp"
-		echo "destroy white_list6_fc_tmp"
+		if [ -f "${snap_black_v6}" ]; then
+			while IFS= read -r ip; do
+				[ -n "${ip}" ] || continue
+				grep -Fxq "${ip}" "${cur_black_v6}" 2>/dev/null || echo "del black_list6 ${ip} -exist"
+			done < "${snap_black_v6}"
+		fi
+		if [ -f "${snap_white_v4}" ]; then
+			while IFS= read -r ip; do
+				[ -n "${ip}" ] || continue
+				grep -Fxq "${ip}" "${cur_white_v4}" 2>/dev/null || echo "del white_list ${ip} -exist"
+			done < "${snap_white_v4}"
+		fi
+		if [ -f "${snap_white_v6}" ]; then
+			while IFS= read -r ip; do
+				[ -n "${ip}" ] || continue
+				grep -Fxq "${ip}" "${cur_white_v6}" 2>/dev/null || echo "del white_list6 ${ip} -exist"
+			done < "${snap_white_v6}"
+		fi
+
+		while IFS= read -r ip; do [ -n "${ip}" ] && echo "add black_list ${ip} -exist"; done < "${cur_black_v4}"
+		while IFS= read -r ip; do [ -n "${ip}" ] && echo "add black_list6 ${ip} -exist"; done < "${cur_black_v6}"
+		while IFS= read -r ip; do [ -n "${ip}" ] && echo "add white_list ${ip} -exist"; done < "${cur_white_v4}"
+		while IFS= read -r ip; do [ -n "${ip}" ] && echo "add white_list6 ${ip} -exist"; done < "${cur_white_v6}"
 
 		echo "COMMIT"
-	} | ipset -R >/dev/null 2>&1 || return 1
+	} | ipset -R >/dev/null 2>&1; then
+		rm -rf "${tmp_dir}" >/dev/null 2>&1 || true
+		return 1
+	fi
+
+	cp -f "${cur_black_v4}" "${snap_black_v4}" >/dev/null 2>&1 || true
+	cp -f "${cur_black_v6}" "${snap_black_v6}" >/dev/null 2>&1 || true
+	cp -f "${cur_white_v4}" "${snap_white_v4}" >/dev/null 2>&1 || true
+	cp -f "${cur_white_v6}" "${snap_white_v6}" >/dev/null 2>&1 || true
+	rm -rf "${tmp_dir}" >/dev/null 2>&1 || true
 
 	if type add_wan_bypass_ips_to_ignlist >/dev/null 2>&1; then
 		add_wan_bypass_ips_to_ignlist || return 1
@@ -3614,12 +3777,15 @@ add_white_black() {
 		done
 	fi
 
-	# {black_list}, black ip
+	# {black_list}, black ip（使用局部变量解码，不原地覆写 ss_wan_black_ip，避免后续重复解码）
 	if [ -n "${ss_wan_black_ip}" ]; then
-		ss_wan_black_ip=$(echo ${ss_wan_black_ip} | base64_decode | sed '/\#/d')
+		local decoded_black_ips="$(fss_decode_static_ip_list "${ss_wan_black_ip}")"
 		echo_date "应用IP/CIDR黑名单"
-		for ip in ${ss_wan_black_ip}; do
-			ipset -! add black_list ${ip} >/dev/null 2>&1
+		for ip in ${decoded_black_ips}; do
+			case "${ip}" in
+			*:*) ipset -! add black_list6 "${ip}" >/dev/null 2>&1 ;;
+			*) ipset -! add black_list "${ip}" >/dev/null 2>&1 ;;
+			esac
 		done
 	fi
 
@@ -3661,16 +3827,27 @@ add_white_black() {
 		' >> /tmp/black_list.txt
 	fi
 
-	# {white_list}, white ip
+	# {white_list}, white ip（使用局部变量解码，不原地覆写 ss_wan_white_ip；按地址族分流写入）
 	[ -n "${ISP_DNS1}" ] && ISP_DNS_a="${ISP_DNS1}" || ISP_DNS_a=""
 	[ -n "${ISP_DNS2}" ] && ISP_DNS_b="${ISP_DNS2}" || ISP_DNS_b=""
 	local ALL_NODE_DOMAINS=$(dbus list ssconf|grep _server_|awk -F"=" '{print $NF}'|sort -u|grep -E "([0-9]{1,3}[\.]){3}[0-9]{1,3}")
-	ss_wan_white_ip=$(echo ${ss_wan_white_ip} | base64_decode | sed '/\#/d')
+	local decoded_white_ips="$(fss_decode_static_ip_list "${ss_wan_white_ip}")"
 	echo_date "应用IP/CIDR白名单"
-	for ip in ${ss_wan_white_ip} ${ALL_NODE_DOMAINS}
+	for ip in ${decoded_white_ips} ${ALL_NODE_DOMAINS}
 	do
-		ipset -! add white_list $ip >/dev/null 2>&1
+		case "${ip}" in
+		*:*) ipset -! add white_list6 "$ip" >/dev/null 2>&1 ;;
+		*) ipset -! add white_list "$ip" >/dev/null 2>&1 ;;
+		esac
 	done
+	# 冷启动同步写入静态黑/白名单快照，供后续 Fail-Closed 重启做增量差集清理
+	if [ "${FSS_FAIL_CLOSED_RESTART}" != "1" ] && type fss_collect_current_static_ip_lists >/dev/null 2>&1; then
+		fss_collect_current_static_ip_lists \
+			"${FSS_STATIC_BLACK_SNAP_V4:-/tmp/fss_static_black_ips.v4}" \
+			"${FSS_STATIC_BLACK_SNAP_V6:-/tmp/fss_static_black_ips.v6}" \
+			"${FSS_STATIC_WHITE_SNAP_V4:-/tmp/fss_static_white_ips.v4}" \
+			"${FSS_STATIC_WHITE_SNAP_V6:-/tmp/fss_static_white_ips.v6}"
+	fi
 
 	# {white_list}, white domain
 	true >/tmp/white_list.txt
@@ -7237,24 +7414,26 @@ _start_iptables() {
 	local acl_default_ports_runtime="$(resolve_acl_ports "$(resolve_acl_default_ports_raw)" "${acl_default_mode_runtime}")"
 	local acl_default_ports_match="${acl_default_ports_runtime}"
 	[ "${acl_default_ports_match}" = "all" ] && acl_default_ports_match=""
-	append_if_not_exists nat -A SHADOWSOCKS -p tcp $(factor ${acl_default_ports_match} "-m multiport --dport") -j $(get_action_chain ${acl_default_mode_runtime})
+	append_if_not_exists nat -A SHADOWSOCKS -p tcp $(factor ${acl_default_ports_match} "-m multiport --dport") -j $(get_action_chain ${acl_default_mode_runtime}) || return 1
 	
-	append_if_not_exists nat -A SHADOWSOCKS_EXT -p tcp $(factor ${acl_default_ports_match} "-m multiport --dport") -j $(get_action_chain ${acl_default_mode_runtime})
+	append_if_not_exists nat -A SHADOWSOCKS_EXT -p tcp $(factor ${acl_default_ports_match} "-m multiport --dport") -j $(get_action_chain ${acl_default_mode_runtime}) || return 1
 
 	local default_udp_flag=$(get_acl_udp_flag "" "${acl_default_mode_runtime}")
 	local default_quic_flag=$(get_acl_quic_flag "" "${acl_default_mode_runtime}" "${default_udp_flag}")
 	apply_acl_udp_rule "${acl_default_label}" "" "${acl_default_ports_match}" "${acl_default_mode_runtime}" "${default_udp_flag}" "${default_quic_flag}"
 	
-	# 重定所有流量到 SHADOWSOCKS
+	# 重定所有流量到 SHADOWSOCKS（必须传播关键入口挂载失败）
 	KP_NU=$(iptables -nvL PREROUTING -t nat | sed 1,2d | sed -n '/KOOLPROXY/=' | head -n1)
 	[ -z "${KP_NU}" ] && KP_NU=0
 	INSET_NU=$(expr "${KP_NU}" + 1)
-	iptables -t nat -I PREROUTING "${INSET_NU}" -p tcp -j SHADOWSOCKS
+	iptables -t nat -I PREROUTING "${INSET_NU}" -p tcp -j SHADOWSOCKS || return 1
 	
-	[ "${mangle}" != "0" ] && append_if_not_exists mangle -A PREROUTING -p udp -j SHADOWSOCKS
+	if [ "${mangle}" != "0" ]; then
+		append_if_not_exists mangle -A PREROUTING -p udp -j SHADOWSOCKS || return 1
+	fi
 
 	# FOR FILTER
-	insert_if_not_exists filter -I FORWARD 1 -p udp --dport 443 -j SHADOWSOCKS
+	insert_if_not_exists filter -I FORWARD 1 -p udp --dport 443 -j SHADOWSOCKS || return 1
 	apply_webrtc_block4 || return 1
 
 	if [ "$ss_basic_dns_hijack" == "1" ]; then
@@ -8027,6 +8206,10 @@ apply_ss() {
 	fi
 	load_iptables
 	if [ "${FSS_FAIL_CLOSED_RESTART}" = "1" ]; then
+		if ! verify_proxy_ingress_rules; then
+			echo_date "错误：未检测到透明代理 PREROUTING 入口跳转，保留 Fail-Closed 保护链不予卸载！"
+			close_in_five flag
+		fi
 		if ! remove_fail_closed_guard; then
 			echo_date "警告：卸载临时 Fail-Closed 保护链失败，检测到残留规则！"
 			close_in_five flag
@@ -8090,6 +8273,7 @@ apply_ss_by_nat() {
 	echo_date "restart by nat!"
 	fss_base_load_current_node_env
 	refresh_runtime_context
+	init_protocol_config_paths
 	add_wan_bypass_ips_to_ignlist
 	if [ "${ss_basic_mode}" != "7" ] && [ "${ss_basic_type}" = "0" ] && [ "${ss_basic_ss_obfs}" = "tls" ] && [ -z "$(pidof obfs-local)" ] && [ -x "/koolshare/ss/start-obfs.sh" ]; then
 		start_ss_obfs_helper
@@ -8333,6 +8517,7 @@ reload_dns_only() {
 
 	fss_base_load_current_node_env
 	refresh_runtime_context
+	init_protocol_config_paths
 	fss_require_base_dns >/dev/null 2>&1 || true
 	init_current_node_server_state
 	check_internet6_pre || true
@@ -8450,6 +8635,7 @@ reload_proxy_only() {
 
 	fss_base_load_current_node_env
 	refresh_runtime_context
+	init_protocol_config_paths
 
 	# 依赖外部 helper 进程（如 SS TLS obfs-local）的节点回退 Fail-Closed 完整重启，避免 helper 丢失
 	if [ "${ss_basic_mode}" != "7" ] && [ "${ss_basic_type}" = "0" ] && [ "${ss_basic_ss_obfs}" = "tls" ]; then

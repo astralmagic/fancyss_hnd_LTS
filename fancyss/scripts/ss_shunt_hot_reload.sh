@@ -131,9 +131,17 @@ hot_bypass_new_outbound_server() {
 	if printf '%s' "${addr}" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
 		ipset -! add ignlist "${addr}" >/dev/null 2>&1 || true
 		ipset -! add white_list "${addr}" >/dev/null 2>&1 || true
+		local white_snap_v4="${FSS_STATIC_WHITE_SNAP_V4:-/tmp/fss_static_white_ips.v4}"
+		if [ ! -f "${white_snap_v4}" ] || ! grep -Fxq "${addr}" "${white_snap_v4}" 2>/dev/null; then
+			printf '%s\n' "${addr}" >> "${white_snap_v4}" 2>/dev/null || true
+		fi
 	elif printf '%s' "${addr}" | grep -Fq ':'; then
 		ipset -! add ignlist6 "${addr}" >/dev/null 2>&1 || true
 		ipset -! add white_list6 "${addr}" >/dev/null 2>&1 || true
+		local white_snap_v6="${FSS_STATIC_WHITE_SNAP_V6:-/tmp/fss_static_white_ips.v6}"
+		if [ ! -f "${white_snap_v6}" ] || ! grep -Fxq "${addr}" "${white_snap_v6}" 2>/dev/null; then
+			printf '%s\n' "${addr}" >> "${white_snap_v6}" 2>/dev/null || true
+		fi
 	else
 		if [ ! -f "${node_domains_file}" ] || ! grep -Fxq "${addr}" "${node_domains_file}" 2>/dev/null; then
 			printf '%s\n' "${addr}" >> "${node_domains_file}" 2>/dev/null || true
@@ -365,7 +373,7 @@ hot_remove_rules_from_file() {
 	return 0
 }
 
-hot_runtime_managed_rule_tags() {
+hot_list_all_runtime_rule_tags() {
 	local raw_file="${HOT_STATE_DIR}/.routing_list_raw.$$"
 	local tags_file="${HOT_STATE_DIR}/.routing_list_tags.$$"
 
@@ -378,10 +386,52 @@ hot_runtime_managed_rule_tags() {
 		rm -f "${raw_file}" "${tags_file}" >/dev/null 2>&1 || true
 		return 1
 	fi
-	awk '/^fss_/' "${tags_file}"
-	local awk_rc=$?
+	cat "${tags_file}"
+	local cat_rc=$?
 	rm -f "${raw_file}" "${tags_file}" >/dev/null 2>&1 || true
-	return "${awk_rc}"
+	return "${cat_rc}"
+}
+
+hot_runtime_managed_rule_tags() {
+	local all_tags=""
+	all_tags="$(hot_list_all_runtime_rule_tags)" || return 1
+	printf '%s\n' "${all_tags}" | awk '/^fss_/ && !/^fss_in_/'
+}
+
+hot_runtime_inbound_rule_tags() {
+	local all_tags=""
+	all_tags="$(hot_list_all_runtime_rule_tags)" || return 1
+	printf '%s\n' "${all_tags}" | awk '/^fss_in_/'
+}
+
+hot_add_inbound_rule() {
+	local rule_tag="$1"
+	local target_id="$2"
+	local inbound_tags_json="$3"
+	local adrules_file="${HOT_STATE_DIR}/.adrules_${rule_tag}.$$.json"
+	local target_tag="$(hot_runtime_target_tag "${target_id}")"
+	local ret=0
+
+	[ -x "${XRAY_BIN}" ] || return 1
+	[ -n "${rule_tag}" ] && [ -n "${inbound_tags_json}" ] || return 1
+	cat > "${adrules_file}" <<-EOF
+	{
+	  "routing": {
+	    "rules": [
+	      {
+	        "type": "field",
+	        "ruleTag": "${rule_tag}",
+	        "inboundTag": ${inbound_tags_json},
+	        "outboundTag": "${target_tag}"
+	      }
+	    ]
+	  }
+	}
+	EOF
+	run "${XRAY_BIN}" api adrules --server="${XRAY_API_SERVER}" --append "${adrules_file}" >/dev/null 2>&1
+	ret=$?
+	rm -f "${adrules_file}" >/dev/null 2>&1 || true
+	return "${ret}"
 }
 
 hot_remove_runtime_rules_except() {
@@ -683,13 +733,19 @@ hot_ensure_single_target_loaded() {
 hot_switch_default_node() {
 	local target_node_id="$1"
 	local generation=""
+	local new_socks_tag=""
+	local new_dns_udp_tag=""
 	local new_default_tag=""
 	local new_probe_tag=""
 	local old_tag=""
 	local existing_tags=""
+	local inbound_tags=""
+	local dns_udp_inbounds_json=""
 	local probe_domains=""
 	local host=""
+	local has_dns_udp="0"
 	local has_probe="0"
+	local added_tags=""
 
 	[ -n "${target_node_id}" ] || {
 		hot_log "缺少目标默认节点 ID，无法热切换。"
@@ -717,17 +773,54 @@ hot_switch_default_node() {
 	}
 
 	generation="$(date +%s)_$$"
+	new_socks_tag="fss_in_socks_s_${generation}"
+	new_dns_udp_tag="fss_in_dns_udp_s_${generation}"
 	new_default_tag="fss_default_s_${generation}"
 	new_probe_tag="fss_status_probe_s_${generation}"
+
 	existing_tags="$(hot_runtime_managed_rule_tags)" || {
 		hot_log "热切换默认节点枚举当前运行规则失败，中止并回退。"
 		return 1
 	}
-
-	# 1) 无论是否存在自定义分流规则，始终先写入新默认规则 fss_default_s_<gen>
-	if ! hot_add_rule "${new_default_tag}" "${target_node_id}" "" "" "" ""; then
-		hot_log "热切换默认节点写入新默认规则 ${new_default_tag} 失败。"
+	inbound_tags="$(hot_runtime_inbound_rule_tags)" || {
+		hot_log "热切换默认节点枚举入口绑定规则失败，中止并回退。"
 		return 1
+	}
+
+	# 必须能通过 API 同步更新 socks-in（承载 23456 健康探测与 ChinaDNS-NG）及 dns_udp_* 入口绑定；
+	# 若运行中的 xray 缺少对应 ruleTag（无法删除旧入口规则），严禁假报成功，立即回退 reload_proxy_only！
+	if ! printf '%s\n' "${inbound_tags}" | grep -Eq '^fss_in_socks($|_s_)'; then
+		hot_log "运行中的 xray 缺少可热更新的 fss_in_socks 入口规则标签，回退轻量重载以同步健康探测出站。"
+		return 1
+	fi
+
+	if [ -f "${XRAY_RUNTIME_CONF}" ]; then
+		dns_udp_inbounds_json="$(run jq -c '[.inbounds[]? | .tag // empty | select(startswith("dns_udp_"))] | unique' "${XRAY_RUNTIME_CONF}" 2>/dev/null || echo '[]')"
+	else
+		dns_udp_inbounds_json="[]"
+	fi
+	if [ -n "${dns_udp_inbounds_json}" ] && [ "${dns_udp_inbounds_json}" != "[]" ]; then
+		if ! printf '%s\n' "${inbound_tags}" | grep -Eq '^fss_in_dns_udp($|_s_)'; then
+			hot_log "运行中的 xray 缺少可热更新的 fss_in_dns_udp 入口规则标签，回退轻量重载以同步 DNS 中继出站。"
+			return 1
+		fi
+		has_dns_udp="1"
+	fi
+
+	# 1) 同步写入新的入口绑定规则（socks-in 与 dns_udp_*），确保探测与 DNS 中继切到新出站
+	if ! hot_add_inbound_rule "${new_socks_tag}" "${target_node_id}" '["socks-in"]'; then
+		hot_log "热切换默认节点写入新 socks-in 入口绑定失败，回退重启路径。"
+		return 1
+	fi
+	added_tags="${new_socks_tag}"
+
+	if [ "${has_dns_udp}" = "1" ]; then
+		if ! hot_add_inbound_rule "${new_dns_udp_tag}" "${target_node_id}" "${dns_udp_inbounds_json}"; then
+			for old_tag in ${added_tags}; do hot_remove_rule "${old_tag}" >/dev/null 2>&1 || true; done
+			hot_log "热切换默认节点写入新 dns_udp 入口绑定失败，已回滚并回退重启路径。"
+			return 1
+		fi
+		added_tags="${added_tags} ${new_dns_udp_tag}"
 	fi
 
 	# 2) 若运行中存在 fss_status_probe*，同步写入新探测规则指向新默认节点
@@ -744,24 +837,54 @@ hot_switch_default_node() {
 		done
 		if [ -n "${probe_domains}" ]; then
 			if ! hot_add_rule "${new_probe_tag}" "${target_node_id}" "" "" "${probe_domains}" ""; then
-				hot_remove_rule "${new_default_tag}" >/dev/null 2>&1 || true
+				for old_tag in ${added_tags}; do hot_remove_rule "${old_tag}" >/dev/null 2>&1 || true; done
 				hot_log "热切换默认节点写入新探测规则 ${new_probe_tag} 失败，已回滚。"
 				return 1
 			fi
+			added_tags="${added_tags} ${new_probe_tag}"
 		else
 			has_probe="0"
 		fi
 	fi
 
-	# 3) 仅删除旧的 fss_default* 与（已替换的）fss_status_probe*，严禁删除 fss_webrtc 或任何自定义分流规则；
-	# 任一旧规则删除失败必须回滚新增规则并返回非零，防止旧 match-all 规则继续优先命中！
+	# 3) 无论是否存在自定义分流规则，始终写入新默认规则 fss_default_s_<gen>（置于入口与探测规则之后）
+	if ! hot_add_rule "${new_default_tag}" "${target_node_id}" "" "" "" ""; then
+		for old_tag in ${added_tags}; do hot_remove_rule "${old_tag}" >/dev/null 2>&1 || true; done
+		hot_log "热切换默认节点写入新默认规则 ${new_default_tag} 失败，已回滚。"
+		return 1
+	fi
+	added_tags="${added_tags} ${new_default_tag}"
+
+	# 4) 删除旧的入口绑定与默认/探测规则，严禁删除 fss_webrtc 或任何自定义分流规则；
+	# 任一旧规则删除失败必须回滚全部新增规则并返回非零！
+	for old_tag in ${inbound_tags}; do
+		case "${old_tag}" in
+		fss_in_socks|fss_in_socks_s_*)
+			[ "${old_tag}" = "${new_socks_tag}" ] && continue
+			if ! hot_remove_rule "${old_tag}"; then
+				for t in ${added_tags}; do hot_remove_rule "${t}" >/dev/null 2>&1 || true; done
+				hot_log "热切换默认节点删除旧 socks-in 规则 ${old_tag} 失败，已回滚并回退重启路径。"
+				return 1
+			fi
+			;;
+		fss_in_dns_udp|fss_in_dns_udp_s_*)
+			[ "${has_dns_udp}" = "1" ] || continue
+			[ "${old_tag}" = "${new_dns_udp_tag}" ] && continue
+			if ! hot_remove_rule "${old_tag}"; then
+				for t in ${added_tags}; do hot_remove_rule "${t}" >/dev/null 2>&1 || true; done
+				hot_log "热切换默认节点删除旧 dns_udp 规则 ${old_tag} 失败，已回滚并回退重启路径。"
+				return 1
+			fi
+			;;
+		esac
+	done
+
 	for old_tag in ${existing_tags}; do
 		case "${old_tag}" in
 		fss_default|fss_default_s_*)
 			[ "${old_tag}" = "${new_default_tag}" ] && continue
 			if ! hot_remove_rule "${old_tag}"; then
-				hot_remove_rule "${new_default_tag}" >/dev/null 2>&1 || true
-				[ "${has_probe}" = "1" ] && hot_remove_rule "${new_probe_tag}" >/dev/null 2>&1 || true
+				for t in ${added_tags}; do hot_remove_rule "${t}" >/dev/null 2>&1 || true; done
 				hot_log "热切换默认节点删除旧默认规则 ${old_tag} 失败，已回滚新规则并回退重启路径。"
 				return 1
 			fi
@@ -770,8 +893,7 @@ hot_switch_default_node() {
 			[ "${has_probe}" = "1" ] || continue
 			[ "${old_tag}" = "${new_probe_tag}" ] && continue
 			if ! hot_remove_rule "${old_tag}"; then
-				hot_remove_rule "${new_default_tag}" >/dev/null 2>&1 || true
-				hot_remove_rule "${new_probe_tag}" >/dev/null 2>&1 || true
+				for t in ${added_tags}; do hot_remove_rule "${t}" >/dev/null 2>&1 || true; done
 				hot_log "热切换默认节点删除旧探测规则 ${old_tag} 失败，已回滚新规则并回退重启路径。"
 				return 1
 			fi
@@ -792,7 +914,7 @@ hot_switch_default_node() {
 	ss_basic_shunt_rule_ts="${generation}"
 	dbus set ss_basic_shunt_rule_ts="${generation}" >/dev/null 2>&1 || true
 
-	hot_log "已热切换默认出站至 proxy${target_node_id}（Xray 主进程未重启，其他分流规则/helper/WebRTC 规则保持不变）。"
+	hot_log "已热切换默认出站与 socks-in/dns_udp 入口绑定至 proxy${target_node_id}（Xray 主进程未重启，其他分流规则/helper/WebRTC 规则保持不变）。"
 	return 0
 }
 
