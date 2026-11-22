@@ -741,6 +741,13 @@ close_in_five() {
 		unset_lock
 		exit 1
 	fi
+	# Fail-Closed 重启路径失败时绝不调用 disable_ss 清空防火墙规则，防止流量直连泄漏。
+	if [ "${FSS_FAIL_CLOSED_RESTART:-0}" = "1" ]; then
+		echo_date "[fail-closed] 重启或加载检查失败，为防止出口 IP 泄漏，保留现有 Fail-Closed 拦截状态，不自动关闭插件（如需恢复直连请手动关闭插件）。"
+		echo_date "======================= 梅林固件 - 【科学上网】 ========================"
+		unset_lock
+		exit 1
+	fi
 	# 5秒关闭功能是为了让用户注意到关闭过程，从而及时得知错误信息
 	# 插件在运行过程中不能使用此功能，不然插件被关闭了，无法进行故障转移功能
 	# 在某些条件无法达成时使用5s关闭功能，比如系统配置为中继模式，jffs2_scripts未开启

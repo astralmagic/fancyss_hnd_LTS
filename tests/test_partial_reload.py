@@ -546,7 +546,7 @@ hot_ensure_targets_loaded
             proc = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             lines = log_file.read_text(encoding="utf-8").splitlines()
-            self.assertIn("IPSET:-! add white_list 203.0.113.9", lines)
+            self.assertIn("IPSET:-! add white_static 203.0.113.9", lines)
             ado_data = json.loads(ado_capture.read_text(encoding="utf-8"))
             self.assertEqual(ado_data["outbounds"][0]["tag"], "proxy9")
             updated_conf = json.loads(xray_conf.read_text(encoding="utf-8"))
