@@ -6,7 +6,7 @@ fancyss 3.3.9及以上版本的chinadns-ng为魔改版本，支持读取gz压缩
 
 **域名列表**
 
-gfwlist.gz，包含已知的被墙的域名，上游：[Loukky/gfwlist-by-loukky](https://github.com/Loukky/gfwlist-by-loukky)，[pexcn/daily](pexcn/daily)
+gfwlist.gz，合并去重四个上游的域名：[官方 GFWList](https://github.com/gfwlist/gfwlist)、[Loukky](https://github.com/Loukky/gfwlist-by-loukky)、[Loyalsoldier](https://github.com/Loyalsoldier/v2ray-rules-dat) 和 [pexcn](https://github.com/pexcn/daily)
 
 chnlist.gz，包含全部cn域名和10万+条非cn的国内域名
 

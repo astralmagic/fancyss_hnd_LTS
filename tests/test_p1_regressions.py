@@ -1,3 +1,4 @@
+import base64
 import gzip
 import hashlib
 import ipaddress
@@ -594,16 +595,55 @@ exit 1
         downloaded = (self.root / "wget.log").read_text().splitlines()
         self.assertEqual(downloaded, ["rules.json.js", "gfwlist.gz"])
 
-    def test_update_rules_script_excludes_unmaintained_upstreams(self):
+    def test_gfwlist_merges_four_sources_and_preserves_output_on_failure(self):
+        script = ROOT / "rules_ng/update_rules.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            for name in ("source", "work", "out"):
+                (path / name).mkdir()
+            inputs = path / "source"
+            official = "[AutoProxy 0.2.9]\n||Shared.Example\n||first.example\n@@||except.example\n"
+            (inputs / "official").write_bytes(base64.b64encode(official.encode()))
+            (inputs / "loukky").write_text("[AutoProxy 0.2.9]\n||second.example\n||shared.example\n")
+            (inputs / "loyal").write_text(".SHARED.Example\r\nthird.example\n# ignored\n")
+            (inputs / "pexcn").write_text("fourth.example\nshared.example\n192.0.2.1\nv2ex.com\n")
+            manifest = path / "out/rules.json.js"
+            manifest.write_text("{}")
+            generate = r'''source "$SCRIPT"
+CURR_PATH="$TMPROOT/out"
+RULE_FILE="$CURR_PATH/rules.json.js"
+curl_download() { cp "$TMPROOT/source/${2##*/}" "$2"; }
+update_gfwlist "$TMPROOT/work"
+'''
+            env = dict(SCRIPT=str(script), TMPROOT=tmp)
+            result = run_bash(generate, **env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            output = path / "out/gfwlist.gz"
+            original = output.read_bytes()
+            original_manifest = manifest.read_bytes()
+            self.assertEqual(gzip.decompress(original).decode().splitlines(), [
+                "first.example", "fourth.example", "second.example", "shared.example", "third.example",
+            ])
+            self.assertEqual(json.loads(original_manifest)["gfwlist"]["count"], "5")
+            for name, bad in (("pexcn", "# empty"), ("loukky", "unusable data")):
+                with self.subTest(name=name):
+                    saved = (inputs / name).read_bytes()
+                    (inputs / name).write_text(bad)
+                    self.assertNotEqual(run_bash(generate, **env).returncode, 0)
+                    self.assertEqual(output.read_bytes(), original)
+                    self.assertEqual(manifest.read_bytes(), original_manifest)
+                    (inputs / name).write_bytes(saved)
+
+    def test_update_rules_script_uses_expected_upstreams(self):
         script = (ROOT / "rules_ng/update_rules.sh").read_text()
         for obsolete in (
-            "pexcn/daily",
-            "Loukky/gfwlist-by-loukky",
             "17mon/china_ip_list",
             "firehol/blocklist-ipsets",
         ):
             self.assertNotIn(obsolete, script)
         for active in (
+            "pexcn/daily/gh-pages/gfwlist/gfwlist.txt",
+            "Loukky/gfwlist-by-loukky/master/gfwlist.txt",
             "gfwlist/gfwlist/master/gfwlist.txt",
             "Loyalsoldier/v2ray-rules-dat/release/gfw.txt",
             "gaoyifan/china-operator-ip/ip-lists/china.txt",

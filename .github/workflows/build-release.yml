@@ -333,6 +333,7 @@ jobs:
       - name: Publish HND packages
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           tag="${GITHUB_REF#refs/tags/}"

@@ -567,6 +567,7 @@ fss_shunt_sync_identity_shadows() {
 		fss_shunt_write_rules_mirror "${new_json}" >/dev/null 2>&1 || true
 	fi
 
+	[ -z "${FSS_FAILOVER_TARGET_NODE:-}" ] || return 0
 	default_target="${ss_basic_shunt_default_node}"
 	[ -n "${default_target}" ] || default_target="$(dbus get ${FSS_SHUNT_DEFAULT_NODE_DBUS_KEY})"
 	default_identity="$(dbus get ${FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY})"
@@ -811,8 +812,8 @@ fss_shunt_store_default_node() {
 	local node_id="$1"
 	local identity="" previous_identity=""
 	fss_shunt_target_is_proxy_node "${node_id}" || return 1
-	identity="$(fss_get_node_identity_by_id "${node_id}")" || identity=""
-	previous_identity="$(dbus get "${FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY}")"
+	identity="$(fss_get_node_identity_by_id "${node_id}")" || return 1
+	previous_identity="$(dbus get "${FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY}")" || return 1
 	dbus set "${FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY}=${identity}" || return 1
 	if ! dbus set "${FSS_SHUNT_DEFAULT_NODE_DBUS_KEY}=${node_id}"; then
 		dbus set "${FSS_SHUNT_DEFAULT_NODE_IDENTITY_DBUS_KEY}=${previous_identity}"

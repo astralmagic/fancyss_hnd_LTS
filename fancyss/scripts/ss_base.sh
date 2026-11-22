@@ -138,6 +138,8 @@ fss_base_apply_node_no_udp() {
 }
 
 fss_base_apply_node_derived_env() {
+	# 在同一进程中改选节点时，从 ACL 设置重新应用协议能力。
+	[ -z "${FSS_ACL_MANGLE:-}" ] || mangle="${FSS_ACL_MANGLE}"
 	if [ "${ss_basic_type}" == "6" ];then
 		if [ "$(fss_detect_storage_schema 2>/dev/null)" = "2" ]; then
 			ss_basic_password="${ss_basic_naive_pass}"
@@ -186,7 +188,14 @@ fss_base_load_current_node_env() {
 	fi
 	base_1="name type mode server port method password ss_obfs ss_obfs_host rss_protocol rss_protocol_param rss_obfs rss_obfs_param v2ray_uuid v2ray_alterid v2ray_security v2ray_network v2ray_headtype_tcp v2ray_headtype_kcp v2ray_headtype_quic v2ray_grpc_mode v2ray_grpc_authority v2ray_network_path v2ray_network_host v2ray_kcp_seed v2ray_network_security v2ray_network_security_ai v2ray_network_security_sni v2ray_mux_concurrency v2ray_json xray_uuid xray_encryption xray_flow xray_network xray_headtype_tcp xray_headtype_kcp xray_headtype_quic xray_grpc_mode xray_grpc_authority xray_xhttp_mode xray_network_path xray_network_host xray_kcp_seed xray_network_security xray_network_security_ai xray_network_security_sni xray_pcs xray_vcn xray_svn xray_fingerprint xray_show xray_publickey xray_shortid xray_spiderx xray_prot xray_alterid xray_json tuic_json"
 	base_2="v2ray_use_json v2ray_mux_enable v2ray_network_security_alpn_h2 v2ray_network_security_alpn_http xray_use_json xray_network_security_alpn_h2 xray_network_security_alpn_http trojan_ai trojan_uuid trojan_sni trojan_pcs trojan_vcn trojan_tfo trojan_plugin trojan_obfs trojan_obfshost trojan_obfsuri naive_prot naive_server naive_port naive_user naive_pass hy2_server hy2_port hy2_pass hy2_up hy2_dl hy2_obfs hy2_obfs_pass hy2_sni hy2_pcs hy2_vcn hy2_svn hy2_ai hy2_tfo hy2_cg anytls_server anytls_port anytls_pass anytls_sni anytls_ai"
-	fss_export_current_node_env "${cur_node}" ${base_1} ${base_2}
+	[ -z "${FSS_FAILOVER_TARGET_NODE:-}" ] || [ "${cur_node}" = "${FSS_FAILOVER_TARGET_NODE}" ] || return 1
+	if [ -n "${FSS_FAILOVER_TARGET_NODE:-}" ] || { [ -n "${FSS_NODE_CURRENT_ID:-}" ] && [ "${FSS_NODE_CURRENT_ID}" != "${cur_node}" ]; }; then
+		local field=""
+		for field in ${base_1} ${base_2}; do
+			[ "${field}" = "mode" ] || unset "ss_basic_${field}"
+		done
+	fi
+	fss_export_current_node_env "${cur_node}" ${base_1} ${base_2} || return 1
 	ssconf_basic_node=${cur_node}
 	export ss_basic_mode="${FSS_GLOBAL_BASIC_MODE}"
 	if [ "$(fss_detect_storage_schema)" = "2" ];then
@@ -528,6 +537,7 @@ if [ "${FSS_BASE_SKIP_DBUS_EXPORT:-0}" != "1" ]; then
 		mangle=1
 	fi
 
+	FSS_ACL_MANGLE="${mangle}"
 	fss_base_apply_node_no_udp
 
 	[ -z "$(dbus get ss_basic_furl)" ] && ss_basic_furl="$(get_fancyss_default_furl)"
