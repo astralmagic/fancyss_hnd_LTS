@@ -268,7 +268,7 @@ if out:
             self.assertFalse((work / "v1.8.11").exists())
             self.assertFalse(upx_log.exists())
 
-    def test_smartdns_filters_rc_and_nightly_picks_release48_4(self):
+    def test_smartdns_filters_rc_and_nightly_picks_release48_5(self):
         fixture = [
             {
                 "tag_name": "Release48.5-RC1",
@@ -289,18 +289,18 @@ if out:
                 ],
             },
             {
-                "tag_name": "Release48.4",
+                "tag_name": "Release48.5",
                 "draft": False,
                 "prerelease": False,
                 "assets": [
                     {
                         "name": "smartdns-aarch64",
-                        "browser_download_url": "https://example.invalid/484-64",
+                        "browser_download_url": "https://example.invalid/485-64",
                         "digest": "sha256:" + ("3" * 64),
                     },
                     {
                         "name": "smartdns-arm",
-                        "browser_download_url": "https://example.invalid/484-32",
+                        "browser_download_url": "https://example.invalid/485-32",
                         "digest": "sha256:" + ("4" * 64),
                     },
                 ],
@@ -322,8 +322,8 @@ if out:
                 text=True,
             )
             self.assertEqual(res.returncode, 0, res.stderr)
-            self.assertIn("TAG=Release48.4", res.stdout)
-            self.assertIn("OUT_DIR=v48.4", res.stdout)
+            self.assertIn("TAG=Release48.5", res.stdout)
+            self.assertIn("OUT_DIR=v48.5", res.stdout)
 
             bad = subprocess.run(
                 ["bash", str(ROOT / "binaries/smartdns/get_smartdns.sh")],
