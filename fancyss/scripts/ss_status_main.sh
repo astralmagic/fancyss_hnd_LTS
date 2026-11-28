@@ -89,10 +89,7 @@ LOGM() {
 }
 
 pick_jq_bin() {
-	if command -v jq >/dev/null 2>&1; then
-		command -v jq
-		return 0
-	fi
+	which jq 2>/dev/null && return 0
 	if [ -x "/koolshare/bin/jq" ]; then
 		echo "/koolshare/bin/jq"
 		return 0
@@ -261,7 +258,7 @@ failover_cooldown_seconds() {
 }
 
 failover_is_ssconfig_locked() {
-	if command -v flock >/dev/null 2>&1; then
+	if type flock >/dev/null 2>&1; then
 		[ -f "${FAILOVER_LOCK_FILE}" ] || return 1
 		if ( exec 9>"${FAILOVER_LOCK_FILE}" && flock -n 9 ) >/dev/null 2>&1; then
 			return 1
@@ -279,7 +276,11 @@ failover_record_probe_health() {
 	local probe_count="$(sed '/fancyss/d; /===/d; /^[[:space:]]*$/d' "${LOGFILE_F}" 2>/dev/null | wc -l | tr -d ' ')"
 	local last_line="$(sed '/fancyss/d; /===/d; /^[[:space:]]*$/d' "${LOGFILE_F}" 2>/dev/null | tail -n 1)"
 	[ -n "${last_line}" ] || return 0
-	local line_sig="${probe_count}:$(printf '%s' "${last_line}" | cksum | awk '{print $1}')"
+	local digest=""
+	digest="$(printf '%s' "${last_line}" | fss_content_signature)" || return 1
+	# Legacy recovery records only stored the CRC, without its byte count.
+	case "${digest}" in md5:*) ;; *) digest="${digest%%:*}" ;; esac
+	local line_sig="${probe_count}:${digest}"
 	if [ "${line_sig}" = "${FAILOVER_LAST_OK_SIG}" ]; then
 		return 0
 	fi

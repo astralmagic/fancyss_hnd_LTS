@@ -43,10 +43,7 @@ pick_status_tool(){
 		echo "/koolshare/bin/status-tool"
 		return 0
 	fi
-	if command -v status-tool >/dev/null 2>&1;then
-		command -v status-tool
-		return 0
-	fi
+	which status-tool 2>/dev/null && return 0
 	return 1
 }
 

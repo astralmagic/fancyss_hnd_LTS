@@ -399,7 +399,7 @@ check_internet4(){
 		local PING4_RET=$(ping -c 1 -w 1 ${PING4_SRC} 2>/dev/null|tail -n1|awk -F '/' '{print $4}')
 	fi
 	if [ -n "${PING4_RET}" ];then
-		echo_date "✅️ 检测到路由器可以正常访问ipv4公网，检测源：${PING4_SRC}，延迟：${PING4_RET}s，继续！"
+		echo_date "✅️ 检测到路由器可以正常访问ipv4公网，检测源：${PING4_SRC}，延迟：${PING4_RET} ms，继续！"
 	else
 		echo_date "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
 		echo_date "+               检测到路由器无法正常访问ipv4公网！                     +"
@@ -434,7 +434,7 @@ check_internet6(){
 		local PING6_RET=$(ping -c 1 -w 1 ${PING6_SRC} 2>/dev/null|tail -n1|awk -F '/' '{print $4}')
 	fi
 	if [ -n "${PING6_RET}" ];then
-		echo_date "✅️ 检测到路由器可以正常访问ipv6公网，检测源：${PING6_SRC}，延迟：${PING6_RET}s，继续！"
+		echo_date "✅️ 检测到路由器可以正常访问ipv6公网，检测源：${PING6_SRC}，延迟：${PING6_RET} ms，继续！"
 		INTERNET6=1
 	else
 		#echo_date "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
@@ -737,8 +737,6 @@ init_protocol_config_paths() {
 prepare_system() {
 	# prepare system
 	echo_date "🛠️ 一些准备工作，请稍后..."
-	echo_date "准备工作：加载当前节点和运行环境..."
-	fss_base_load_current_node_env
 	refresh_runtime_context
 	init_protocol_config_paths
 	normalize_ss2022_password
@@ -1801,12 +1799,24 @@ fss_collect_current_static_ip_lists() {
 }
 
 fss_white_domain_sig() {
-	local wf="${1:-/tmp/white_list.txt}"
+	local wf="$1" sorted="$2"
+	[ -f "${wf}" ] && [ -r "${wf}" ] || return 1
 	if [ -s "${wf}" ]; then
-		sort -u "${wf}" 2>/dev/null | cksum | awk '{print $1 ":" $2}'
+		LC_ALL=C sort -u "${wf}" > "${sorted}" || return 1
+		fss_content_signature < "${sorted}"
 	else
 		echo "empty"
 	fi
+}
+
+fss_record_white_domain_baseline() {
+	local sig_file="${FSS_WHITE_DOMAIN_SIG_FILE:-/tmp/fss_white_domain.sig}"
+	local work="" rc=0
+	work="$(fss_mktemp_dir fss_white_sig "$(dirname "${sig_file}")")" || return 1
+	fss_white_domain_sig "$1" "${work}/sorted" > "${work}/signature" &&
+		mv -f "${work}/signature" "${sig_file}" || rc=1
+	rm -rf "${work}"
+	return "${rc}"
 }
 
 reconcile_fail_closed_ipsets() {
@@ -1819,31 +1829,35 @@ reconcile_fail_closed_ipsets() {
 	# 3) 动态黑名单 black_list* 及 gfwlist* / chnlist* / router* 保持不断档，不因静态变更清空；
 	# 4) 任一步骤失败立即返回非零，保留保护链并中止后续步骤。
 	local ip=""
-	local tmp_dir="${TMPDIR:-/tmp}/fss_reconcile.$$"
+	local white_domain_file="${FSS_WHITE_DOMAIN_FILE:-/tmp/white_list.txt}"
+	local white_sig_file="${FSS_WHITE_DOMAIN_SIG_FILE:-/tmp/fss_white_domain.sig}"
+	local tmp_dir=""
+	tmp_dir="$(fss_mktemp_dir fss_reconcile "$(dirname "${white_sig_file}")")" || return 1
 	local cur_black_v4="${tmp_dir}/black.v4"
 	local cur_black_v6="${tmp_dir}/black.v6"
 	local cur_white_v4="${tmp_dir}/white.v4"
 	local cur_white_v6="${tmp_dir}/white.v6"
-	local white_domain_file="${FSS_WHITE_DOMAIN_FILE:-/tmp/white_list.txt}"
-	local white_sig_file="${FSS_WHITE_DOMAIN_SIG_FILE:-/tmp/fss_white_domain.sig}"
 	local prev_white_sig=""
 	local cur_white_sig=""
 	local reset_dynamic_white="0"
 
-	mkdir -p "${tmp_dir}" >/dev/null 2>&1 || return 1
 	fss_collect_current_static_ip_lists "${cur_black_v4}" "${cur_black_v6}" "${cur_white_v4}" "${cur_white_v6}" || {
 		rm -rf "${tmp_dir}"
 		return 1
 	}
 
-	cur_white_sig="$(fss_white_domain_sig "${white_domain_file}")"
+	fss_white_domain_sig "${white_domain_file}" "${tmp_dir}/sorted" > "${tmp_dir}/signature" &&
+		read -r cur_white_sig < "${tmp_dir}/signature" && [ -n "${cur_white_sig}" ] || {
+		rm -rf "${tmp_dir}"
+		return 1
+	}
 	[ -f "${white_sig_file}" ] && prev_white_sig="$(sed -n '1p' "${white_sig_file}" 2>/dev/null)"
 	local legacy_white4="${FSS_STATIC_WHITE_SNAP_V4:-/tmp/fss_static_white_ips.v4}"
 	local legacy_white6="${FSS_STATIC_WHITE_SNAP_V6:-/tmp/fss_static_white_ips.v6}"
 	if [ -f "${legacy_white4}" ] || [ -f "${legacy_white6}" ]; then
 		reset_dynamic_white="1"
 	fi
-	if [ -n "${prev_white_sig}" ] && [ "${prev_white_sig}" != "${cur_white_sig}" ]; then
+	if [ "${prev_white_sig}" != "${cur_white_sig}" ]; then
 		reset_dynamic_white="1"
 	fi
 
@@ -1916,7 +1930,7 @@ reconcile_fail_closed_ipsets() {
 	fi
 
 	rm -f "${legacy_white4}" "${legacy_white6}" || return 1
-	printf '%s\n' "${cur_white_sig}" > "${white_sig_file}" 2>/dev/null || true
+	mv -f "${tmp_dir}/signature" "${white_sig_file}" || { rm -rf "${tmp_dir}"; return 1; }
 	rm -rf "${tmp_dir}" >/dev/null 2>&1 || true
 
 	if type add_wan_bypass_ips_to_ignlist >/dev/null 2>&1; then
@@ -1948,7 +1962,7 @@ shunt_configs_equivalent() {
 	if type fss_pick_jq_bin >/dev/null 2>&1; then
 		jq_bin="$(fss_pick_jq_bin 2>/dev/null)"
 	fi
-	[ -n "${jq_bin}" ] || jq_bin="$(command -v jq 2>/dev/null)"
+	[ -n "${jq_bin}" ] || jq_bin="$(which jq 2>/dev/null)"
 	if [ -n "${jq_bin}" ]; then
 		old_norm="${old_file}.norm.$$"
 		new_norm="${new_file}.norm.$$"
@@ -3926,8 +3940,8 @@ add_white_black() {
 		echo "${wan_white_domain2}" >>/tmp/white_list.txt
 	done
 	# 冷启动记录白名单域名签名，供后续 Fail-Closed 重启感知白名单域名变更并重置动态 white_list*
-	if [ "${FSS_FAIL_CLOSED_RESTART}" != "1" ] && type fss_white_domain_sig >/dev/null 2>&1; then
-		fss_white_domain_sig /tmp/white_list.txt > "${FSS_WHITE_DOMAIN_SIG_FILE:-/tmp/fss_white_domain.sig}" 2>/dev/null || true
+	if [ "${FSS_FAIL_CLOSED_RESTART}" != "1" ]; then
+		fss_record_white_domain_baseline /tmp/white_list.txt || return 1
 	fi
 
 	# {block_list}
@@ -8244,6 +8258,11 @@ apply_ss() {
 
 	echo_date ======================= 梅林固件 - 【科学上网】 ========================
 	echo_date
+	# Check before stopping a working proxy or touching its firewall.
+	fss_base_load_current_node_env || {
+		echo_date "当前节点配置加载失败，中止启动。"
+		return 1
+	}
 	refresh_runtime_context
 	if [ "${ss_basic_status}" == "1" ];then
 		FSS_FAIL_CLOSED_RESTART="1"
@@ -8279,7 +8298,7 @@ apply_ss() {
 	load_module
 	creat_ipset
 	create_dnsmasq_conf
-	add_white_black
+	add_white_black || return 1
 	# 生成代理主程序配置
 	if [ "${ss_basic_mode}" = "7" ]; then
 		creat_shunt_json
@@ -8415,7 +8434,7 @@ apply_ss_by_nat() {
 	echo_date ======================= 梅林固件 - 【科学上网】 ========================
 	echo_date
 	echo_date "restart by nat!"
-	fss_base_load_current_node_env
+	fss_base_load_current_node_env || return 1
 	refresh_runtime_context
 	init_protocol_config_paths
 	add_wan_bypass_ips_to_ignlist
@@ -8482,7 +8501,7 @@ reload_iptables_only() {
 		return 1
 	fi
 
-	fss_base_load_current_node_env
+	fss_base_load_current_node_env || return 1
 	if [ "${ss_basic_mode}" != "7" ] && [ "${ss_basic_type}" = "1" ]; then
 		[ "${mangle}" = "1" ] && want_ssr_udp="1"
 		if ps w 2>/dev/null | grep -E 'rss-redir.*-u([[:space:]]|$)' | grep -v grep >/dev/null 2>&1; then
@@ -8574,7 +8593,7 @@ dns_domain_lists_match_runtime() {
 	local stage_dir=""
 	local list=""
 	local ret=0
-	stage_dir=$(mktemp -d /tmp/fss_dns_lists.XXXXXX) || return 1
+	stage_dir=$(fss_mktemp_dir fss_dns_lists) || return 1
 	refresh_domain_white_black_files "${stage_dir}" || ret=1
 	for list in white_list black_list; do
 		# 比较集合内容而非文件顺序；基线缺失时也必须回退。
@@ -8659,7 +8678,7 @@ reload_dns_only() {
 		return 1
 	fi
 
-	fss_base_load_current_node_env
+	fss_base_load_current_node_env || return 1
 	refresh_runtime_context
 	init_protocol_config_paths
 	fss_require_base_dns >/dev/null 2>&1 || true
@@ -8691,7 +8710,7 @@ reload_dns_process() {
 	local FSS_PARTIAL_RELOAD=1
 	local FSS_FAIL_CLOSED_RESTART=1
 
-	fss_base_load_current_node_env
+	fss_base_load_current_node_env || return 1
 	refresh_runtime_context
 	init_protocol_config_paths
 	fss_require_base_dns >/dev/null 2>&1 || true
@@ -9085,7 +9104,7 @@ restart)
 	# start/restart by web or user
 	set_lock
 	start_ws
-	apply_ss
+	apply_ss || { unset_lock; exit 1; }
 	echo_date
 	echo_date "Across the Great Wall we can reach every corner in the world!"
 	echo_date

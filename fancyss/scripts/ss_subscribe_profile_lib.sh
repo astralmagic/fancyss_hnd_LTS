@@ -16,7 +16,7 @@ NODE_TOOL_CONF_FILE="/koolshare/ss/rules/node-tool.conf"
 SUBPROF_CRU_BIN="${SUBPROF_CRU_BIN:-/usr/sbin/cru}"
 
 subprof_log() {
-	if command -v profile_log >/dev/null 2>&1; then
+	if type profile_log >/dev/null 2>&1; then
 		profile_log "$@" >&2
 	else
 		printf '【%s】: %s\n' "$(TZ=UTC-8 date -R '+%Y%m%d %X' 2>/dev/null || date '+%Y%m%d %H:%M:%S')" "$*" >&2

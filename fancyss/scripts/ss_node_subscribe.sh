@@ -343,7 +343,7 @@ sub_pick_jq() {
 		printf '%s\n' "/koolshare/bin/jq"
 		return 0
 	fi
-	command -v jq 2>/dev/null
+	which jq 2>/dev/null
 }
 
 pick_sub_get() {
@@ -802,11 +802,10 @@ sub_get_filter_signature(){
 }
 
 pick_sub_tool(){
-	if command -v sub-tool >/dev/null 2>&1; then
-		if "$(command -v sub-tool)" version >/dev/null 2>&1; then
-			command -v sub-tool
-			return 0
-		fi
+	local candidate=""
+	if candidate="$(which sub-tool 2>/dev/null)" && "${candidate}" version >/dev/null 2>&1; then
+		printf '%s\n' "${candidate}"
+		return 0
 	fi
 	if [ -x "/koolshare/bin/sub-tool" ];then
 		if /koolshare/bin/sub-tool version >/dev/null 2>&1; then
@@ -818,11 +817,10 @@ pick_sub_tool(){
 }
 
 pick_node_tool(){
-	if command -v node-tool >/dev/null 2>&1; then
-		if "$(command -v node-tool)" version >/dev/null 2>&1; then
-			command -v node-tool
-			return 0
-		fi
+	local candidate=""
+	if candidate="$(which node-tool 2>/dev/null)" && "${candidate}" version >/dev/null 2>&1; then
+		printf '%s\n' "${candidate}"
+		return 0
 	fi
 	if [ -x "/koolshare/bin/node-tool" ];then
 		if /koolshare/bin/node-tool version >/dev/null 2>&1; then
@@ -2944,7 +2942,7 @@ sub_filter_offline_duplicate_nodes(){
 				if [ -r "/proc/sys/kernel/random/uuid" ];then
 					suffix=$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | cut -c1-4)
 				else
-					suffix=$(printf '%s' "${node_name}_${node_secondary}_${salt_idx}_$$_$(date +%s)" | fss_identity_hash_v1 | cut -c1-4)
+					suffix=$(fss_identity_hash_v1 "${node_name}_${node_secondary}_${salt_idx}_$$_$(date +%s)" | cut -c1-4)
 				fi
 				[ -n "${suffix}" ] || suffix=$(printf '%04d' "${salt_idx}")
 				new_name="${node_name}-${suffix}"
@@ -4634,9 +4632,9 @@ __timeout_init() {
 	__TIMEOUT_CMD=""
 	__TIMEOUT_STYLE=""
 
-	if command -v timeout >/dev/null 2>&1; then
+	if type timeout >/dev/null 2>&1; then
 		__TIMEOUT_CMD="timeout"
-	elif command -v busybox >/dev/null 2>&1; then
+	elif type busybox >/dev/null 2>&1; then
 		# Some firmwares ship timeout applet without /bin/timeout symlink
 		if busybox timeout --help >/dev/null 2>&1; then
 			__TIMEOUT_CMD="busybox timeout"
@@ -4680,7 +4678,7 @@ __timeout_run() {
 	# Shell fallback: run command in background, kill it if still running after _t seconds.
 	# Try to isolate process group via setsid when available.
 	local _cmd_pid _timer_pid _rc _timer_rc _kill_target
-	if command -v setsid >/dev/null 2>&1; then
+	if type setsid >/dev/null 2>&1; then
 		env -i PATH="${PATH}" setsid "$@" &
 		_cmd_pid=$!
 		_kill_target="-${_cmd_pid}"

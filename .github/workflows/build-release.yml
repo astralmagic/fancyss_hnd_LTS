@@ -25,7 +25,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl file jq nodejs
+          sudo apt-get install -y busybox curl file jq nodejs
 
       - name: Check shell entry points
         run: |
@@ -48,6 +48,7 @@ jobs:
 
       - name: Run P1/P2 regression and AnyTLS integration tests
         run: |
+          python3 tests/test_ax86u_shell_compat.py -v
           python3 tests/test_p1_regressions.py -v
           python3 tests/test_p2_regressions.py -v
           python3 tests/test_review_regressions.py -v

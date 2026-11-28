@@ -96,13 +96,12 @@ fss_pick_node_tool() {
 		echo "/koolshare/bin/node-tool"
 		return 0
 	fi
-	if command -v node-tool >/dev/null 2>&1; then
-		if "$(command -v node-tool)" version >/dev/null 2>&1; then
-			FSS_NODE_TOOL_PICKED="$(command -v node-tool)"
-			export FSS_NODE_TOOL_PICKED
-			command -v node-tool
-			return 0
-		fi
+	local candidate=""
+	if candidate="$(which node-tool 2>/dev/null)" && "${candidate}" version >/dev/null 2>&1; then
+		FSS_NODE_TOOL_PICKED="${candidate}"
+		export FSS_NODE_TOOL_PICKED
+		printf '%s\n' "${candidate}"
+		return 0
 	fi
 	return 1
 }
@@ -668,12 +667,62 @@ fss_resolve_node_field_name() {
 	echo "${field}"
 }
 
-fss_identity_hash_v1() {
-	if command -v cksum >/dev/null 2>&1; then
-		printf '%s' "$1" | cksum | awk '{printf "%08x", $1}'
+# Runtime change detectors accept a tagged MD5 on firmware without POSIX cksum.
+# Keep the old CRC:length format on other routers so their saved baselines still match.
+fss_content_signature() {
+	local digest=""
+	if type cksum >/dev/null 2>&1; then
+		digest="$(cksum)" || return 1
+		printf '%s\n' "${digest}" | awk 'NF == 2 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ {print $1 ":" $2; ok=1} END {exit !ok}'
 	else
-		printf '%s' "$1" | md5sum | awk '{print substr($1, 1, 8)}'
+		digest="$(md5sum)" || return 1
+		digest="${digest%% *}"
+		case "${digest}" in *[!0-9a-f]*) return 1 ;; esac
+		[ "${#digest}" -eq 32 ] || return 1
+		printf 'md5:%s\n' "${digest}"
 	fi
+}
+
+fss_identity_hash_v1() {
+	local digest=""
+	if type cksum >/dev/null 2>&1; then
+		digest="$(printf '%s' "$1" | cksum)" || return 1
+		printf '%s' "${digest}" | awk 'NF == 2 && $1 ~ /^[0-9]+$/ {printf "%04x%04x", int($1/65536), $1%65536; ok=1} END {exit !ok}'
+		return $?
+	fi
+	# Identity v1 must match node-tool/sub-tool byte for byte. LC_ALL=C keeps
+	# multibyte names as bytes. The extra newline frames the shell argument.
+	printf '%s\n' "$1" | LC_ALL=C awk '
+		function xor32(a,b,    result, place) {
+			result=0
+			for (place=1; a || b; place*=2) {
+				if (a%2 != b%2) result+=place
+				a=int(a/2); b=int(b/2)
+			}
+			return result
+		}
+		function feed(byte) {
+			crc=xor32((crc%16777216)*256, table[xor32(int(crc/16777216),byte)])
+		}
+		BEGIN {
+			for (i=0; i<256; i++) {
+				ord[sprintf("%c",i)]=i
+				v=i*16777216
+				for (j=0; j<8; j++)
+					v=(v>=2147483648 ? xor32((v*2)%4294967296,79764919) : v*2)
+				table[i]=v
+			}
+		}
+		{
+			if (NR>1) {feed(10); size++}
+			for (i=1; i<=length($0); i++) feed(ord[substr($0,i,1)])
+			size+=length($0)
+		}
+		END {
+			while (size>0) {feed(size%256); size=int(size/256)}
+			crc=4294967295-crc
+			printf "%04x%04x", int(crc/65536), crc%65536
+		}'
 }
 
 fss_identity_slugify() {
@@ -1303,9 +1352,9 @@ fss_enrich_node_identity_json() {
 		fi
 	fi
 
-	primary=$(fss_identity_hash_v1 "$(printf '%s\037%s' "${source_scope}" "${raw_name}")")
+	primary=$(fss_identity_hash_v1 "$(printf '%s\037%s' "${source_scope}" "${raw_name}")") || return 1
 	secondary_payload=$(fss_identity_secondary_payload_json "${node_json}") || return 1
-	secondary=$(fss_identity_hash_v1 "${secondary_payload}")
+	secondary=$(fss_identity_hash_v1 "${secondary_payload}") || return 1
 
 	printf '%s' "${node_json}" | jq -c \
 		--arg source "${source}" \
@@ -1615,11 +1664,11 @@ fss_csv_to_json_array() {
 
 fss_mktemp_dir() {
 	local prefix="$1"
-	local base_dir="/tmp"
+	local base_dir="${2:-${TMPDIR:-/tmp}}"
 	local try path
 
 	[ -n "${prefix}" ] || prefix="fss_tmp"
-	if command -v mktemp >/dev/null 2>&1;then
+	if type mktemp >/dev/null 2>&1;then
 		mktemp -d "${base_dir}/${prefix}.XXXXXX" 2>/dev/null && return 0
 	fi
 
@@ -1627,7 +1676,7 @@ fss_mktemp_dir() {
 	while [ "${try}" -lt 16 ]
 	do
 		path="${base_dir}/${prefix}.$$.${RANDOM:-0}.${try}"
-		if mkdir -p "${path}" 2>/dev/null;then
+		if (umask 077 && mkdir "${path}") 2>/dev/null;then
 			echo "${path}"
 			return 0
 		fi
@@ -3446,7 +3495,7 @@ fss_pick_jq_bin() {
 		printf '%s\n' "/koolshare/bin/jq"
 		return 0
 	fi
-	command -v jq 2>/dev/null
+	which jq 2>/dev/null
 }
 
 fss_list_node_server_hosts_slow() {
@@ -3773,37 +3822,38 @@ fss_export_current_node_env_with_node_tool() {
 	shift
 	local node_tool=""
 	local fields_csv="$*"
-	local tmp_file=""
+	local work="" tmp_file=""
 
 	node_tool="$(fss_pick_node_tool 2>/dev/null)" || return 1
-	tmp_file="$(mktemp /tmp/fss_node_env.XXXXXX)" || return 1
+	work="$(fss_mktemp_dir fss_node_env)" || return 1
+	tmp_file="${work}/env"
 	if [ -n "${fields_csv}" ]; then
 		fss_run_node_tool "${node_tool}" current-env --ids "${node_id}" --fields "${fields_csv}" > "${tmp_file}" 2>/dev/null || {
-			rm -f "${tmp_file}"
+			rm -rf "${work}"
 			return 1
 		}
 	else
 		fss_run_node_tool "${node_tool}" current-env --ids "${node_id}" > "${tmp_file}" 2>/dev/null || {
-			rm -f "${tmp_file}"
+			rm -rf "${work}"
 			return 1
 		}
 	fi
 	[ -s "${tmp_file}" ] || {
-		rm -f "${tmp_file}"
+		rm -rf "${work}"
 		return 1
 	}
 	. "${tmp_file}" || {
-		rm -f "${tmp_file}"
+		rm -rf "${work}"
 		return 1
 	}
-	rm -f "${tmp_file}"
+	rm -rf "${work}"
 	return 0
 }
 
 fss_export_current_node_env() {
 	local node_id="$1"
 	shift
-	local field value schema node_json meta_file tmp_env_file jq_bin
+	local field value schema node_json meta_file tmp_env_file jq_bin work
 
 	[ -z "${node_id}" ] && node_id=$(fss_get_current_node_id)
 	[ -z "${node_id}" ] && return 1
@@ -3817,13 +3867,14 @@ fss_export_current_node_env() {
 		node_json=$(fss_v2_get_node_json_by_id "${node_id}") || return 1
 		jq_bin="$(fss_pick_jq_bin)"
 		[ -n "${jq_bin}" ] || return 1
-		meta_file="$(mktemp /tmp/fss_export_meta.XXXXXX)" || return 1
-		tmp_env_file="$(mktemp /tmp/fss_export_env.XXXXXX)" || { rm -f "${meta_file}"; return 1; }
+		work="$(fss_mktemp_dir fss_export)" || return 1
+		meta_file="${work}/meta"
+		tmp_env_file="${work}/env"
 		for field in "$@"
 		do
 			[ -z "${field}" ] && continue
-			printf '%s\t%s\n' "${field}" "$(fss_resolve_node_field_name "${field}")" >> "${meta_file}"
-		done
+			printf '%s\t%s\n' "${field}" "$(fss_resolve_node_field_name "${field}")"
+		done > "${meta_file}" || { rm -rf "${work}"; return 1; }
 
 		printf '%s' "${node_json}" | "${jq_bin}" -r --rawfile meta "${meta_file}" '
 			def resolve_store($t; $f):
@@ -3892,14 +3943,14 @@ fss_export_current_node_env() {
 			  ) as $legacy_value
 			| "export ss_basic_\($field)=\($legacy_value | @sh)"
 		' > "${tmp_env_file}" 2>/dev/null || {
-			rm -f "${meta_file}" "${tmp_env_file}"
+			rm -rf "${work}"
 			return 1
 		}
 		. "${tmp_env_file}" || {
-			rm -f "${meta_file}" "${tmp_env_file}"
+			rm -rf "${work}"
 			return 1
 		}
-		rm -f "${meta_file}" "${tmp_env_file}"
+		rm -rf "${work}"
 		return 0
 	fi
 
