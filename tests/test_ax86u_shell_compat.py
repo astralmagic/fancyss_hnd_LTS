@@ -26,11 +26,14 @@ class FirmwareShellTests(unittest.TestCase):
         self.root = Path(tmp.name)
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        # CI selects the distro ash explicitly. Standalone BusyBox builds can
+        # expose compiled applets even when they are absent from PATH.
+        self.busybox = os.environ.get("FSS_TEST_BUSYBOX")
         for name in ("awk", "cat", "chmod", "cmp", "cp", "dirname", "grep", "jq", "mkdir",
                      "mv", "rm", "sed", "sort", "tail", "tr", "wc", "which"):
             executable = shutil.which(name)
-            if name == "awk" and shutil.which("busybox"):
-                executable = shutil.which("busybox")
+            if name == "awk" and self.busybox:
+                executable = self.busybox
             (self.bin / name).symlink_to(executable)
         md5 = self.bin / "md5sum"
         if shutil.which("md5sum"):
@@ -40,18 +43,17 @@ class FirmwareShellTests(unittest.TestCase):
             md5.chmod(0o755)
 
     def run_script(self, script, **env):
-        busybox = shutil.which("busybox")
-        if busybox:
-            shell = [busybox, "ash"]
+        if self.busybox:
+            shell = [self.busybox, "ash"]
             disable_command = "command() { return 127; }"
         else:
             shell = ["/bin/bash", "--noprofile", "--norc"]
             disable_command = "enable -n command"
         prelude = f"""
 {disable_command}
-if command -v jq >/dev/null 2>&1; then exit 80; fi
+if command -v jq >/dev/null 2>&1; then echo "unexpected command builtin" >&2; exit 80; fi
 for name in mktemp cksum od; do
-    if type "$name" >/dev/null 2>&1; then exit 80; fi
+    if type "$name" >/dev/null 2>&1; then echo "unexpected firmware tool: $name" >&2; exit 80; fi
 done
 . '{SCRIPTS}/ss_node_common.sh'
 """
