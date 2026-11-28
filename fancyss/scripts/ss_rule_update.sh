@@ -41,7 +41,7 @@ create_rule_tmpdir(){
 	local try=0
 
 	mkdir -p "${base_dir}" 2>/dev/null || return 1
-	if command -v mktemp >/dev/null 2>&1; then
+	if type mktemp >/dev/null 2>&1; then
 		tmp_dir="$(mktemp -d "${base_dir}/${prefix}.XXXXXX" 2>/dev/null)" && [ -n "${tmp_dir}" ] && [ -d "${tmp_dir}" ] && {
 			printf '%s\n' "${tmp_dir}"
 			return 0
@@ -55,8 +55,7 @@ create_rule_tmpdir(){
 	while [ "${try}" -lt 32 ]
 	do
 		tmp_dir="${base_dir}/${prefix}.$$.${try}"
-		if mkdir "${tmp_dir}" 2>/dev/null; then
-			chmod 700 "${tmp_dir}" 2>/dev/null || true
+		if (umask 077 && mkdir "${tmp_dir}") 2>/dev/null; then
 			printf '%s\n' "${tmp_dir}"
 			return 0
 		fi

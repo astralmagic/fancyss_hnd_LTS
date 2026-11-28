@@ -79,7 +79,8 @@ reload_fancyss_scopes reload_{scope}
 
     def domain_fixture(self, root):
         """Use the actual generator and comparison, redirecting only /tmp paths."""
-        return functions(SSCONFIG_PATH, "refresh_domain_white_black_files", "dns_domain_lists_match_runtime").replace("/tmp/", str(root) + "/") + """
+        temp_helper = functions(ROOT / "fancyss/scripts/ss_node_common.sh", "fss_mktemp_dir")
+        return f"TMPDIR='{root}'\n{temp_helper}\n" + functions(SSCONFIG_PATH, "refresh_domain_white_black_files", "dns_domain_lists_match_runtime").replace("/tmp/", str(root) + "/") + """
 echo_date() { :; }
 ss_basic_mode=2
 dbus() { :; }

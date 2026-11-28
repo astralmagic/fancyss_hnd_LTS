@@ -124,11 +124,10 @@ wt_cache_state_is_building() {
 }
 
 wt_pick_node_tool() {
-	if command -v node-tool >/dev/null 2>&1; then
-		if "$(command -v node-tool)" version >/dev/null 2>&1; then
-			command -v node-tool
-			return 0
-		fi
+	local candidate=""
+	if candidate="$(which node-tool 2>/dev/null)" && "${candidate}" version >/dev/null 2>&1; then
+		printf '%s\n' "${candidate}"
+		return 0
 	fi
 	if [ -x "/koolshare/bin/node-tool" ];then
 		if /koolshare/bin/node-tool version >/dev/null 2>&1; then
@@ -238,10 +237,7 @@ wt_try_node_tool_env_cache() {
 }
 
 wt_pick_webtest_tool() {
-	if command -v webtest-tool >/dev/null 2>&1; then
-		command -v webtest-tool
-		return 0
-	fi
+	which webtest-tool 2>/dev/null && return 0
 	if [ -x "/koolshare/bin/webtest-tool" ]; then
 		echo "/koolshare/bin/webtest-tool"
 		return 0
@@ -250,10 +246,7 @@ wt_pick_webtest_tool() {
 }
 
 wt_pick_webtestctl() {
-	if command -v webtestctl >/dev/null 2>&1; then
-		command -v webtestctl
-		return 0
-	fi
+	which webtestctl 2>/dev/null && return 0
 	if [ -x "/koolshare/bin/webtestctl" ]; then
 		echo "/koolshare/bin/webtestctl"
 		return 0
@@ -262,10 +255,7 @@ wt_pick_webtestctl() {
 }
 
 wt_pick_statusctl() {
-	if command -v statusctl >/dev/null 2>&1; then
-		command -v statusctl
-		return 0
-	fi
+	which statusctl 2>/dev/null && return 0
 	if [ -x "/koolshare/bin/statusctl" ]; then
 		echo "/koolshare/bin/statusctl"
 		return 0
@@ -274,10 +264,7 @@ wt_pick_statusctl() {
 }
 
 wt_pick_jq() {
-	if command -v jq >/dev/null 2>&1; then
-		command -v jq
-		return 0
-	fi
+	which jq 2>/dev/null && return 0
 	if [ -x "/koolshare/bin/jq" ]; then
 		echo "/koolshare/bin/jq"
 		return 0

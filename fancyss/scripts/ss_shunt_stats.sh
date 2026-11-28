@@ -126,10 +126,7 @@ emit_response() {
 }
 
 pick_xray_bin() {
-	if command -v xray >/dev/null 2>&1; then
-		command -v xray
-		return 0
-	fi
+	which xray 2>/dev/null && return 0
 	if [ -x "/koolshare/bin/xray" ]; then
 		echo "/koolshare/bin/xray"
 		return 0
@@ -138,10 +135,7 @@ pick_xray_bin() {
 }
 
 pick_xapi_tool() {
-	if command -v xapi-tool >/dev/null 2>&1; then
-		command -v xapi-tool
-		return 0
-	fi
+	which xapi-tool 2>/dev/null && return 0
 	if [ -x "/koolshare/bin/xapi-tool" ]; then
 		echo "/koolshare/bin/xapi-tool"
 		return 0

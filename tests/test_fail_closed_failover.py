@@ -9,6 +9,7 @@ from test_partial_reload import ROOT, SSCONFIG_PATH, extract_shell_function
 
 
 BASE_SCRIPT = ROOT / "fancyss/scripts/ss_base.sh"
+NODE_COMMON = ROOT / "fancyss/scripts/ss_node_common.sh"
 SHUNT_SCRIPT = ROOT / "fancyss/scripts/ss_node_shunt.sh"
 HOT_RELOAD_SCRIPT = ROOT / "fancyss/scripts/ss_shunt_hot_reload.sh"
 STATUS_MAIN_SCRIPT = ROOT / "fancyss/scripts/ss_status_main.sh"
@@ -194,6 +195,7 @@ remove_fail_closed_guard() {{ log_event remove_fail_closed_guard; return 0; }}
 flush_iptables() {{ log_event flush_iptables; }}
 flush_ipset() {{ log_event FLUSH_IPSET_FORBIDDEN; }}
 kill_cron_job() {{ :; }}
+fss_base_load_current_node_env() {{ :; }}
 prepare_system() {{ log_event prepare_system; }}
 resolv_server_ip() {{
     log_event resolv_server_ip
@@ -521,9 +523,10 @@ remove_fail_closed_guard
             "reconcile_fail_closed_ipsets",
             "add_current_server_ip_to_ignlist",
         )
-        fn_code += "\n" + functions(ROOT / "fancyss/scripts/ss_node_common.sh",
-                                     "fss_list_node_server_ips", "fss_list_node_server_hosts",
-                                     "fss_list_node_server_hosts_v2_fast", "fss_pick_jq_bin")
+        fn_code += "\n" + functions(
+            NODE_COMMON, "fss_mktemp_dir", "fss_content_signature", "fss_list_node_server_ips",
+            "fss_list_node_server_hosts", "fss_list_node_server_hosts_v2_fast", "fss_pick_jq_bin",
+        )
         black_b64 = base64.b64encode(b"198.51.100.20\n2001:db8::20\n").decode()
         white_b64 = base64.b64encode(b"198.51.100.30\n2001:db8::30\n").decode()
 
@@ -1022,7 +1025,7 @@ class SafeFailoverPolicyTests(unittest.TestCase):
     """Issue #42 Phase 3: flock lock check, separator survival, deduped probe recovery, mode 7 hot switch."""
 
     def _status_harness(self, root):
-        fn_code = functions(
+        fn_code = functions(NODE_COMMON, "fss_content_signature") + "\n" + functions(
             STATUS_MAIN_SCRIPT,
             "failover_now_epoch",
             "failover_state_read",
@@ -1208,7 +1211,9 @@ failover_action 2
                     ]
                 },
             }
-            hot_code = functions(HOT_RELOAD_SCRIPT, "hot_routes_match_runtime", "hot_replace_default_routes", "hot_switch_default_node")
+            hot_code = functions(NODE_COMMON, "fss_mktemp_dir") + "\n" + functions(
+                HOT_RELOAD_SCRIPT, "hot_routes_match_runtime", "hot_replace_default_routes", "hot_switch_default_node",
+            )
             base_script = f"""
 HOT_NEED_DNS_RELOAD_FILE='{root}/need_dns'
 XRAY_RUNTIME_CONF='{rt_conf}'

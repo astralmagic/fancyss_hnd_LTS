@@ -71,7 +71,7 @@ hot_build_next_state() {
 
 hot_mark_need_dns_reload() {
 	local reason="${1:-}"
-	hot_ensure_state_dir >/dev/null 2>&1 || return 0
+	hot_ensure_state_dir >/dev/null 2>&1 || return 1
 	printf '%s\n' "${reason:-1}" > "${HOT_NEED_DNS_RELOAD_FILE}"
 }
 
@@ -84,7 +84,7 @@ hot_proxy_domains_sig() {
 		proxy_file="$(fss_shunt_get_proxy_domain_file 2>/dev/null)"
 	fi
 	if [ -n "${proxy_file}" ] && [ -s "${proxy_file}" ]; then
-		cksum "${proxy_file}" 2>/dev/null | awk '{print $1 ":" $2}'
+		fss_content_signature < "${proxy_file}"
 	else
 		echo "empty"
 	fi
@@ -143,7 +143,7 @@ hot_bypass_new_outbound_server() {
 			hot_log "新节点域名 ${addr} 已加入节点直连与白名单，热更新后联动刷新 DNS。"
 			hot_mark_need_dns_reload "new_outbound_domain:${addr}"
 		fi
-		if command -v nslookup >/dev/null 2>&1; then
+		if type nslookup >/dev/null 2>&1; then
 			for resolved_ip in $(nslookup "${addr}" 2>/dev/null | awk '/^Address [0-9]+: /{print $3}' | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | grep -v '^127\.'); do
 				ipset -! add ignlist "${resolved_ip}" >/dev/null 2>&1 || true
 			done
@@ -462,13 +462,15 @@ hot_apply_staged_rules() {
 }
 
 hot_seed_state() {
+	local sig=""
+	sig="$(hot_proxy_domains_sig)" || return 1
 	cp -f "${HOT_NEXT_FILE}" "${HOT_BASE_FILE}" >/dev/null 2>&1
 	cp -f "${HOT_NEXT_FILE}" "${HOT_LAST_FILE}" >/dev/null 2>&1
 	printf '%s\n' "$(hot_current_rule_ts)" > "${HOT_BASE_RULE_TS_FILE}"
 	printf '%s\n' "$(hot_current_rule_ts)" > "${HOT_APPLIED_RULE_TS_FILE}"
 	dbus get ss_basic_shunt_rules > "${HOT_BASE_RULES_B64_FILE}"
 	dbus get ss_basic_shunt_default_node > "${HOT_BASE_DEFAULT_FILE}"
-	printf '%s\n' "$(hot_proxy_domains_sig)" > "${HOT_APPLIED_PROXY_DOMAINS_SIG_FILE}"
+	printf '%s\n' "${sig}" > "${HOT_APPLIED_PROXY_DOMAINS_SIG_FILE}" || return 1
 	rm -f "${HOT_NEED_DNS_RELOAD_FILE}" >/dev/null 2>&1 || true
 }
 
@@ -495,10 +497,10 @@ hot_clear_state() {
 }
 
 hot_mark_applied_state() {
-	local src_file="${1:-${HOT_NEXT_FILE}}"
+	local src_file="$1" sig="$2"
 	cp -f "${src_file}" "${HOT_LAST_FILE}" >/dev/null 2>&1
 	printf '%s\n' "$(hot_current_rule_ts)" > "${HOT_APPLIED_RULE_TS_FILE}"
-	printf '%s\n' "$(hot_proxy_domains_sig)" > "${HOT_APPLIED_PROXY_DOMAINS_SIG_FILE}"
+	printf '%s\n' "${sig}" > "${HOT_APPLIED_PROXY_DOMAINS_SIG_FILE}"
 }
 
 hot_make_stage_tag() {
@@ -561,20 +563,19 @@ hot_reload_apply() {
 		hot_log "缺少热重载基线，无法直接应用热更新。"
 		return 1
 	fi
+	prev_proxy_sig="$(sed -n '1p' "${HOT_APPLIED_PROXY_DOMAINS_SIG_FILE}" 2>/dev/null)"
+	next_proxy_sig="$(hot_proxy_domains_sig)" || return 1
+	if [ "${prev_proxy_sig}" != "${next_proxy_sig}" ]; then
+		hot_log "分流代理域名签名变化或基线缺失，热更新后将联动重载 DNS。"
+		hot_mark_need_dns_reload "proxy_domains_changed" || return 1
+	fi
 	if hot_seed_matches_current; then
 		hot_log "当前规则与已记录基线一致，无需重复热重载。"
-		hot_mark_applied_state
-		return 0
+		hot_mark_applied_state "${HOT_NEXT_FILE}" "${next_proxy_sig}"
+		return $?
 	fi
 
 	hot_ensure_targets_loaded || return 1
-
-	prev_proxy_sig="$(sed -n '1p' "${HOT_APPLIED_PROXY_DOMAINS_SIG_FILE}" 2>/dev/null)"
-	next_proxy_sig="$(hot_proxy_domains_sig)"
-	if [ -n "${prev_proxy_sig}" ] && [ "${prev_proxy_sig}" != "${next_proxy_sig}" ]; then
-		hot_log "检测到分流代理域名集合发生变化，热更新后将自动联动重载 DNS。"
-		hot_mark_need_dns_reload "proxy_domains_changed"
-	fi
 
 	generation="$(hot_stage_generation)"
 	hot_build_stage_state "${generation}" "${HOT_NEXT_FILE}" "${HOT_STAGE_FILE}" || {
@@ -590,7 +591,7 @@ hot_reload_apply() {
 		hot_log "删除旧规则失败。"
 		return 1
 	}
-	hot_mark_applied_state "${HOT_STAGE_FILE}"
+	hot_mark_applied_state "${HOT_STAGE_FILE}" "${next_proxy_sig}" || return 1
 	hot_log "热重载完成。"
 	return 0
 }
@@ -598,7 +599,7 @@ hot_reload_apply() {
 hot_reload_seed() {
 	hot_require_ready || return 1
 	hot_build_next_state || return 1
-	hot_seed_state
+	hot_seed_state || return 1
 	hot_log "已写入当前热重载基线。"
 }
 
@@ -689,7 +690,7 @@ hot_replace_default_routes() {
 	(
 		umask 077
 		target="$1"
-		work="$(mktemp -d "${XRAY_RUNTIME_CONF}.switch.XXXXXX")" || exit 1
+		work="$(fss_mktemp_dir "${XRAY_RUNTIME_CONF##*/}.switch" "$(dirname "${XRAY_RUNTIME_CONF}")")" || exit 1
 		trap 'rm -rf "${work}"' EXIT
 		trap 'exit 1' INT TERM
 		cp -p "${XRAY_RUNTIME_CONF}" "${work}/previous.json" || exit 1

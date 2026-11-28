@@ -210,10 +210,7 @@ fss_shunt_pick_geotool() {
 		echo "${FSS_SHUNT_GEOTOOL_BIN}"
 		return 0
 	fi
-	if command -v geotool >/dev/null 2>&1; then
-		command -v geotool
-		return 0
-	fi
+	which geotool 2>/dev/null && return 0
 	return 1
 }
 

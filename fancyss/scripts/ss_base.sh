@@ -586,9 +586,9 @@ __timeout_init() {
 	__TIMEOUT_CMD=""
 	__TIMEOUT_STYLE=""
 
-	if command -v timeout >/dev/null 2>&1; then
+	if type timeout >/dev/null 2>&1; then
 		__TIMEOUT_CMD="timeout"
-	elif command -v busybox >/dev/null 2>&1; then
+	elif type busybox >/dev/null 2>&1; then
 		# Some firmwares ship timeout applet without /bin/timeout symlink
 		if busybox timeout --help >/dev/null 2>&1; then
 			__TIMEOUT_CMD="busybox timeout"

@@ -29,7 +29,7 @@ node_data_pick_jq() {
 		echo "/koolshare/bin/jq"
 		return 0
 	fi
-	command -v jq 2>/dev/null
+	which jq 2>/dev/null
 }
 
 node_data_write_profiles_json() {
