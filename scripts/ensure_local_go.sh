@@ -42,7 +42,7 @@ esac
 mkdir -p "${BASE_DIR}"
 GO_TARBALL="${BASE_DIR}/go${GO_VERSION}.${OS_NAME}-${GO_ARCH}.tar.gz"
 
-if [ ! -x "${GO_BIN}" ]; then
+if [ ! -x "${GO_BIN}" ] || ! GOTOOLCHAIN=local "${GO_BIN}" version | grep -Fq " go${GO_VERSION} "; then
 	if [ ! -f "${GO_TARBALL}" ]; then
 		curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 1 \
 			"https://dl.google.com/go/go${GO_VERSION}.${OS_NAME}-${GO_ARCH}.tar.gz" \
@@ -56,9 +56,9 @@ if [ ! -x "${GO_BIN}" ]; then
 		[ "${GO_ARCH}" = "arm64" ] && GO_SHA256="${GO_SHA256_ARM64}"
 	fi
 	if command -v sha256sum >/dev/null 2>&1; then
-		printf '%s  %s\n' "${GO_SHA256}" "${GO_TARBALL}" | sha256sum -c -
+		printf '%s  %s\n' "${GO_SHA256}" "${GO_TARBALL}" | sha256sum -c - >&2
 	else
-		printf '%s  %s\n' "${GO_SHA256}" "${GO_TARBALL}" | shasum -a 256 -c -
+		printf '%s  %s\n' "${GO_SHA256}" "${GO_TARBALL}" | shasum -a 256 -c - >&2
 	fi
 	rm -rf "${GO_ROOT}"
 	tar -C "${BASE_DIR}" -xzf "${GO_TARBALL}"

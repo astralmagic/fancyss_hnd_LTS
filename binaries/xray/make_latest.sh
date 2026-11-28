@@ -6,7 +6,7 @@ DIR="$(cd "$(dirname "$BASH_SOURCE[0]")" && pwd)"
 base_dir="${DIR}/.build_xray"
 mkdir -p "${base_dir}"
 
-GO_VERSION="1.27.3"
+export GOTOOLCHAIN=local
 
 BUILD_REF="tag" # tag | main
 BUILD_TAG=""
@@ -32,17 +32,8 @@ esac
 
 echo "-----------------------------------------------------------------"
 
-# prepare golang (local toolchain under .build_xray/)
-GO_TARBALL="${base_dir}/go${GO_VERSION}.linux-amd64.tar.gz"
-if [ ! -x "${base_dir}/go/bin/go" ] || ! "${base_dir}/go/bin/go" version 2>/dev/null | grep -q "go${GO_VERSION} "; then
-	rm -rf "${base_dir}/go"
-	[ ! -f "${GO_TARBALL}" ] && \
-		wget "https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz" -O "${GO_TARBALL}"
-	tar -C "${base_dir}" -xzf "${GO_TARBALL}"
-fi
-
-export PATH="${base_dir}/go/bin:${PATH}"
-go version
+GO_BIN="$(sh "${DIR}/../../scripts/ensure_local_go.sh")"
+"${GO_BIN}" version
 
 echo "-----------------------------------------------------------------"
 
@@ -124,7 +115,7 @@ build_one() {
 	local LDFLAGS="-s -w -buildid="
 	echo "Compile xray ${arch} GOARM=${GOARM:-} GOARCH=${GOARCH}..."
 	env CGO_ENABLED=0 GOOS=linux GOARM="${GOARM}" GOARCH="${GOARCH}" \
-		go build -v -o "${TMP}/xray_${arch}" -trimpath -ldflags "${LDFLAGS}" ./main
+		"${GO_BIN}" build -v -o "${TMP}/xray_${arch}" -trimpath -ldflags "${LDFLAGS}" ./main
 
 	cp -f "${TMP}/xray_${arch}" "${base_dir}/${OUTDIR}/"
 }
