@@ -84,13 +84,13 @@ for arch in armv7 arm64; do
     "$upx" -d -o "xray_$arch" "$root/binaries/xray/$xray_ref/xray_$arch"
     "$upx" -d -o "smartdns_$arch" "$root/binaries/smartdns/$smartdns_ref/smartdns_$arch"
     chmod +x "xray_$arch" "smartdns_$arch"
-    "$emulator" "./smartdns_$arch" -v
-    grep -aFq "Release${smartdns_ref#v}" "smartdns_$arch"
+    "$emulator" "./smartdns_$arch" -v 2>&1 | grep -F "(Release${smartdns_ref#v})"
     for start in 1 2; do
         "$emulator" "./smartdns_$arch" -f -c "$work/smartdns.conf" -p "$work/smartdns.pid" >>console.log 2>&1 &
         dns_pid=$!
         wait_for_answer inside.example 192.0.2.11
         wait_for_answer outside.example 192.0.2.22
+        echo "SmartDNS $arch start $start passed UDP and DoH routing"
         kill "$dns_pid"
         wait "$dns_pid" || [[ $? == 143 ]]
         dns_pid=
