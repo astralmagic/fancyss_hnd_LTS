@@ -195,7 +195,7 @@ jobs:
           WORK="$work" bash "$work/test.sh"
 
       - name: Exercise HND Xray and SmartDNS binaries
-        run: UPX="$(sh tool/xapi-tool/scripts/ensure_local_upx.sh)" bash tests/test_core_runtime.sh
+        run: bash tests/test_core_runtime.sh "$(sh tool/xapi-tool/scripts/ensure_local_upx.sh)"
 
       - name: Build HND packages
         run: bash build.sh

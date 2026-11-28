@@ -19,7 +19,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-upx=${UPX:-upx}
+upx=${1:-upx}
 xray_ref=$(cat "$root/binaries/xray/latest_2.txt")
 smartdns_ref=$(cat "$root/binaries/smartdns/latest.txt")
 go_version=$(sed -n 's/^GO_VERSION="\([^"]*\)"$/\1/p' "$root/scripts/ensure_local_go.sh")
@@ -100,5 +100,4 @@ for arch in armv7 arm64; do
     grep -F "Xray ${xray_tag#v} " <<< "$version"
     grep -F " ${xray_ref##*-} (go$go_version linux/$goarch)" <<< "$version"
     "$emulator" "./xray_$arch" run -test -c xray.json
-
 done
